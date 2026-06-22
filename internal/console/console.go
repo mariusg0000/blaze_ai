@@ -22,6 +22,7 @@ const (
 	colorRed    = "\033[31m"
 	colorGreen  = "\033[32m"
 	colorBlue   = "\033[34m"
+	colorPurple = "\033[35m"
 	colorOrange = "\033[33m"
 )
 
@@ -92,6 +93,18 @@ func (c *Console) separator() {
 	}
 }
 
+// userSeparator prints the separator shown between user input and the model response.
+//
+// WHAT:  Prints a bold purple separator before the assistant starts responding.
+func (c *Console) userSeparator() {
+	line := strings.Repeat("-", 60)
+	if c.IsTTY {
+		fmt.Fprintln(c.Out, c.color(colorPurple, c.bold(line)))
+		return
+	}
+	fmt.Fprintln(c.Out, line)
+}
+
 // OnContent is called for each streaming text chunk from the LLM.
 // Stops the spinner on first chunk, then writes the delta to output.
 //
@@ -101,7 +114,7 @@ func (c *Console) OnContent(delta string) {
 	if !c.contentStarted {
 		c.contentStarted = true
 		c.Spinner.Stop()
-		fmt.Fprintln(c.Out, c.color(colorOrange, c.bold("[BLAZE]")))
+		fmt.Fprint(c.Out, c.color(colorOrange, c.bold("[BLAZE] ")))
 	}
 	fmt.Fprint(c.Out, delta)
 }
@@ -196,10 +209,12 @@ func (c *Console) Run() error {
 			if exit {
 				return nil
 			}
-			if handled {
-				continue
-			}
+		if handled {
+			continue
 		}
+	}
+
+		c.userSeparator()
 
 		// Start spinner and reset content state before LLM call.
 		c.contentStarted = false

@@ -34,7 +34,7 @@ var knownProviders = []config.Provider{
 	{Name: "xai", Endpoint: "https://api.x.ai/v1"},
 	{Name: "hyperbolic", Endpoint: "https://api.hyperbolic.xyz/v1"},
 	{Name: "infermatic", Endpoint: "https://api.infermatic.ai/v1"},
-	{Name: "openhost", Endpoint: "https://api.openhost.ai/v1"},
+	{Name: "opencode-go", Endpoint: "https://opencode.ai/zen/go/v1"},
 	{Name: "lmstudio", Endpoint: "http://localhost:1234/v1"},
 }
 

@@ -107,6 +107,7 @@ func run() error {
 	agent.Tools.Register(tools.NewUnloadSkillTool(agent.Active))
 
 	cons := console.NewConsole(agent)
+	agent.Handler = cons
 	if err := cons.Run(); err != nil {
 		return fmt.Errorf("console error: %w", err)
 	}

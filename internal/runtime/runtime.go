@@ -118,6 +118,10 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 // PARAMS: userInput — the user's text input.
 // RETURNS: error if the LLM call or tool execution fails fatally.
 func (a *Agent) RunTurn(userInput string) error {
+	if a.Handler == nil {
+		return fmt.Errorf("runtime handler is nil")
+	}
+
 	// Append user message to session.
 	if err := a.Session.Append(session.Message{
 		Role:    "user",
