@@ -34,6 +34,7 @@ func main() {
 // RETURNS: error if any startup step fails.
 func run() error {
 	continueFlag := flag.Bool("c", false, "continue last cleanly closed session")
+	resumeFlag := flag.Bool("r", false, "resume most recent session (interrupted or clean)")
 	flag.Parse()
 
 	// Detect OS.
@@ -67,13 +68,20 @@ func run() error {
 
 	// Create or resume session.
 	var sess *session.Session
-	if *continueFlag {
+	switch {
+	case *continueFlag:
 		sess, err = session.LastClean()
 		if err != nil {
 			return fmt.Errorf("cannot continue session: %w", err)
 		}
 		fmt.Printf("Resuming session: %s\n", sess.Folder)
-	} else {
+	case *resumeFlag:
+		sess, err = session.Last()
+		if err != nil {
+			return fmt.Errorf("cannot resume session: %w", err)
+		}
+		fmt.Printf("Resuming session: %s\n", sess.Folder)
+	default:
 		sess, err = session.Create()
 		if err != nil {
 			return fmt.Errorf("cannot create session: %w", err)
@@ -95,8 +103,8 @@ func run() error {
 		return fmt.Errorf("cannot create agent: %w", err)
 	}
 
-	// On -c resume, rebuild synthetic summary message from summary files.
-	if *continueFlag && agent.Compactor != nil {
+	// On -c or -r resume, rebuild synthetic summary message from summary files.
+	if (*continueFlag || *resumeFlag) && agent.Compactor != nil {
 		if err := agent.Compactor.RebuildForResume(sess); err != nil {
 			return fmt.Errorf("cannot rebuild summaries for resume: %w", err)
 		}

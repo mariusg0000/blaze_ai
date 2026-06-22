@@ -22,6 +22,9 @@ import (
 // ErrNoCleanSession is returned when -c is used but no cleanly closed session exists.
 var ErrNoCleanSession = errors.New("no cleanly closed session found")
 
+// ErrNoSessions is returned when -r is used but no sessions exist at all.
+var ErrNoSessions = errors.New("no sessions found")
+
 // ErrSessionNotFound is returned when a session folder or file does not exist.
 var ErrSessionNotFound = errors.New("session not found")
 
@@ -193,6 +196,52 @@ func (s *Session) Close() error {
 	return s.save()
 }
 
+// Sanitize removes trailing incomplete tool call rounds from the message array.
+// An incomplete round is an assistant message with tool_calls that lacks matching
+// tool results. This is needed when resuming an interrupted session so the LLM
+// API does not reject the message array with "insufficient tool messages".
+//
+// WHAT:  Strips incomplete trailing tool-call/result pairs from the session.
+// WHY:   Interrupted sessions leave assistant messages with tool_calls that have
+//        no corresponding tool results, which the API rejects.
+// RETURNS: error if saving the sanitized session fails.
+func (s *Session) Sanitize() error {
+	for {
+		lastAssistant := -1
+		expectedResults := 0
+		for i := len(s.Messages) - 1; i >= 0; i-- {
+			switch s.Messages[i].Role {
+			case "tool":
+				continue
+			case "assistant":
+				lastAssistant = i
+				expectedResults = assistantToolCallCount(s.Messages[i].ToolCalls)
+			}
+			break
+		}
+		if lastAssistant < 0 || expectedResults == 0 {
+			return nil
+		}
+		actualResults := len(s.Messages) - lastAssistant - 1
+		if actualResults >= expectedResults {
+			return nil
+		}
+		s.Messages = s.Messages[:lastAssistant]
+	}
+}
+
+// assistantToolCallCount returns the number of tool calls in an assistant message.
+func assistantToolCallCount(tc interface{}) int {
+	if tc == nil {
+		return 0
+	}
+	switch v := tc.(type) {
+	case []interface{}:
+		return len(v)
+	}
+	return 0
+}
+
 // LastClean finds the most recently modified cleanly closed session.
 // Used by -c to resume the last session closed via /exit.
 //
@@ -273,6 +322,72 @@ func CreateInDir(dir string) (*Session, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// Last finds the most recently modified session regardless of closed_cleanly status.
+// Used by -r to resume the last interrupted or cleanly closed session.
+//
+// WHAT:  Searches sessions/ for the newest session by modification time.
+// WHY:   -r resumes the most recent session whether it was cleanly closed or interrupted.
+// HOW:   Lists session folders, sorts by mod time, returns the newest.
+// RETURNS: *Session — the most recent session; ErrNoSessions if none exist.
+func Last() (*Session, error) {
+	dir, err := sessionsDir()
+	if err != nil {
+		return nil, err
+	}
+	return LastInDir(dir)
+}
+
+// LastInDir finds the most recently modified session in an explicit directory.
+// Test-friendly variant of Last. Does not filter by closed_cleanly.
+//
+// WHAT:  Same as Last but with an explicit sessions directory.
+// WHY:   Enables testing with temp directories.
+// PARAMS: dir — the sessions directory to search.
+// RETURNS: *Session — most recent session; ErrNoSessions if none exist.
+func LastInDir(dir string) (*Session, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, ErrNoSessions
+		}
+		return nil, fmt.Errorf("cannot list sessions: %w", err)
+	}
+
+	type candidate struct {
+		folder string
+		mtime  time.Time
+	}
+	var candidates []candidate
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		folder := filepath.Join(dir, entry.Name())
+		if _, err := Load(folder); err != nil {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		candidates = append(candidates, candidate{
+			folder: folder,
+			mtime:  info.ModTime(),
+		})
+	}
+
+	if len(candidates) == 0 {
+		return nil, ErrNoSessions
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].mtime.After(candidates[j].mtime)
+	})
+
+	return Load(candidates[0].folder)
 }
 
 // LastCleanInDir finds the last cleanly closed session in an explicit directory.

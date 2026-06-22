@@ -230,7 +230,81 @@ func TestLastCleanPicksNewest(t *testing.T) {
 	}
 }
 
-// TestSaveRoundTrip verifies that a full conversation persists and loads correctly.
+// TestLastInDirPicksNewest verifies that the most recent session is returned regardless of clean state.
+func TestLastInDirPicksNewest(t *testing.T) {
+	dir := t.TempDir()
+
+	s1, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() s1 failed: %v", err)
+	}
+	if err := s1.Close(); err != nil {
+		t.Fatalf("Close() s1 failed: %v", err)
+	}
+
+	time.Sleep(15 * time.Millisecond)
+
+	s2, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() s2 failed: %v", err)
+	}
+	// s2 is not closed cleanly — simulates an interrupted session.
+
+	last, err := LastInDir(dir)
+	if err != nil {
+		t.Fatalf("LastInDir() unexpected error: %v", err)
+	}
+	if last.Folder != s2.Folder {
+		t.Errorf("LastInDir() = %q, want %q (s2 is newer, unclean)", last.Folder, s2.Folder)
+	}
+	if last.ClosedCleanly {
+		t.Error("Last session should not be marked cleanly closed")
+	}
+}
+
+// TestLastInDirOnlyClean verifies LastInDir returns a clean session when it's the only one.
+func TestLastInDirOnlyClean(t *testing.T) {
+	dir := t.TempDir()
+
+	s, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() failed: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close() failed: %v", err)
+	}
+
+	last, err := LastInDir(dir)
+	if err != nil {
+		t.Fatalf("LastInDir() unexpected error: %v", err)
+	}
+	if last.Folder != s.Folder {
+		t.Errorf("LastInDir() = %q, want %q", last.Folder, s.Folder)
+	}
+	if !last.ClosedCleanly {
+		t.Error("LastInDir() should return cleanly closed session")
+	}
+}
+
+// TestLastInDirEmpty verifies error when sessions directory is empty.
+func TestLastInDirEmpty(t *testing.T) {
+	dir := t.TempDir()
+	_, err := LastInDir(dir)
+	if err != ErrNoSessions {
+		t.Errorf("LastInDir() err = %v, want ErrNoSessions", err)
+	}
+}
+
+// TestLastInDirMissing verifies error when sessions directory does not exist.
+func TestLastInDirMissing(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "nonexistent")
+	_, err := LastInDir(dir)
+	if err != ErrNoSessions {
+		t.Errorf("LastInDir() err = %v, want ErrNoSessions", err)
+	}
+}
+
+
 func TestSaveRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	s, err := CreateInDir(dir)
@@ -271,5 +345,112 @@ func TestRandomName(t *testing.T) {
 	}
 	if name1 == name2 {
 		t.Error("randomName() returned duplicate names")
+	}
+}
+
+// TestSanitizeRemovesIncompleteToolCalls verifies trailing assistant with tool_calls is removed.
+func TestSanitizeRemovesIncompleteToolCalls(t *testing.T) {
+	dir := t.TempDir()
+	s, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() failed: %v", err)
+	}
+	if err := s.AppendAll([]Message{
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "hi"},
+		{Role: "user", Content: "run something"},
+		{Role: "assistant", Content: "", ToolCalls: []interface{}{map[string]interface{}{"id": "call_1"}}},
+	}); err != nil {
+		t.Fatalf("AppendAll() failed: %v", err)
+	}
+
+	if err := s.Sanitize(); err != nil {
+		t.Fatalf("Sanitize() failed: %v", err)
+	}
+
+	if len(s.Messages) != 3 {
+		t.Fatalf("Messages = %d, want 3", len(s.Messages))
+	}
+	if s.Messages[2].Role != "user" {
+		t.Errorf("Last message role = %q, want 'user'", s.Messages[2].Role)
+	}
+}
+
+// TestSanitizeKeepsCompleteToolCalls verifies a round with matching tool results is kept.
+func TestSanitizeKeepsCompleteToolCalls(t *testing.T) {
+	dir := t.TempDir()
+	s, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() failed: %v", err)
+	}
+	if err := s.AppendAll([]Message{
+		{Role: "user", Content: "run something"},
+		{Role: "assistant", Content: "", ToolCalls: []interface{}{map[string]interface{}{"id": "call_1"}}},
+		{Role: "tool", Content: "done", ToolCallID: "call_1"},
+	}); err != nil {
+		t.Fatalf("AppendAll() failed: %v", err)
+	}
+
+	if err := s.Sanitize(); err != nil {
+		t.Fatalf("Sanitize() failed: %v", err)
+	}
+
+	if len(s.Messages) != 3 {
+		t.Fatalf("Messages = %d, want 3 (complete round kept)", len(s.Messages))
+	}
+}
+
+// TestSanitizeRemovesIncompleteMultiToolCall verifies incomplete multi-call round is stripped.
+func TestSanitizeRemovesIncompleteMultiToolCall(t *testing.T) {
+	dir := t.TempDir()
+	s, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() failed: %v", err)
+	}
+	if err := s.AppendAll([]Message{
+		{Role: "user", Content: "run stuff"},
+		{Role: "assistant", Content: "", ToolCalls: []interface{}{
+			map[string]interface{}{"id": "call_1"},
+			map[string]interface{}{"id": "call_2"},
+		}},
+		{Role: "tool", Content: "done", ToolCallID: "call_1"},
+	}); err != nil {
+		t.Fatalf("AppendAll() failed: %v", err)
+	}
+
+	if err := s.Sanitize(); err != nil {
+		t.Fatalf("Sanitize() failed: %v", err)
+	}
+
+	if len(s.Messages) != 1 {
+		t.Fatalf("Messages = %d, want 1 (incomplete multi-call stripped)", len(s.Messages))
+	}
+}
+
+// TestSanitizeKeepsCompleteMultiToolCall verifies complete multi-call round is kept.
+func TestSanitizeKeepsCompleteMultiToolCall(t *testing.T) {
+	dir := t.TempDir()
+	s, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() failed: %v", err)
+	}
+	if err := s.AppendAll([]Message{
+		{Role: "user", Content: "run stuff"},
+		{Role: "assistant", Content: "", ToolCalls: []interface{}{
+			map[string]interface{}{"id": "call_1"},
+			map[string]interface{}{"id": "call_2"},
+		}},
+		{Role: "tool", Content: "done", ToolCallID: "call_1"},
+		{Role: "tool", Content: "done", ToolCallID: "call_2"},
+	}); err != nil {
+		t.Fatalf("AppendAll() failed: %v", err)
+	}
+
+	if err := s.Sanitize(); err != nil {
+		t.Fatalf("Sanitize() failed: %v", err)
+	}
+
+	if len(s.Messages) != 4 {
+		t.Fatalf("Messages = %d, want 4 (complete multi-call kept)", len(s.Messages))
 	}
 }

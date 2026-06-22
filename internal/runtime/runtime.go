@@ -122,6 +122,10 @@ func (a *Agent) RunTurn(userInput string) error {
 		return fmt.Errorf("runtime handler is nil")
 	}
 
+	if err := a.sanitizeSession(); err != nil {
+		return err
+	}
+
 	// Append user message to session.
 	if err := a.Session.Append(session.Message{
 		Role:    "user",
@@ -131,6 +135,10 @@ func (a *Agent) RunTurn(userInput string) error {
 	}
 
 	for {
+		if err := a.sanitizeSession(); err != nil {
+			return err
+		}
+
 		// Build full prompt from disk + session history.
 		messages, err := a.Builder.Build(a.Session, a.Active)
 		if err != nil {
@@ -210,6 +218,22 @@ func (a *Agent) RunTurn(userInput string) error {
 
 		// Loop back to LLM with tool results included in session history.
 	}
+}
+
+// sanitizeSession removes any trailing incomplete tool-call round before an LLM call.
+//
+// WHAT:  Ensures the persisted session is valid for provider APIs before prompt build/stream.
+// WHY:   Interrupted turns can leave an assistant tool_calls message without matching tool results.
+// HOW:   Sanitizes the in-memory session and persists it immediately.
+// RETURNS: error if sanitizing or saving fails.
+func (a *Agent) sanitizeSession() error {
+	if err := a.Session.Sanitize(); err != nil {
+		return fmt.Errorf("cannot sanitize session: %w", err)
+	}
+	if err := a.Session.Save(); err != nil {
+		return fmt.Errorf("cannot save sanitized session: %w", err)
+	}
+	return nil
 }
 
 // SetModel changes the current model and recreates the provider client.

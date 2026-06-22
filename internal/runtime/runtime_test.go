@@ -153,6 +153,54 @@ func TestRunTurnUnknownTool(t *testing.T) {
 	}
 }
 
+// TestRunTurnSanitizesIncompleteToolCalls verifies incomplete trailing tool-call rounds
+// are removed before the next provider request.
+func TestRunTurnSanitizesIncompleteToolCalls(t *testing.T) {
+	var lastMessages []map[string]interface{}
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload struct {
+			Messages []map[string]interface{} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		lastMessages = payload.Messages
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"ok"}}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "data: [DONE]")
+		fmt.Fprintln(w)
+	})
+	defer server.Close()
+
+	if err := agent.Session.AppendAll([]session.Message{
+		{Role: "user", Content: "old user"},
+		{Role: "assistant", Content: "", ToolCalls: []interface{}{map[string]interface{}{"id": "call_1"}}},
+	}); err != nil {
+		t.Fatalf("AppendAll() failed: %v", err)
+	}
+
+	if err := agent.RunTurn("new user"); err != nil {
+		t.Fatalf("RunTurn() error: %v", err)
+	}
+
+	if len(lastMessages) < 3 {
+		t.Fatalf("provider received %d messages, want at least 3", len(lastMessages))
+	}
+	if got := lastMessages[len(lastMessages)-2]["role"]; got != "user" {
+		t.Fatalf("expected last preserved session message to be user, got %v", got)
+	}
+	if got := lastMessages[len(lastMessages)-1]["role"]; got != "user" {
+		t.Fatalf("expected new user message at end of payload, got %v", got)
+	}
+	if len(agent.Session.Messages) != 3 {
+		t.Fatalf("session has %d messages, want 3 after sanitize + response", len(agent.Session.Messages))
+	}
+}
+
 // TestSetModel verifies model switching and provider recreation.
 func TestSetModel(t *testing.T) {
 	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
