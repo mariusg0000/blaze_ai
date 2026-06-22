@@ -49,12 +49,13 @@ func (h *mockHandler) OnUsage(promptTokens int)                {}
 func newConsole(agent *runtime.Agent) (*Console, *bytes.Buffer) {
 	out := &bytes.Buffer{}
 	return &Console{
-		Out:     out,
-		In:      strings.NewReader(""),
-		IsTTY:   false,
-		Agent:   agent,
-		Reader:  NewReader(strings.NewReader(""), false),
-		Spinner: NewSpinner(out, false),
+		Out:              out,
+		In:               strings.NewReader(""),
+		IsTTY:            false,
+		Agent:            agent,
+		Reader:           NewReader(strings.NewReader(""), false),
+		Spinner:          NewSpinner(out, false),
+		needContentLabel: true,
 	}, out
 }
 
@@ -137,6 +138,88 @@ func TestOnContentBoldSplit(t *testing.T) {
 	}
 }
 
+// TestOnContentItalic verifies _italic_ markers are stripped on complete lines.
+func TestOnContentItalic(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnContent("_emphasis_ text\n")
+	output := out.String()
+	if strings.Contains(output, "_emphasis_") {
+		t.Errorf("output should not contain raw _ markers: %q", output)
+	}
+	if !strings.Contains(output, "emphasis") {
+		t.Errorf("output missing italic text: %q", output)
+	}
+}
+
+// TestOnContentItalicAsterisk verifies *italic* markers are stripped.
+func TestOnContentItalicAsterisk(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnContent("*emphasis* text\n")
+	output := out.String()
+	if strings.Contains(output, "*emphasis*") {
+		t.Errorf("output should not contain raw * italic markers: %q", output)
+	}
+	if !strings.Contains(output, "emphasis") {
+		t.Errorf("output missing italic text: %q", output)
+	}
+}
+
+// TestOnContentItalicAsteriskSplit verifies *italic* is buffered until closed.
+func TestOnContentItalicAsteriskSplit(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnContent("*empha")
+	c.OnContent("sis* text\n")
+	output := out.String()
+	if strings.Contains(output, "*emphasis*") {
+		t.Errorf("output should not contain raw * italic markers after split chunks: %q", output)
+	}
+	if !strings.Contains(output, "emphasis") {
+		t.Errorf("output missing italic text after split chunks: %q", output)
+	}
+}
+
+// TestOnContentBoldAndItalic verifies **bold** and *italic* work together.
+func TestOnContentBoldAndItalic(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnContent("**bold** and *italic*\n")
+	output := out.String()
+	if strings.Contains(output, "**") || strings.Contains(output, "*italic*") {
+		t.Errorf("output should not contain raw markers: %q", output)
+	}
+	if !strings.Contains(output, "bold") || !strings.Contains(output, "italic") {
+		t.Errorf("output missing styled text: %q", output)
+	}
+}
+
+// TestOnContentLink verifies [text](url) is rendered as text (url).
+func TestOnContentLink(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnContent("see [OpenAI](https://openai.com) for details\n")
+	output := out.String()
+	if strings.Contains(output, "[OpenAI](https://openai.com)") {
+		t.Errorf("output should not contain raw link markup: %q", output)
+	}
+	if !strings.Contains(output, "OpenAI") {
+		t.Errorf("output missing link label: %q", output)
+	}
+	if !strings.Contains(output, "(https://openai.com)") {
+		t.Errorf("output missing link URL: %q", output)
+	}
+}
+
+// TestOnContentLinkMultiple verifies multiple links in one line.
+func TestOnContentLinkMultiple(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnContent("[A](http://a.com) and [B](http://b.com)\n")
+	output := out.String()
+	if strings.Contains(output, "[A]") || strings.Contains(output, "[B]") {
+		t.Errorf("output should not contain raw link brackets: %q", output)
+	}
+	if !strings.Contains(output, "(http://a.com)") || !strings.Contains(output, "(http://b.com)") {
+		t.Errorf("output missing link URLs: %q", output)
+	}
+}
+
 // TestOnContentTable verifies table rows are flattened and separators removed.
 func TestOnContentTable(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
@@ -160,14 +243,17 @@ func TestOnToolCall(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolCall("shell", "ls")
 	output := out.String()
-	if !strings.Contains(output, "TOOL CALL") {
-		t.Errorf("output missing [TOOL CALL]: %q", output)
+	if !strings.Contains(output, "[CALL]") {
+		t.Errorf("output missing [CALL]: %q", output)
 	}
 	if !strings.Contains(output, "shell") {
 		t.Errorf("output missing tool name: %q", output)
 	}
-	if !strings.Contains(output, "shell - ls") {
+	if !strings.Contains(output, "shell        ls") {
 		t.Errorf("output missing formatted args: %q", output)
+	}
+	if !strings.Contains(output, "tools ") {
+		t.Errorf("output missing tools divider header: %q", output)
 	}
 }
 
@@ -190,7 +276,7 @@ func TestOnToolCallAfterContent(t *testing.T) {
 	c.OnContent("hello")
 	c.OnToolCall("shell", "ls")
 	output := out.String()
-	if !strings.Contains(output, "hello\n------------------------------------------------------------\n[TOOL CALL]") {
+	if !strings.Contains(output, "hello\ntools ------------------------------------------------------\n[CALL]") {
 		t.Errorf("output missing newline before tool call block: %q", output)
 	}
 }
@@ -200,14 +286,14 @@ func TestOnToolResultSuccess(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nhi\n")
 	output := out.String()
-	if !strings.Contains(output, "TOOL RESPONSE") {
-		t.Errorf("output missing [TOOL RESPONSE]: %q", output)
+	if !strings.Contains(output, "[OK]") || !strings.Contains(output, "shell") {
+		t.Errorf("output missing compact tool result: %q", output)
 	}
 	if !strings.Contains(output, "[OK]") {
 		t.Errorf("output missing [OK] status: %q", output)
 	}
-	if !strings.Contains(output, " - hi") {
-		t.Errorf("output missing content after dash: %q", output)
+	if !strings.Contains(output, "[OK] shell        hi") {
+		t.Errorf("output missing compact content: %q", output)
 	}
 	if strings.Contains(output, "exit_code") {
 		t.Errorf("output should not contain raw exit_code: %q", output)
@@ -258,14 +344,14 @@ func TestOnToolRoundTripAfterContent(t *testing.T) {
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nok\n")
 	c.closeToolGroup()
 	output := out.String()
-	if !strings.Contains(output, "hello\n------------------------------------------------------------\n[TOOL CALL]") {
+	if !strings.Contains(output, "hello\ntools ------------------------------------------------------\n[CALL]") {
 		t.Errorf("tool call block not separated from content: %q", output)
 	}
-	if !strings.Contains(output, "shell - ls\n[TOOL RESPONSE]") {
+	if !strings.Contains(output, "shell        ls\n[OK] shell") {
 		t.Errorf("tool response formatting unexpected: %q", output)
 	}
 	// Group should close with a trailing separator after the last response.
-	if !strings.Contains(output, "[OK] - ok\n------------------------------------------------------------") {
+	if !strings.Contains(output, "[OK] shell        ok\n------------------------------------------------------------") {
 		t.Errorf("tool group not closed with separator: %q", output)
 	}
 }
@@ -279,14 +365,16 @@ func TestToolGroupConsecutive(t *testing.T) {
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nb\n")
 	c.closeToolGroup()
 	output := out.String()
-	// Should have exactly one opening separator and one closing separator.
-	if strings.Count(output, "------------------------------------------------------------") != 2 {
-		t.Errorf("expected exactly 2 group separators, got %d: %q", strings.Count(output, "------------------------------------------------------------"), output)
+	if strings.Count(output, "tools ------------------------------------------------------") != 1 {
+		t.Errorf("expected one tools header, got %q", output)
 	}
-	if !strings.Contains(output, "shell - ls\n[TOOL RESPONSE]") {
+	if strings.Count(output, "------------------------------------------------------------") != 1 {
+		t.Errorf("expected one closing divider, got %d: %q", strings.Count(output, "------------------------------------------------------------"), output)
+	}
+	if !strings.Contains(output, "[CALL] shell        ls\n[OK] shell") {
 		t.Errorf("first tool call missing: %q", output)
 	}
-	if !strings.Contains(output, "shell - cat\n[TOOL RESPONSE]") {
+	if !strings.Contains(output, "[CALL] shell        cat\n[OK] shell") {
 		t.Errorf("second tool call missing: %q", output)
 	}
 }
@@ -301,12 +389,17 @@ func TestToolGroupInterruptedByContent(t *testing.T) {
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nb\n")
 	c.closeToolGroup()
 	output := out.String()
-	// Should have four separators: open first group, close first group, open second group, close second group.
-	if strings.Count(output, "------------------------------------------------------------") != 4 {
-		t.Errorf("expected 4 separators, got %d: %q", strings.Count(output, "------------------------------------------------------------"), output)
+	if strings.Count(output, "tools ------------------------------------------------------") != 2 {
+		t.Errorf("expected 2 tools headers, got %d: %q", strings.Count(output, "tools ------------------------------------------------------"), output)
+	}
+	if strings.Count(output, "------------------------------------------------------------") != 2 {
+		t.Errorf("expected 2 closing dividers, got %d: %q", strings.Count(output, "------------------------------------------------------------"), output)
 	}
 	if !strings.Contains(output, "continuing") {
 		t.Errorf("intermediate content missing: %q", output)
+	}
+	if !strings.Contains(output, "[BLAZE] continuing") {
+		t.Errorf("content after tool group should restart with [BLAZE]: %q", output)
 	}
 }
 
@@ -316,7 +409,7 @@ func TestOnUsage(t *testing.T) {
 	c.OnUsage(11186)
 	c.responseSeparator()
 	output := out.String()
-	if !strings.Contains(output, "CTX: 11k") {
+	if !strings.Contains(output, "ctx 11k") {
 		t.Errorf("output missing context size: %q", output)
 	}
 }
@@ -327,8 +420,8 @@ func TestOnUsageZero(t *testing.T) {
 	c.OnUsage(0)
 	c.responseSeparator()
 	output := out.String()
-	if strings.Contains(output, "CTX") {
-		t.Errorf("output should not contain CTX when no usage: %q", output)
+	if output != "" {
+		t.Errorf("output should be empty when no usage: %q", output)
 	}
 }
 

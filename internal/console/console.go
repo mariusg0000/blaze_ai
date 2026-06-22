@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -17,11 +18,15 @@ import (
 
 // ANSI color codes for TTY output.
 const (
+	dividerWidth     = 60
 	colorReset       = "\033[0m"
 	colorBold        = "\033[1m"
+	colorItalic      = "\033[3m"
 	colorRed         = "\033[31m"
 	colorGreen       = "\033[32m"
 	colorBrightGreen = "\033[1;32m"
+	colorLightGray   = "\033[37m"
+	colorGray        = "\033[90m"
 	colorBlue        = "\033[34m"
 	colorPurple      = "\033[35m"
 	colorOrange      = "\033[33m"
@@ -46,6 +51,7 @@ type Console struct {
 	contentBuffer    string
 	inCodeBlock      bool
 	inToolGroup      bool
+	needContentLabel bool
 	lastPromptTokens int
 	lineOpen         bool
 }
@@ -60,14 +66,15 @@ func NewConsole(agent *runtime.Agent) *Console {
 	in := os.Stdin
 	isTTY := isTerminal(out)
 	return &Console{
-		Out:         out,
-		In:          in,
-		IsTTY:       isTTY,
-		Agent:       agent,
-		Reader:      NewReader(in, isTTY),
-		Spinner:     NewSpinner(out, isTTY),
-		lineOpen:    false,
-		inToolGroup: false,
+		Out:              out,
+		In:               in,
+		IsTTY:            isTTY,
+		Agent:            agent,
+		Reader:           NewReader(in, isTTY),
+		Spinner:          NewSpinner(out, isTTY),
+		lineOpen:         false,
+		inToolGroup:      false,
+		needContentLabel: true,
 	}
 }
 
@@ -100,8 +107,7 @@ func (c *Console) openToolGroup() {
 	if c.inToolGroup {
 		return
 	}
-	c.ensureLineBreakBeforeBlock()
-	c.separator()
+	c.divider("tools", colorGreen, true)
 	c.inToolGroup = true
 }
 
@@ -112,7 +118,7 @@ func (c *Console) closeToolGroup() {
 	if !c.inToolGroup {
 		return
 	}
-	c.separator()
+	c.divider("", "", false)
 	c.inToolGroup = false
 }
 
@@ -136,28 +142,41 @@ func (c *Console) bold(text string) string {
 	return colorBold + text + colorReset
 }
 
-// separator prints a visual separator line.
+// divider prints a unified console divider with an optional label.
 //
-// WHAT:  Prints a minimal separator between message types.
-func (c *Console) separator() {
-	if c.IsTTY {
-		fmt.Fprintln(c.Out, strings.Repeat("─", 60))
-	} else {
-		fmt.Fprintln(c.Out, strings.Repeat("-", 60))
-	}
-}
-
-// userSeparator prints the separator shown between user input and the model response.
-//
-// WHAT:  Prints a bold purple separator before the assistant starts responding.
-func (c *Console) userSeparator() {
+// WHAT:  Renders the single visual separator style used across tools and context footer.
+func (c *Console) divider(label, labelColor string, boldLabel bool) {
 	c.ensureLineBreakBeforeBlock()
-	line := strings.Repeat("-", 60)
+	char := "-"
 	if c.IsTTY {
-		fmt.Fprintln(c.Out, c.color(colorPurple, c.bold(line)))
+		char = "─"
+	}
+	if label == "" {
+		line := strings.Repeat(char, dividerWidth)
+		if c.IsTTY {
+			fmt.Fprintln(c.Out, c.color(colorLightGray, line))
+			return
+		}
+		fmt.Fprintln(c.Out, line)
 		return
 	}
-	fmt.Fprintln(c.Out, line)
+	remainder := dividerWidth - len(label) - 1
+	if remainder < 1 {
+		remainder = 1
+	}
+	tail := strings.Repeat(char, remainder)
+	if c.IsTTY {
+		styledLabel := label
+		if boldLabel {
+			styledLabel = c.bold(styledLabel)
+		}
+		if labelColor != "" {
+			styledLabel = c.color(labelColor, styledLabel)
+		}
+		fmt.Fprintf(c.Out, "%s %s\n", styledLabel, c.color(colorLightGray, tail))
+		return
+	}
+	fmt.Fprintf(c.Out, "%s %s\n", label, tail)
 }
 
 // responseSeparator prints the separator shown after the assistant finishes responding.
@@ -165,25 +184,10 @@ func (c *Console) userSeparator() {
 //
 // WHAT:  Prints a separator with context size after the response.
 func (c *Console) responseSeparator() {
-	c.ensureLineBreakBeforeBlock()
-	line := strings.Repeat("-", 60)
 	if c.lastPromptTokens <= 0 {
-		c.userSeparator()
 		return
 	}
-	label := fmt.Sprintf(" CTX: %s ", formatCompactInt(c.lastPromptTokens))
-	if len(label) >= len(line) {
-		fmt.Fprintln(c.Out, label)
-		return
-	}
-	left := (len(line) - len(label)) / 2
-	right := len(line) - len(label) - left
-	decorated := strings.Repeat("-", left) + label + strings.Repeat("-", right)
-	if c.IsTTY {
-		fmt.Fprintln(c.Out, c.color(colorPurple, c.bold(decorated)))
-		return
-	}
-	fmt.Fprintln(c.Out, decorated)
+	c.divider("ctx "+formatCompactInt(c.lastPromptTokens), colorPurple, false)
 }
 
 // formatCompactInt returns a shorter human-readable token count such as 12.3k.
@@ -215,11 +219,15 @@ func (c *Console) OnUsage(promptTokens int) {
 func (c *Console) OnContent(delta string) {
 	if c.inToolGroup {
 		c.closeToolGroup()
+		c.needContentLabel = true
 	}
 	if !c.contentStarted {
 		c.contentStarted = true
 		c.Spinner.Stop()
+	}
+	if c.needContentLabel {
 		fmt.Fprint(c.Out, c.color(colorOrange, c.bold("[BLAZE] ")))
+		c.needContentLabel = false
 	}
 	c.contentBuffer += delta
 	for {
@@ -255,15 +263,15 @@ func (c *Console) OnToolCall(name string, args string) {
 		argStr = argStr[:77] + "..."
 	}
 	if argStr != "" {
-		fmt.Fprintf(c.Out, "%s %s - %s\n",
-			c.color(colorGreen, c.bold("[TOOL CALL]")),
-			c.bold(name),
+		fmt.Fprintf(c.Out, "%s %-12s %s\n",
+			c.color(colorGreen, c.bold("[CALL]")),
+			name,
 			argStr,
 		)
 	} else {
 		fmt.Fprintf(c.Out, "%s %s\n",
-			c.color(colorGreen, c.bold("[TOOL CALL]")),
-			c.bold(name),
+			c.color(colorGreen, c.bold("[CALL]")),
+			name,
 		)
 	}
 	c.lineOpen = false
@@ -276,6 +284,7 @@ func (c *Console) OnToolCall(name string, args string) {
 // PARAMS: name — tool name; result — the raw tool output.
 func (c *Console) OnToolResult(name string, result string) {
 	badge, content, colorCode := parseToolResult(result)
+	badgeLabel := "[" + badge + "]"
 	if content != "" {
 		content = strings.ReplaceAll(content, "\n", " ")
 		if len(content) > 100 {
@@ -283,17 +292,15 @@ func (c *Console) OnToolResult(name string, result string) {
 		}
 	}
 	if content != "" {
-		fmt.Fprintf(c.Out, "%s %s [%s] - %s\n",
-			c.color(colorGreen, c.bold("[TOOL RESPONSE]")),
-			c.bold(name),
-			c.color(colorCode, c.bold(badge)),
+		fmt.Fprintf(c.Out, "%s %-12s %s\n",
+			c.color(colorCode, c.bold(badgeLabel)),
+			name,
 			content,
 		)
 	} else {
-		fmt.Fprintf(c.Out, "%s %s [%s]\n",
-			c.color(colorGreen, c.bold("[TOOL RESPONSE]")),
-			c.bold(name),
-			c.color(colorCode, c.bold(badge)),
+		fmt.Fprintf(c.Out, "%s %s\n",
+			c.color(colorCode, c.bold(badgeLabel)),
+			name,
 		)
 	}
 	c.lineOpen = false
@@ -451,11 +458,26 @@ func (c *Console) writeRenderedLine(text string, terminated bool) {
 	c.lineOpen = text != ""
 }
 
+// reLink matches Markdown links [text](url).
+var reLink = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+
 // renderInline strips or styles simple inline Markdown markers within a rendered line.
 func (c *Console) renderInline(text string) string {
 	text = c.toggleDelimited(text, "**", func(s string) string {
 		if c.IsTTY {
 			return c.bold(s)
+		}
+		return s
+	})
+	text = c.toggleDelimited(text, "_", func(s string) string {
+		if c.IsTTY {
+			return c.color(colorItalic, s)
+		}
+		return s
+	})
+	text = c.toggleDelimited(text, "*", func(s string) string {
+		if c.IsTTY {
+			return c.color(colorItalic, s)
 		}
 		return s
 	})
@@ -465,7 +487,28 @@ func (c *Console) renderInline(text string) string {
 		}
 		return s
 	})
+	text = c.renderLinks(text)
 	return text
+}
+
+// renderLinks replaces Markdown links with a terminal-friendly format.
+//
+// WHAT:  Converts [text](url) to text (url), coloring the URL portion on TTY.
+// PARAMS: text — the line to process.
+// RETURNS: string — the line with links rendered.
+func (c *Console) renderLinks(text string) string {
+	return reLink.ReplaceAllStringFunc(text, func(match string) string {
+		parts := reLink.FindStringSubmatch(match)
+		if len(parts) < 3 {
+			return match
+		}
+		label := parts[1]
+		url := parts[2]
+		if c.IsTTY {
+			return label + " " + c.color(colorPurple, "("+url+")")
+		}
+		return label + " (" + url + ")"
+	})
 }
 
 // toggleDelimited replaces paired delimiters with styled or plain inner text.
@@ -543,7 +586,10 @@ func shouldBufferMarkdownLine(line string) bool {
 	if strings.HasPrefix(trimmedLeft, "|") {
 		return true
 	}
-	if strings.Contains(line, "**") || strings.Contains(line, "`") {
+	if strings.Contains(line, "**") || strings.Contains(line, "*") || strings.Contains(line, "`") {
+		return true
+	}
+	if strings.Contains(line, "_") || strings.Contains(line, "[") {
 		return true
 	}
 	return false
@@ -630,13 +676,14 @@ func (c *Console) Run() error {
 			}
 		}
 
-		c.userSeparator()
+		fmt.Fprintln(c.Out)
 
 		// Start spinner and reset content state before LLM call.
 		c.contentStarted = false
 		c.contentBuffer = ""
 		c.inCodeBlock = false
 		c.inToolGroup = false
+		c.needContentLabel = true
 		c.lastPromptTokens = 0
 		c.lineOpen = false
 		c.Spinner.Start()
