@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	"blazeai/internal/compaction"
 	"blazeai/internal/config"
 	"blazeai/internal/platform"
 	"blazeai/internal/prompt"
@@ -44,13 +45,14 @@ type Handler interface {
 //         Tools — tool registry; Provider — LLM client; Handler — transport callbacks;
 //         ModelID — current provider/model_name; WorkDir — current work folder; OS — detected platform.
 type Agent struct {
-	Config   *config.Config
-	Session  *session.Session
-	Active   *skills.ActiveList
-	Builder  *prompt.Builder
-	Tools    *tools.Registry
-	Provider *provider.Client
-	Handler  Handler
+	Config    *config.Config
+	Session   *session.Session
+	Active    *skills.ActiveList
+	Builder   *prompt.Builder
+	Tools     *tools.Registry
+	Provider  *provider.Client
+	Handler   Handler
+	Compactor *compaction.Manager
 
 	ModelID string
 	WorkDir string
@@ -91,16 +93,17 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 	}
 
 	return &Agent{
-		Config:   cfg,
-		Session:  sess,
-		Active:   active,
-		Builder:  builder,
-		Tools:    registry,
-		Provider: client,
-		Handler:  handler,
-		ModelID:  modelID,
-		WorkDir:  workDir,
-		OS:       os,
+		Config:    cfg,
+		Session:   sess,
+		Active:    active,
+		Builder:   builder,
+		Tools:     registry,
+		Provider:  client,
+		Handler:   handler,
+		Compactor: compaction.NewManager(cfg, client),
+		ModelID:   modelID,
+		WorkDir:   workDir,
+		OS:        os,
 	}, nil
 }
 
@@ -151,8 +154,13 @@ func (a *Agent) RunTurn(userInput string) error {
 			return fmt.Errorf("cannot persist assistant message: %w", err)
 		}
 
-		// No tool calls — turn is done.
+		// No tool calls — check compaction and finish turn.
 		if len(resp.ToolCalls) == 0 {
+			if a.Compactor != nil {
+				if _, err := a.Compactor.Compact(a.Session, resp.Usage); err != nil {
+					return fmt.Errorf("compaction failed: %w", err)
+				}
+			}
 			return nil
 		}
 

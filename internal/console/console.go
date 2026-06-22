@@ -32,11 +32,14 @@ const (
 // PARAMS: Out — output writer; In — input reader; IsTTY — whether output is a terminal;
 //         Agent — the runtime agent; Reader — line reader for input.
 type Console struct {
-	Out    io.Writer
-	In     io.Reader
-	IsTTY  bool
-	Agent  *runtime.Agent
-	Reader *Reader
+	Out     io.Writer
+	In      io.Reader
+	IsTTY   bool
+	Agent   *runtime.Agent
+	Reader  *Reader
+	Spinner *Spinner
+
+	contentStarted bool
 }
 
 // NewConsole creates a Console with TTY auto-detection.
@@ -49,11 +52,12 @@ func NewConsole(agent *runtime.Agent) *Console {
 	in := os.Stdin
 	isTTY := isTerminal(out)
 	return &Console{
-		Out:    out,
-		In:     in,
-		IsTTY:  isTTY,
-		Agent:  agent,
-		Reader: NewReader(in, isTTY),
+		Out:     out,
+		In:      in,
+		IsTTY:   isTTY,
+		Agent:   agent,
+		Reader:  NewReader(in, isTTY),
+		Spinner: NewSpinner(out, isTTY),
 	}
 }
 
@@ -89,20 +93,29 @@ func (c *Console) separator() {
 }
 
 // OnContent is called for each streaming text chunk from the LLM.
-// Writes the delta directly to output as it arrives.
+// Stops the spinner on first chunk, then writes the delta to output.
 //
 // WHAT:  Streams LLM text content to the console.
 // PARAMS: delta — the text chunk from the LLM.
 func (c *Console) OnContent(delta string) {
+	if !c.contentStarted {
+		c.contentStarted = true
+		c.Spinner.Stop()
+		fmt.Fprintln(c.Out, c.color(colorOrange, c.bold("[BLAZE]")))
+	}
 	fmt.Fprint(c.Out, delta)
 }
 
 // OnToolCall is called before a tool is executed.
-// Prints a compact one-line tool call marker.
+// Stops the spinner on first event, prints a compact one-line tool call marker.
 //
 // WHAT:  Displays a tool call notification.
 // PARAMS: name — tool name; args — raw JSON arguments.
 func (c *Console) OnToolCall(name string, args json.RawMessage) {
+	if !c.contentStarted {
+		c.contentStarted = true
+		c.Spinner.Stop()
+	}
 	c.separator()
 	argStr := string(args)
 	if len(argStr) > 80 {
@@ -188,11 +201,13 @@ func (c *Console) Run() error {
 			}
 		}
 
-		// Print Blaze label before LLM response.
-		fmt.Fprintln(c.Out, c.color(colorOrange, c.bold("[BLAZE]")))
+		// Start spinner and reset content state before LLM call.
+		c.contentStarted = false
+		c.Spinner.Start()
 
 		// Run the agent turn.
 		if err := c.Agent.RunTurn(input); err != nil {
+			c.Spinner.Stop()
 			fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("error: %v", err)))
 		}
 		fmt.Fprintln(c.Out)

@@ -48,21 +48,26 @@ func (h *mockHandler) OnToolResult(name string, result string)             {}
 func newConsole(agent *runtime.Agent) (*Console, *bytes.Buffer) {
 	out := &bytes.Buffer{}
 	return &Console{
-		Out:    out,
-		In:     strings.NewReader(""),
-		IsTTY:  false,
-		Agent:  agent,
-		Reader: NewReader(strings.NewReader(""), false),
+		Out:     out,
+		In:      strings.NewReader(""),
+		IsTTY:   false,
+		Agent:   agent,
+		Reader:  NewReader(strings.NewReader(""), false),
+		Spinner: NewSpinner(out, false),
 	}, out
 }
 
-// TestOnContent verifies content is written to output.
+// TestOnContent verifies content is written to output with [BLAZE] label on first chunk.
 func TestOnContent(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnContent("hello ")
 	c.OnContent("world")
-	if out.String() != "hello world" {
-		t.Errorf("output = %q, want 'hello world'", out.String())
+	output := out.String()
+	if !strings.Contains(output, "[BLAZE]") {
+		t.Errorf("output missing [BLAZE] label: %q", output)
+	}
+	if !strings.Contains(output, "hello world") {
+		t.Errorf("output missing content: %q", output)
 	}
 }
 

@@ -72,6 +72,68 @@ func NewClient(cfg *config.Config, modelID string) (*Client, error) {
 	}, nil
 }
 
+// NewClientRaw creates a Client directly from endpoint and API key without config.
+// Used during first-run setup when config does not exist yet.
+//
+// WHAT:  Builds a provider client from raw endpoint and key.
+// WHY:   First-run setup needs to call the provider API before config is written.
+// PARAMS: endpoint — base API URL; apiKey — secret key.
+// RETURNS: *Client — configured client.
+func NewClientRaw(endpoint, apiKey string) *Client {
+	return &Client{
+		Endpoint: endpoint,
+		APIKey:   apiKey,
+		HTTP:     &http.Client{},
+	}
+}
+
+// modelEntry represents one model in the provider's model list response.
+type modelEntry struct {
+	ID string `json:"id"`
+}
+
+// modelsResponse is the JSON response from GET /models.
+type modelsResponse struct {
+	Data []modelEntry `json:"data"`
+}
+
+// ListModels retrieves the list of available model IDs from the provider endpoint.
+//
+// WHAT:  Fetches the model list from the provider's /models endpoint.
+// WHY:   First-run setup presents available models to the user for selection.
+// HOW:   GET {endpoint}/models with Authorization header, parse JSON response.
+// RETURNS: []string — sorted list of model IDs; error if the request or parse fails.
+func (c *Client) ListModels() ([]string, error) {
+	url := strings.TrimRight(c.Endpoint, "/") + "/models"
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result modelsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("cannot parse models response: %w", err)
+	}
+
+	ids := make([]string, 0, len(result.Data))
+	for _, m := range result.Data {
+		ids = append(ids, m.ID)
+	}
+	return ids, nil
+}
+
 // chatRequest is the request body sent to the chat completions endpoint.
 //
 // WHAT:  OpenAI-compatible chat completion request with streaming and tools.
