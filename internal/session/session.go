@@ -196,38 +196,42 @@ func (s *Session) Close() error {
 	return s.save()
 }
 
-// Sanitize removes trailing incomplete tool call rounds from the message array.
+// Sanitize removes incomplete tool call rounds from the session history.
 // An incomplete round is an assistant message with tool_calls that lacks matching
-// tool results. This is needed when resuming an interrupted session so the LLM
-// API does not reject the message array with "insufficient tool messages".
+// tool results before the next non-tool message. When found, the session is
+// truncated from that assistant message onward.
 //
-// WHAT:  Strips incomplete trailing tool-call/result pairs from the session.
-// WHY:   Interrupted sessions leave assistant messages with tool_calls that have
-//        no corresponding tool results, which the API rejects.
+// WHAT:  Strips incomplete assistant/tool-call rounds from the session.
+// WHY:   Interrupted sessions can leave assistant messages with tool_calls that have
+//        no corresponding tool results, and later user messages cannot repair that history.
 // RETURNS: error if saving the sanitized session fails.
 func (s *Session) Sanitize() error {
-	for {
-		lastAssistant := -1
-		expectedResults := 0
-		for i := len(s.Messages) - 1; i >= 0; i-- {
-			switch s.Messages[i].Role {
-			case "tool":
-				continue
-			case "assistant":
-				lastAssistant = i
-				expectedResults = assistantToolCallCount(s.Messages[i].ToolCalls)
-			}
-			break
+	for i := 0; i < len(s.Messages); i++ {
+		if s.Messages[i].Role != "assistant" {
+			continue
 		}
-		if lastAssistant < 0 || expectedResults == 0 {
+
+		expectedResults := assistantToolCallCount(s.Messages[i].ToolCalls)
+		if expectedResults == 0 {
+			continue
+		}
+
+		actualResults := 0
+		j := i + 1
+		for j < len(s.Messages) && s.Messages[j].Role == "tool" {
+			actualResults++
+			j++
+		}
+
+		if actualResults < expectedResults {
+			s.Messages = s.Messages[:i]
 			return nil
 		}
-		actualResults := len(s.Messages) - lastAssistant - 1
-		if actualResults >= expectedResults {
-			return nil
-		}
-		s.Messages = s.Messages[:lastAssistant]
+
+		i = j - 1
 	}
+
+	return nil
 }
 
 // assistantToolCallCount returns the number of tool calls in an assistant message.

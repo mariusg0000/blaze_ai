@@ -427,6 +427,35 @@ func TestSanitizeRemovesIncompleteMultiToolCall(t *testing.T) {
 	}
 }
 
+// TestSanitizeRemovesIncompleteToolCallBeforeLaterUserMessages verifies later user messages
+// do not hide an earlier incomplete assistant tool-call round.
+func TestSanitizeRemovesIncompleteToolCallBeforeLaterUserMessages(t *testing.T) {
+	dir := t.TempDir()
+	s, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() failed: %v", err)
+	}
+	if err := s.AppendAll([]Message{
+		{Role: "user", Content: "start"},
+		{Role: "assistant", Content: "", ToolCalls: []interface{}{map[string]interface{}{"id": "call_1"}}},
+		{Role: "user", Content: "continua"},
+		{Role: "user", Content: "continua"},
+	}); err != nil {
+		t.Fatalf("AppendAll() failed: %v", err)
+	}
+
+	if err := s.Sanitize(); err != nil {
+		t.Fatalf("Sanitize() failed: %v", err)
+	}
+
+	if len(s.Messages) != 1 {
+		t.Fatalf("Messages = %d, want 1 after truncating from incomplete assistant", len(s.Messages))
+	}
+	if s.Messages[0].Role != "user" {
+		t.Fatalf("Remaining message role = %q, want 'user'", s.Messages[0].Role)
+	}
+}
+
 // TestSanitizeKeepsCompleteMultiToolCall verifies complete multi-call round is kept.
 func TestSanitizeKeepsCompleteMultiToolCall(t *testing.T) {
 	dir := t.TempDir()
