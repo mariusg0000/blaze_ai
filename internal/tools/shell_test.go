@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"blazeai/internal/platform"
 )
@@ -51,6 +52,26 @@ func TestShellExecuteTimeout(t *testing.T) {
 	expected := "timeout 1s exceeded"
 	if result != expected {
 		t.Errorf("Execute() = %q, want %q", result, expected)
+	}
+}
+
+// TestShellExecuteTimeoutKillsBackgroundChildren verifies timeout returns even when the
+// shell command leaves a background child running.
+func TestShellExecuteTimeoutKillsBackgroundChildren(t *testing.T) {
+	tool := NewShellTool(platform.Linux)
+	args := json.RawMessage(`{"command":"sleep 30 & sleep 30","timeout":1}`)
+	resultCh := make(chan string, 1)
+	go func() {
+		resultCh <- tool.Execute(args)
+	}()
+
+	select {
+	case result := <-resultCh:
+		if result != "timeout 1s exceeded" {
+			t.Errorf("Execute() = %q, want %q", result, "timeout 1s exceeded")
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("Execute() hung with background child after timeout")
 	}
 }
 

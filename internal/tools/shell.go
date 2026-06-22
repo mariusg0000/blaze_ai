@@ -74,7 +74,8 @@ func (s *ShellTool) Parameters() json.RawMessage {
 //
 // WHAT:  Executes the command via the platform shell and returns formatted output.
 // WHY:   This is the primary execution path for the agent.
-// HOW:   Resolves the shell, creates a context with timeout, runs the command, captures output.
+// HOW:   Resolves the shell, starts it in its own process group when supported, waits with timeout,
+//        and kills the full process group on timeout to avoid background children keeping pipes open.
 // PARAMS: args — raw JSON with command and optional timeout.
 // RETURNS: string — formatted stdout/stderr/exit_code, or "timeout <N>s exceeded" on timeout.
 func (s *ShellTool) Execute(args json.RawMessage) string {
@@ -106,13 +107,26 @@ func (s *ShellTool) Execute(args json.RawMessage) string {
 		flag = "-c"
 	}
 
-	cmd := exec.CommandContext(ctx, shellPath, flag, parsed.Command)
+	cmd := exec.Command(shellPath, flag, parsed.Command)
+	prepareShellCommand(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err = cmd.Run()
-	if ctx.Err() == context.DeadlineExceeded {
+	if err := cmd.Start(); err != nil {
+		return fmt.Sprintf("error: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case err = <-done:
+	case <-ctx.Done():
+		killShellCommand(cmd)
+		<-done
 		return fmt.Sprintf("timeout %ds exceeded", timeoutSec)
 	}
 
