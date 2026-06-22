@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"blazeai/internal/runtime"
@@ -31,7 +32,8 @@ const (
 // WHAT:  The REPL transport that renders LLM output and handles user input.
 // WHY:   Console is the first and complete transport per spec.
 // PARAMS: Out — output writer; In — input reader; IsTTY — whether output is a terminal;
-//         Agent — the runtime agent; Reader — line reader for input.
+//
+//	Agent — the runtime agent; Reader — line reader for input.
 type Console struct {
 	Out     io.Writer
 	In      io.Reader
@@ -40,7 +42,9 @@ type Console struct {
 	Reader  *Reader
 	Spinner *Spinner
 
-	contentStarted bool
+	contentStarted   bool
+	lastPromptTokens int
+	lineOpen         bool
 }
 
 // NewConsole creates a Console with TTY auto-detection.
@@ -53,12 +57,23 @@ func NewConsole(agent *runtime.Agent) *Console {
 	in := os.Stdin
 	isTTY := isTerminal(out)
 	return &Console{
-		Out:     out,
-		In:      in,
-		IsTTY:   isTTY,
-		Agent:   agent,
-		Reader:  NewReader(in, isTTY),
-		Spinner: NewSpinner(out, isTTY),
+		Out:      out,
+		In:       in,
+		IsTTY:    isTTY,
+		Agent:    agent,
+		Reader:   NewReader(in, isTTY),
+		Spinner:  NewSpinner(out, isTTY),
+		lineOpen: false,
+	}
+}
+
+// ensureLineBreakBeforeBlock closes the current inline content line before block output.
+//
+// WHAT:  Forces separators and tool markers onto a fresh line after streamed content.
+func (c *Console) ensureLineBreakBeforeBlock() {
+	if c.lineOpen {
+		fmt.Fprintln(c.Out)
+		c.lineOpen = false
 	}
 }
 
@@ -97,12 +112,60 @@ func (c *Console) separator() {
 //
 // WHAT:  Prints a bold purple separator before the assistant starts responding.
 func (c *Console) userSeparator() {
+	c.ensureLineBreakBeforeBlock()
 	line := strings.Repeat("-", 60)
 	if c.IsTTY {
 		fmt.Fprintln(c.Out, c.color(colorPurple, c.bold(line)))
 		return
 	}
 	fmt.Fprintln(c.Out, line)
+}
+
+// responseSeparator prints the separator shown after the assistant finishes responding.
+// If provider usage is available, the separator embeds the prompt token count.
+//
+// WHAT:  Prints a separator with context size after the response.
+func (c *Console) responseSeparator() {
+	c.ensureLineBreakBeforeBlock()
+	line := strings.Repeat("-", 60)
+	if c.lastPromptTokens <= 0 {
+		c.userSeparator()
+		return
+	}
+	label := fmt.Sprintf(" CTX: %s ", formatCompactInt(c.lastPromptTokens))
+	if len(label) >= len(line) {
+		fmt.Fprintln(c.Out, label)
+		return
+	}
+	left := (len(line) - len(label)) / 2
+	right := len(line) - len(label) - left
+	decorated := strings.Repeat("-", left) + label + strings.Repeat("-", right)
+	if c.IsTTY {
+		fmt.Fprintln(c.Out, c.color(colorPurple, c.bold(decorated)))
+		return
+	}
+	fmt.Fprintln(c.Out, decorated)
+}
+
+// formatCompactInt returns a shorter human-readable token count such as 12.3k.
+//
+// WHAT:  Formats token counts compactly for separator display.
+func formatCompactInt(n int) string {
+	if n < 1000 {
+		return strconv.Itoa(n)
+	}
+	if n < 10000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	return fmt.Sprintf("%dk", n/1000)
+}
+
+// OnUsage records the prompt token count from the latest provider response.
+//
+// WHAT:  Stores context size for end-of-turn separator rendering.
+// PARAMS: promptTokens — provider-reported prompt tokens.
+func (c *Console) OnUsage(promptTokens int) {
+	c.lastPromptTokens = promptTokens
 }
 
 // OnContent is called for each streaming text chunk from the LLM.
@@ -115,8 +178,10 @@ func (c *Console) OnContent(delta string) {
 		c.contentStarted = true
 		c.Spinner.Stop()
 		fmt.Fprint(c.Out, c.color(colorOrange, c.bold("[BLAZE] ")))
+		c.lineOpen = true
 	}
 	fmt.Fprint(c.Out, delta)
+	c.lineOpen = !strings.HasSuffix(delta, "\n")
 }
 
 // OnToolCall is called before a tool is executed.
@@ -129,6 +194,7 @@ func (c *Console) OnToolCall(name string, args json.RawMessage) {
 		c.contentStarted = true
 		c.Spinner.Stop()
 	}
+	c.ensureLineBreakBeforeBlock()
 	c.separator()
 	argStr := string(args)
 	if len(argStr) > 80 {
@@ -139,6 +205,7 @@ func (c *Console) OnToolCall(name string, args json.RawMessage) {
 		c.bold(name),
 		argStr,
 	)
+	c.lineOpen = false
 }
 
 // OnToolResult is called after a tool has finished.
@@ -164,6 +231,7 @@ func (c *Console) OnToolResult(name string, result string) {
 		status,
 		resultPreview,
 	)
+	c.lineOpen = false
 	c.separator()
 }
 
@@ -209,24 +277,28 @@ func (c *Console) Run() error {
 			if exit {
 				return nil
 			}
-		if handled {
-			continue
+			if handled {
+				continue
+			}
 		}
-	}
 
 		c.userSeparator()
 
 		// Start spinner and reset content state before LLM call.
 		c.contentStarted = false
+		c.lastPromptTokens = 0
+		c.lineOpen = false
 		c.Spinner.Start()
 
 		// Run the agent turn.
 		if err := c.Agent.RunTurn(input); err != nil {
 			c.Spinner.Stop()
 			fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("error: %v", err)))
+			c.lineOpen = false
 		}
 		fmt.Fprintln(c.Out)
-		c.userSeparator()
+		c.lineOpen = false
+		c.responseSeparator()
 	}
 }
 

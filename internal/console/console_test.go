@@ -41,9 +41,10 @@ func mockAgent(t *testing.T) *runtime.Agent {
 // mockHandler is a no-op handler for agent construction.
 type mockHandler struct{}
 
-func (h *mockHandler) OnContent(delta string)                              {}
-func (h *mockHandler) OnToolCall(name string, args json.RawMessage)        {}
-func (h *mockHandler) OnToolResult(name string, result string)             {}
+func (h *mockHandler) OnContent(delta string)                       {}
+func (h *mockHandler) OnToolCall(name string, args json.RawMessage) {}
+func (h *mockHandler) OnToolResult(name string, result string)      {}
+func (h *mockHandler) OnUsage(promptTokens int)                     {}
 
 // newConsole creates a Console with a buffer for output and non-TTY mode.
 func newConsole(agent *runtime.Agent) (*Console, *bytes.Buffer) {
@@ -85,6 +86,17 @@ func TestOnToolCall(t *testing.T) {
 	}
 }
 
+// TestOnToolCallAfterContent verifies a newline is inserted before tool blocks.
+func TestOnToolCallAfterContent(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnContent("hello")
+	c.OnToolCall("shell", json.RawMessage(`{"command":"ls"}`))
+	output := out.String()
+	if !strings.Contains(output, "hello\n------------------------------------------------------------\n[TOOL CALL]") {
+		t.Errorf("output missing newline before tool call block: %q", output)
+	}
+}
+
 // TestOnToolResultSuccess verifies successful tool result display.
 func TestOnToolResultSuccess(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
@@ -105,6 +117,43 @@ func TestOnToolResultError(t *testing.T) {
 	output := out.String()
 	if !strings.Contains(output, "error") {
 		t.Errorf("output missing 'error' status: %q", output)
+	}
+}
+
+// TestOnToolRoundTripAfterContent verifies the full tool block stays on separate lines.
+func TestOnToolRoundTripAfterContent(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnContent("hello")
+	c.OnToolCall("shell", json.RawMessage(`{"command":"ls"}`))
+	c.OnToolResult("shell", "ok")
+	output := out.String()
+	if !strings.Contains(output, "hello\n------------------------------------------------------------\n[TOOL CALL]") {
+		t.Errorf("tool call block not separated from content: %q", output)
+	}
+	if !strings.Contains(output, "shell({\"command\":\"ls\"})\n[TOOL RESPONSE]") {
+		t.Errorf("tool response formatting unexpected: %q", output)
+	}
+}
+
+// TestOnUsage verifies context usage is stored and rendered in the separator.
+func TestOnUsage(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnUsage(11186)
+	c.responseSeparator()
+	output := out.String()
+	if !strings.Contains(output, "CTX: 11k") {
+		t.Errorf("output missing context size: %q", output)
+	}
+}
+
+// TestOnUsageZero verifies no context shown when prompt tokens are zero.
+func TestOnUsageZero(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnUsage(0)
+	c.responseSeparator()
+	output := out.String()
+	if strings.Contains(output, "CTX") {
+		t.Errorf("output should not contain CTX when no usage: %q", output)
 	}
 }
 

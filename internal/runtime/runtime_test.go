@@ -18,14 +18,20 @@ import (
 
 // mockHandler captures handler calls for verification.
 type mockHandler struct {
-	content   []string
-	toolCalls []string
+	content     []string
+	toolCalls   []string
 	toolResults []string
+	usages      []int
 }
 
 func (h *mockHandler) OnContent(delta string) { h.content = append(h.content, delta) }
-func (h *mockHandler) OnToolCall(name string, args json.RawMessage) { h.toolCalls = append(h.toolCalls, name) }
-func (h *mockHandler) OnToolResult(name string, result string) { h.toolResults = append(h.toolResults, name+": "+result) }
+func (h *mockHandler) OnToolCall(name string, args json.RawMessage) {
+	h.toolCalls = append(h.toolCalls, name)
+}
+func (h *mockHandler) OnToolResult(name string, result string) {
+	h.toolResults = append(h.toolResults, name+": "+result)
+}
+func (h *mockHandler) OnUsage(promptTokens int) { h.usages = append(h.usages, promptTokens) }
 
 // setupAgent creates a fully wired Agent with a mock SSE server.
 func setupAgent(t *testing.T, handler http.HandlerFunc) (*Agent, *mockHandler, *httptest.Server) {
@@ -96,13 +102,13 @@ func TestRunTurnWithToolCall(t *testing.T) {
 			// First call: LLM requests a tool call.
 			fmt.Fprintln(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"shell","arguments":"{\"command\":\"echo hi\"}"}}]}}]}`)
 			fmt.Fprintln(w)
-			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}`)
 			fmt.Fprintln(w)
 		} else {
 			// Second call: LLM responds with text after seeing tool result.
 			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"Done"}}]}`)
 			fmt.Fprintln(w)
-			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":20,"completion_tokens":3,"total_tokens":23}}`)
 			fmt.Fprintln(w)
 		}
 		fmt.Fprintln(w, "data: [DONE]")
@@ -122,6 +128,9 @@ func TestRunTurnWithToolCall(t *testing.T) {
 	}
 	if callCount != 2 {
 		t.Errorf("LLM was called %d times, want 2 (tool call + follow-up)", callCount)
+	}
+	if len(h.usages) == 0 {
+		t.Error("OnUsage was not called")
 	}
 }
 

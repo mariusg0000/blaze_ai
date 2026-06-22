@@ -34,6 +34,8 @@ type Handler interface {
 	OnToolCall(name string, args json.RawMessage)
 	// OnToolResult is called after a tool has finished.
 	OnToolResult(name string, result string)
+	// OnUsage is called after each provider response with prompt token count.
+	OnUsage(promptTokens int)
 }
 
 // Agent is the core runtime that ties all packages together and drives the conversation loop.
@@ -41,9 +43,10 @@ type Handler interface {
 // WHAT:  Holds all runtime state and orchestrates the LLM call cycle.
 // WHY:   One struct ties config, session, skills, prompt, tools, and provider together.
 // PARAMS: Config — loaded configuration; Session — current conversation session;
-//         Active — in-memory active skills list; Builder — prompt assembler;
-//         Tools — tool registry; Provider — LLM client; Handler — transport callbacks;
-//         ModelID — current provider/model_name; WorkDir — current work folder; OS — detected platform.
+//
+//	Active — in-memory active skills list; Builder — prompt assembler;
+//	Tools — tool registry; Provider — LLM client; Handler — transport callbacks;
+//	ModelID — current provider/model_name; WorkDir — current work folder; OS — detected platform.
 type Agent struct {
 	Config    *config.Config
 	Session   *session.Session
@@ -65,8 +68,10 @@ type Agent struct {
 // WHAT:  Constructs the runtime agent with all dependencies wired.
 // WHY:   The main entrypoint calls this to assemble the agent before starting the REPL.
 // PARAMS: cfg — loaded config; sess — session (new or resumed); os — detected platform;
-//         builtinSkillsDir — path to builtin skills; promptsDir — path to prompt files;
-//         workDir — initial work folder; handler — transport implementation.
+//
+//	builtinSkillsDir — path to builtin skills; promptsDir — path to prompt files;
+//	workDir — initial work folder; handler — transport implementation.
+//
 // RETURNS: *Agent — ready to run; error if provider client cannot be created.
 func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtinSkillsDir, promptsDir, workDir string, handler Handler) (*Agent, error) {
 	modelID := cfg.LastModel
@@ -114,7 +119,9 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 // WHAT:  Executes one full conversation turn including tool call loop.
 // WHY:   The REPL calls this for each user input.
 // HOW:   Appends user message, builds prompt, streams response, executes tool calls,
-//         appends assistant + tool result messages, loops if tools were called.
+//
+//	appends assistant + tool result messages, loops if tools were called.
+//
 // PARAMS: userInput — the user's text input.
 // RETURNS: error if the LLM call or tool execution fails fatally.
 func (a *Agent) RunTurn(userInput string) error {
@@ -153,6 +160,11 @@ func (a *Agent) RunTurn(userInput string) error {
 		resp, err := a.Provider.Stream(messages, toolDefs, a.Handler.OnContent)
 		if err != nil {
 			return fmt.Errorf("LLM stream failed: %w", err)
+		}
+
+		// Report prompt token usage to the transport.
+		if resp.Usage != nil && a.Handler != nil {
+			a.Handler.OnUsage(resp.Usage.PromptTokens)
 		}
 
 		// Build assistant message.
