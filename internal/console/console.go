@@ -43,6 +43,8 @@ type Console struct {
 	Spinner *Spinner
 
 	contentStarted   bool
+	contentBuffer    string
+	inCodeBlock      bool
 	lastPromptTokens int
 	lineOpen         bool
 }
@@ -71,10 +73,22 @@ func NewConsole(agent *runtime.Agent) *Console {
 //
 // WHAT:  Forces separators and tool markers onto a fresh line after streamed content.
 func (c *Console) ensureLineBreakBeforeBlock() {
+	c.flushPendingContent()
 	if c.lineOpen {
 		fmt.Fprintln(c.Out)
 		c.lineOpen = false
 	}
+}
+
+// flushPendingContent renders any buffered assistant content that has not ended with a newline yet.
+//
+// WHAT:  Flushes the current partial Markdown line before non-content output or turn end.
+func (c *Console) flushPendingContent() {
+	if c.contentBuffer == "" {
+		return
+	}
+	c.renderLine(c.contentBuffer, false)
+	c.contentBuffer = ""
 }
 
 // color wraps text with an ANSI color code if TTY, otherwise returns plain text.
@@ -178,10 +192,21 @@ func (c *Console) OnContent(delta string) {
 		c.contentStarted = true
 		c.Spinner.Stop()
 		fmt.Fprint(c.Out, c.color(colorOrange, c.bold("[BLAZE] ")))
-		c.lineOpen = true
 	}
-	fmt.Fprint(c.Out, delta)
-	c.lineOpen = !strings.HasSuffix(delta, "\n")
+	c.contentBuffer += delta
+	for {
+		idx := strings.IndexByte(c.contentBuffer, '\n')
+		if idx < 0 {
+			break
+		}
+		line := c.contentBuffer[:idx]
+		c.renderLine(line, true)
+		c.contentBuffer = c.contentBuffer[idx+1:]
+	}
+	if c.contentBuffer != "" && !c.inCodeBlock && !shouldBufferMarkdownLine(c.contentBuffer) {
+		c.writeRenderedLine(c.renderInline(c.contentBuffer), false)
+		c.contentBuffer = ""
+	}
 }
 
 // OnToolCall is called before a tool is executed.
@@ -235,6 +260,213 @@ func (c *Console) OnToolResult(name string, result string) {
 	c.separator()
 }
 
+// renderLine renders one Markdown line using a minimal terminal-friendly subset.
+//
+// WHAT:  Supports headings, bullets, numbered lists, code fences, and simple inline markers.
+// WHY:   Full Markdown parsing is unnecessary for the console REPL, but raw Markdown reads poorly.
+// PARAMS: line — one line without trailing newline; terminated — whether the source line ended with '\n'.
+func (c *Console) renderLine(line string, terminated bool) {
+	trimmed := strings.TrimSpace(line)
+
+	if strings.HasPrefix(trimmed, "```") {
+		c.inCodeBlock = !c.inCodeBlock
+		if terminated {
+			c.writeRenderedLine("", true)
+		}
+		return
+	}
+
+	if c.inCodeBlock {
+		c.writeRenderedLine("    "+line, terminated)
+		return
+	}
+
+	if line == "" {
+		c.writeRenderedLine("", terminated)
+		return
+	}
+
+	if isTableSeparator(line) {
+		if terminated {
+			c.writeRenderedLine("", true)
+		}
+		return
+	}
+
+	if isTableRow(line) {
+		cells := splitTableRow(line)
+		c.writeRenderedLine("  "+strings.Join(cells, "  -  "), terminated)
+		return
+	}
+
+	if level, title, ok := parseHeading(line); ok {
+		rendered := c.renderInline(title)
+		if c.IsTTY {
+			rendered = c.color(colorBlue, c.bold(rendered))
+		}
+		if level == 1 {
+			rendered = strings.ToUpper(rendered)
+		}
+		c.writeRenderedLine(rendered, terminated)
+		return
+	}
+
+	if item, ok := parseBullet(line); ok {
+		c.writeRenderedLine("  - "+c.renderInline(item), terminated)
+		return
+	}
+
+	if prefix, item, ok := parseNumbered(line); ok {
+		c.writeRenderedLine("  "+prefix+" "+c.renderInline(item), terminated)
+		return
+	}
+
+	c.writeRenderedLine(c.renderInline(line), terminated)
+}
+
+// writeRenderedLine writes one rendered line and updates line-open tracking.
+func (c *Console) writeRenderedLine(text string, terminated bool) {
+	if terminated {
+		fmt.Fprintln(c.Out, text)
+		c.lineOpen = false
+		return
+	}
+	fmt.Fprint(c.Out, text)
+	c.lineOpen = text != ""
+}
+
+// renderInline strips or styles simple inline Markdown markers within a rendered line.
+func (c *Console) renderInline(text string) string {
+	text = c.toggleDelimited(text, "**", func(s string) string {
+		if c.IsTTY {
+			return c.bold(s)
+		}
+		return s
+	})
+	text = c.toggleDelimited(text, "`", func(s string) string {
+		if c.IsTTY {
+			return c.color(colorOrange, s)
+		}
+		return s
+	})
+	return text
+}
+
+// toggleDelimited replaces paired delimiters with styled or plain inner text.
+func (c *Console) toggleDelimited(text, delim string, render func(string) string) string {
+	var b strings.Builder
+	for {
+		start := strings.Index(text, delim)
+		if start < 0 {
+			b.WriteString(text)
+			return b.String()
+		}
+		b.WriteString(text[:start])
+		text = text[start+len(delim):]
+		end := strings.Index(text, delim)
+		if end < 0 {
+			b.WriteString(delim)
+			b.WriteString(text)
+			return b.String()
+		}
+		b.WriteString(render(text[:end]))
+		text = text[end+len(delim):]
+	}
+}
+
+// parseHeading extracts ATX headings (#, ##, ###...) from a line.
+func parseHeading(line string) (int, string, bool) {
+	trimmedLeft := strings.TrimLeft(line, " ")
+	level := 0
+	for level < len(trimmedLeft) && trimmedLeft[level] == '#' {
+		level++
+	}
+	if level == 0 || level >= len(trimmedLeft) || trimmedLeft[level] != ' ' {
+		return 0, "", false
+	}
+	return level, strings.TrimSpace(trimmedLeft[level+1:]), true
+}
+
+// parseBullet extracts unordered list items from a line.
+func parseBullet(line string) (string, bool) {
+	trimmedLeft := strings.TrimLeft(line, " ")
+	if strings.HasPrefix(trimmedLeft, "- ") || strings.HasPrefix(trimmedLeft, "* ") {
+		return strings.TrimSpace(trimmedLeft[2:]), true
+	}
+	return "", false
+}
+
+// parseNumbered extracts numbered list items from a line.
+func parseNumbered(line string) (string, string, bool) {
+	trimmedLeft := strings.TrimLeft(line, " ")
+	idx := 0
+	for idx < len(trimmedLeft) && trimmedLeft[idx] >= '0' && trimmedLeft[idx] <= '9' {
+		idx++
+	}
+	if idx == 0 || idx+1 >= len(trimmedLeft) || trimmedLeft[idx] != '.' || trimmedLeft[idx+1] != ' ' {
+		return "", "", false
+	}
+	return trimmedLeft[:idx+1], strings.TrimSpace(trimmedLeft[idx+2:]), true
+}
+
+// shouldBufferMarkdownLine reports whether a partial line should wait for completion.
+func shouldBufferMarkdownLine(line string) bool {
+	trimmedLeft := strings.TrimLeft(line, " ")
+	if trimmedLeft == "" {
+		return false
+	}
+	if strings.HasPrefix(trimmedLeft, "```") || strings.HasPrefix(trimmedLeft, "#") {
+		return true
+	}
+	if strings.HasPrefix(trimmedLeft, "- ") || strings.HasPrefix(trimmedLeft, "* ") {
+		return true
+	}
+	if trimmedLeft[0] >= '0' && trimmedLeft[0] <= '9' {
+		return true
+	}
+	if strings.HasPrefix(trimmedLeft, "|") {
+		return true
+	}
+	if strings.Contains(line, "**") || strings.Contains(line, "`") {
+		return true
+	}
+	return false
+}
+
+// isTableSeparator detects Markdown table separator lines like |---|---|.
+func isTableSeparator(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "|") {
+		return false
+	}
+	stripped := strings.ReplaceAll(trimmed, "|", "")
+	stripped = strings.ReplaceAll(stripped, "-", "")
+	stripped = strings.ReplaceAll(stripped, " ", "")
+	return stripped == ""
+}
+
+// isTableRow detects Markdown table data lines starting and ending with |.
+func isTableRow(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|") && !isTableSeparator(line)
+}
+
+// splitTableRow extracts cell texts from a | a | b | c | table row.
+func splitTableRow(line string) []string {
+	trimmed := strings.TrimSpace(line)
+	trimmed = strings.TrimPrefix(trimmed, "|")
+	trimmed = strings.TrimSuffix(trimmed, "|")
+	parts := strings.Split(trimmed, "|")
+	cells := make([]string, 0, len(parts))
+	for _, p := range parts {
+		cell := strings.TrimSpace(p)
+		if cell != "" {
+			cells = append(cells, cell)
+		}
+	}
+	return cells
+}
+
 // promptLabel returns the colored input prompt label.
 //
 // WHAT:  Builds the [USER/(provider/model)] > label.
@@ -286,6 +518,8 @@ func (c *Console) Run() error {
 
 		// Start spinner and reset content state before LLM call.
 		c.contentStarted = false
+		c.contentBuffer = ""
+		c.inCodeBlock = false
 		c.lastPromptTokens = 0
 		c.lineOpen = false
 		c.Spinner.Start()
@@ -296,6 +530,7 @@ func (c *Console) Run() error {
 			fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("error: %v", err)))
 			c.lineOpen = false
 		}
+		c.flushPendingContent()
 		fmt.Fprintln(c.Out)
 		c.lineOpen = false
 		c.responseSeparator()

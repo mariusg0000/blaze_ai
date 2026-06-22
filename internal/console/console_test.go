@@ -73,6 +73,89 @@ func TestOnContent(t *testing.T) {
 	}
 }
 
+// TestOnContentHeading verifies headings are rendered without markdown markers.
+func TestOnContentHeading(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnContent("### Title\n")
+	output := out.String()
+	if strings.Contains(output, "###") {
+		t.Errorf("output should not contain heading markers: %q", output)
+	}
+	if !strings.Contains(output, "Title") {
+		t.Errorf("output missing heading text: %q", output)
+	}
+}
+
+// TestOnContentBullet verifies bullets are normalized for terminal output.
+func TestOnContentBullet(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnContent("- item\n")
+	output := out.String()
+	if !strings.Contains(output, "  - item") {
+		t.Errorf("output missing normalized bullet: %q", output)
+	}
+}
+
+// TestOnContentCodeFence verifies fenced code blocks are indented and fence lines are hidden.
+func TestOnContentCodeFence(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnContent("```\n")
+	c.OnContent("fmt.Println(42)\n")
+	c.OnContent("```\n")
+	output := out.String()
+	if strings.Contains(output, "```") {
+		t.Errorf("output should not contain fence markers: %q", output)
+	}
+	if !strings.Contains(output, "    fmt.Println(42)") {
+		t.Errorf("output missing indented code line: %q", output)
+	}
+}
+
+// TestOnContentBold verifies **bold** markers are stripped on complete lines.
+func TestOnContentBold(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnContent("**Important** text\n")
+	output := out.String()
+	if strings.Contains(output, "**") {
+		t.Errorf("output should not contain raw ** markers: %q", output)
+	}
+	if !strings.Contains(output, "Important") {
+		t.Errorf("output missing bold text: %q", output)
+	}
+}
+
+// TestOnContentBoldSplit verifies bold rendered correctly when split across chunks.
+func TestOnContentBoldSplit(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnContent("**Impor")
+	c.OnContent("tant** text\n")
+	output := out.String()
+	if strings.Contains(output, "**") {
+		t.Errorf("output should not contain raw ** markers: %q", output)
+	}
+	if !strings.Contains(output, "Important") {
+		t.Errorf("output missing bold text: %q", output)
+	}
+}
+
+// TestOnContentTable verifies table rows are flattened and separators removed.
+func TestOnContentTable(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnContent("| A | B | C |\n")
+	c.OnContent("|---|---|---|\n")
+	c.OnContent("| 1 | 2 | 3 |\n")
+	output := out.String()
+	if strings.Contains(output, "|") {
+		t.Errorf("output should not contain raw pipe characters: %q", output)
+	}
+	if !strings.Contains(output, "A") || !strings.Contains(output, "B") || !strings.Contains(output, "C") {
+		t.Errorf("output missing table cell text: %q", output)
+	}
+	if strings.Contains(output, "---") {
+		t.Errorf("output should not contain table separator: %q", output)
+	}
+}
+
 // TestOnToolCall verifies tool call display.
 func TestOnToolCall(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
