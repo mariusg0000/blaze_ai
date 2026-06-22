@@ -7,7 +7,6 @@
 package runtime
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -30,8 +29,8 @@ import (
 type Handler interface {
 	// OnContent is called for each streaming text chunk from the LLM.
 	OnContent(delta string)
-	// OnToolCall is called before a tool is executed.
-	OnToolCall(name string, args json.RawMessage)
+	// OnToolCall is called before a tool is executed with a formatted display string.
+	OnToolCall(name string, args string)
 	// OnToolResult is called after a tool has finished.
 	OnToolResult(name string, result string)
 	// OnUsage is called after each provider response with prompt token count.
@@ -198,7 +197,7 @@ func (a *Agent) RunTurn(userInput string) error {
 
 		// Execute tool calls and append results.
 		for _, tc := range resp.ToolCalls {
-			a.Handler.OnToolCall(tc.Name, tc.Arguments)
+			a.Handler.OnToolCall(tc.Name, a.Tools.FormatArgs(tc.Name, tc.Arguments))
 
 			tool := a.Tools.Get(tc.Name)
 			if tool == nil {

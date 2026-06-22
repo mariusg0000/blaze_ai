@@ -24,6 +24,8 @@ type Tool interface {
 	Parameters() json.RawMessage
 	// Execute runs the tool with the given JSON arguments and returns a result string.
 	Execute(args json.RawMessage) string
+	// FormatArgs returns a human-readable summary of the tool call arguments for display.
+	FormatArgs(args json.RawMessage) string
 }
 
 // Registry holds all native tools keyed by name.
@@ -76,13 +78,27 @@ func (r *Registry) All() []Tool {
 	return result
 }
 
+// FormatArgs returns a human-readable summary of a tool call for display.
+//
+// WHAT:  Looks up the tool by name and calls its FormatArgs. Falls back to raw JSON.
+// PARAMS: name — tool name; args — raw JSON arguments.
+// RETURNS: string — formatted display string.
+func (r *Registry) FormatArgs(name string, args json.RawMessage) string {
+	if t, ok := r.tools[name]; ok {
+		if formatted := t.FormatArgs(args); formatted != "" {
+			return formatted
+		}
+	}
+	return string(args)
+}
+
 // OpenAITool is the OpenAI-compatible tool definition sent in chat completion requests.
 //
 // WHAT:  Represents one tool in the OpenAI tools array.
 // PARAMS: Type — always "function"; Function — the function definition.
 type OpenAITool struct {
-	Type     string       `json:"type"`
-	Function FunctionDef  `json:"function"`
+	Type     string      `json:"type"`
+	Function FunctionDef `json:"function"`
 }
 
 // FunctionDef defines the function interface for the LLM.
@@ -129,12 +145,14 @@ func AllToOpenAI(r *Registry) []OpenAITool {
 //
 // WHAT:  Tool call in the exact format the OpenAI API expects for assistant messages.
 // WHY:   The API requires type:"function" and nested function object; our internal ToolCall
-//        uses a flat structure without JSON tags that doesn't match.
+//
+//	uses a flat structure without JSON tags that doesn't match.
+//
 // PARAMS: ID — call identifier; Type — always "function"; Function — name and arguments.
 type OpenAIToolCall struct {
-	ID       string          `json:"id"`
-	Type     string          `json:"type"`
-	Function OpenAIFunction  `json:"function"`
+	ID       string         `json:"id"`
+	Type     string         `json:"type"`
+	Function OpenAIFunction `json:"function"`
 }
 
 // OpenAIFunction holds the function name and arguments in the OpenAI API format.

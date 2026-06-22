@@ -38,6 +38,15 @@ func (t *ReplaceBlockTool) Name() string {
 	return "replace_block"
 }
 
+// FormatArgs extracts the file path for display.
+func (t *ReplaceBlockTool) FormatArgs(args json.RawMessage) string {
+	parsed, err := ParseToolCallArgs[ReplaceBlockArgs](args)
+	if err != nil || parsed.FilePath == "" {
+		return ""
+	}
+	return parsed.FilePath
+}
+
 // Description returns the human-readable description for the LLM.
 func (t *ReplaceBlockTool) Description() string {
 	return "Replace an exact block of text in a file with a new block. The old block must match exactly."

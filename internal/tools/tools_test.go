@@ -4,6 +4,8 @@ package tools
 import (
 	"encoding/json"
 	"testing"
+
+	"blazeai/internal/platform"
 )
 
 // dummyTool is a minimal Tool implementation for registry tests.
@@ -12,10 +14,11 @@ type dummyTool struct {
 	desc string
 }
 
-func (d *dummyTool) Name() string                 { return d.name }
-func (d *dummyTool) Description() string           { return d.desc }
-func (d *dummyTool) Parameters() json.RawMessage   { return json.RawMessage(`{"type":"object"}`) }
-func (d *dummyTool) Execute(args json.RawMessage) string { return "ok" }
+func (d *dummyTool) Name() string                           { return d.name }
+func (d *dummyTool) Description() string                    { return d.desc }
+func (d *dummyTool) Parameters() json.RawMessage            { return json.RawMessage(`{"type":"object"}`) }
+func (d *dummyTool) Execute(args json.RawMessage) string    { return "ok" }
+func (d *dummyTool) FormatArgs(args json.RawMessage) string { return "" }
 
 // TestRegistryRegisterAndGet verifies basic register and lookup.
 func TestRegistryRegisterAndGet(t *testing.T) {
@@ -103,5 +106,60 @@ func TestParseToolCallArgsInvalid(t *testing.T) {
 	_, err := ParseToolCallArgs[ShellArgs](args)
 	if err == nil {
 		t.Fatal("ParseToolCallArgs() expected error for invalid JSON, got nil")
+	}
+}
+
+// TestRegistryFormatArgsFallback verifies fallback to raw JSON when FormatArgs returns empty.
+func TestRegistryFormatArgsFallback(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&dummyTool{name: "test", desc: "a test tool"})
+	result := r.FormatArgs("test", json.RawMessage(`{"key":"value"}`))
+	if result != `{"key":"value"}` {
+		t.Errorf("FormatArgs() = %q, want raw JSON fallback", result)
+	}
+}
+
+// TestRegistryFormatArgsMissingTool verifies fallback for unknown tool.
+func TestRegistryFormatArgsMissingTool(t *testing.T) {
+	r := NewRegistry()
+	result := r.FormatArgs("unknown", json.RawMessage(`{"x":1}`))
+	if result != `{"x":1}` {
+		t.Errorf("FormatArgs() = %q, want raw JSON fallback for missing tool", result)
+	}
+}
+
+// TestShellFormatArgs verifies shell tool formats command for display.
+func TestShellFormatArgs(t *testing.T) {
+	s := NewShellTool(platform.Linux)
+	result := s.FormatArgs(json.RawMessage(`{"command":"cat '/path/file'"}`))
+	if result != "cat '/path/file'" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "cat '/path/file'")
+	}
+}
+
+// TestLoadSkillFormatArgs verifies load_skill formats name for display.
+func TestLoadSkillFormatArgs(t *testing.T) {
+	l := NewLoadSkillTool(nil)
+	result := l.FormatArgs(json.RawMessage(`{"name":"memory.md"}`))
+	if result != "memory" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "memory")
+	}
+}
+
+// TestUnloadSkillFormatArgs verifies unload_skill formats name for display.
+func TestUnloadSkillFormatArgs(t *testing.T) {
+	u := NewUnloadSkillTool(nil)
+	result := u.FormatArgs(json.RawMessage(`{"name":"memory"}`))
+	if result != "memory" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "memory")
+	}
+}
+
+// TestReplaceBlockFormatArgs verifies replace_block formats file path for display.
+func TestReplaceBlockFormatArgs(t *testing.T) {
+	r := NewReplaceBlockTool()
+	result := r.FormatArgs(json.RawMessage(`{"file_path":"/path/to/file.go","old_block":"old","new_block":"new"}`))
+	if result != "/path/to/file.go" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "/path/to/file.go")
 	}
 }

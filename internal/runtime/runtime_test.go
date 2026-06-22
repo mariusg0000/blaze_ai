@@ -25,7 +25,7 @@ type mockHandler struct {
 }
 
 func (h *mockHandler) OnContent(delta string) { h.content = append(h.content, delta) }
-func (h *mockHandler) OnToolCall(name string, args json.RawMessage) {
+func (h *mockHandler) OnToolCall(name string, args string) {
 	h.toolCalls = append(h.toolCalls, name)
 }
 func (h *mockHandler) OnToolResult(name string, result string) {

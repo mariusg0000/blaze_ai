@@ -47,6 +47,15 @@ func (s *ShellTool) Name() string {
 	return "shell"
 }
 
+// FormatArgs extracts the command for display.
+func (s *ShellTool) FormatArgs(args json.RawMessage) string {
+	parsed, err := ParseToolCallArgs[ShellArgs](args)
+	if err != nil || parsed.Command == "" {
+		return ""
+	}
+	return parsed.Command
+}
+
 // Description returns the human-readable description for the LLM.
 func (s *ShellTool) Description() string {
 	return "Execute a shell command on the host. Returns stdout, stderr, and exit_code."
@@ -75,7 +84,9 @@ func (s *ShellTool) Parameters() json.RawMessage {
 // WHAT:  Executes the command via the platform shell and returns formatted output.
 // WHY:   This is the primary execution path for the agent.
 // HOW:   Resolves the shell, starts it in its own process group when supported, waits with timeout,
-//        and kills the full process group on timeout to avoid background children keeping pipes open.
+//
+//	and kills the full process group on timeout to avoid background children keeping pipes open.
+//
 // PARAMS: args — raw JSON with command and optional timeout.
 // RETURNS: string — formatted stdout/stderr/exit_code, or "timeout <N>s exceeded" on timeout.
 func (s *ShellTool) Execute(args json.RawMessage) string {

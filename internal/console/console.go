@@ -6,7 +6,6 @@
 package console
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -18,13 +17,14 @@ import (
 
 // ANSI color codes for TTY output.
 const (
-	colorReset  = "\033[0m"
-	colorBold   = "\033[1m"
-	colorRed    = "\033[31m"
-	colorGreen  = "\033[32m"
-	colorBlue   = "\033[34m"
-	colorPurple = "\033[35m"
-	colorOrange = "\033[33m"
+	colorReset       = "\033[0m"
+	colorBold        = "\033[1m"
+	colorRed         = "\033[31m"
+	colorGreen       = "\033[32m"
+	colorBrightGreen = "\033[1;32m"
+	colorBlue        = "\033[34m"
+	colorPurple      = "\033[35m"
+	colorOrange      = "\033[33m"
 )
 
 // Console is the console transport implementing runtime.Handler.
@@ -45,6 +45,7 @@ type Console struct {
 	contentStarted   bool
 	contentBuffer    string
 	inCodeBlock      bool
+	inToolGroup      bool
 	lastPromptTokens int
 	lineOpen         bool
 }
@@ -59,13 +60,14 @@ func NewConsole(agent *runtime.Agent) *Console {
 	in := os.Stdin
 	isTTY := isTerminal(out)
 	return &Console{
-		Out:      out,
-		In:       in,
-		IsTTY:    isTTY,
-		Agent:    agent,
-		Reader:   NewReader(in, isTTY),
-		Spinner:  NewSpinner(out, isTTY),
-		lineOpen: false,
+		Out:         out,
+		In:          in,
+		IsTTY:       isTTY,
+		Agent:       agent,
+		Reader:      NewReader(in, isTTY),
+		Spinner:     NewSpinner(out, isTTY),
+		lineOpen:    false,
+		inToolGroup: false,
 	}
 }
 
@@ -89,6 +91,29 @@ func (c *Console) flushPendingContent() {
 	}
 	c.renderLine(c.contentBuffer, false)
 	c.contentBuffer = ""
+}
+
+// openToolGroup prints the separator that starts a consecutive group of tool calls.
+//
+// WHAT:  Visually delimits the beginning of a tool batch.
+func (c *Console) openToolGroup() {
+	if c.inToolGroup {
+		return
+	}
+	c.ensureLineBreakBeforeBlock()
+	c.separator()
+	c.inToolGroup = true
+}
+
+// closeToolGroup prints the separator that ends a consecutive group of tool calls.
+//
+// WHAT:  Visually delimits the end of a tool batch.
+func (c *Console) closeToolGroup() {
+	if !c.inToolGroup {
+		return
+	}
+	c.separator()
+	c.inToolGroup = false
 }
 
 // color wraps text with an ANSI color code if TTY, otherwise returns plain text.
@@ -188,6 +213,9 @@ func (c *Console) OnUsage(promptTokens int) {
 // WHAT:  Streams LLM text content to the console.
 // PARAMS: delta — the text chunk from the LLM.
 func (c *Console) OnContent(delta string) {
+	if c.inToolGroup {
+		c.closeToolGroup()
+	}
 	if !c.contentStarted {
 		c.contentStarted = true
 		c.Spinner.Stop()
@@ -214,50 +242,138 @@ func (c *Console) OnContent(delta string) {
 //
 // WHAT:  Displays a tool call notification.
 // PARAMS: name — tool name; args — raw JSON arguments.
-func (c *Console) OnToolCall(name string, args json.RawMessage) {
+func (c *Console) OnToolCall(name string, args string) {
 	if !c.contentStarted {
 		c.contentStarted = true
 		c.Spinner.Stop()
 	}
-	c.ensureLineBreakBeforeBlock()
-	c.separator()
-	argStr := string(args)
+	if !c.inToolGroup {
+		c.openToolGroup()
+	}
+	argStr := args
 	if len(argStr) > 80 {
 		argStr = argStr[:77] + "..."
 	}
-	fmt.Fprintf(c.Out, "%s %s(%s)\n",
-		c.color(colorGreen, c.bold("[TOOL CALL]")),
-		c.bold(name),
-		argStr,
-	)
+	if argStr != "" {
+		fmt.Fprintf(c.Out, "%s %s - %s\n",
+			c.color(colorGreen, c.bold("[TOOL CALL]")),
+			c.bold(name),
+			argStr,
+		)
+	} else {
+		fmt.Fprintf(c.Out, "%s %s\n",
+			c.color(colorGreen, c.bold("[TOOL CALL]")),
+			c.bold(name),
+		)
+	}
 	c.lineOpen = false
 }
 
 // OnToolResult is called after a tool has finished.
-// Prints a compact one-line tool result marker.
+// Prints a compact one-line tool result marker with a status badge and useful preview.
 //
-// WHAT:  Displays a tool result notification.
-// PARAMS: name — tool name; result — the tool output.
+// WHAT:  Displays tool result status and the most relevant output line.
+// PARAMS: name — tool name; result — the raw tool output.
 func (c *Console) OnToolResult(name string, result string) {
-	status := "ok"
-	color := colorGreen
-	if strings.HasPrefix(result, "error") || strings.HasPrefix(result, "timeout") {
-		status = "error"
-		color = colorRed
+	badge, content, colorCode := parseToolResult(result)
+	if content != "" {
+		content = strings.ReplaceAll(content, "\n", " ")
+		if len(content) > 100 {
+			content = content[:97] + "..."
+		}
 	}
-	resultPreview := result
-	if len(resultPreview) > 100 {
-		resultPreview = resultPreview[:97] + "..."
+	if content != "" {
+		fmt.Fprintf(c.Out, "%s %s [%s] - %s\n",
+			c.color(colorGreen, c.bold("[TOOL RESPONSE]")),
+			c.bold(name),
+			c.color(colorCode, c.bold(badge)),
+			content,
+		)
+	} else {
+		fmt.Fprintf(c.Out, "%s %s [%s]\n",
+			c.color(colorGreen, c.bold("[TOOL RESPONSE]")),
+			c.bold(name),
+			c.color(colorCode, c.bold(badge)),
+		)
 	}
-	resultPreview = strings.ReplaceAll(resultPreview, "\n", " ")
-	fmt.Fprintf(c.Out, "%s %s [%s] %s\n",
-		c.color(color, c.bold("[TOOL RESPONSE]")),
-		c.bold(name),
-		status,
-		resultPreview,
-	)
 	c.lineOpen = false
-	c.separator()
+}
+
+// parseToolResult extracts a display badge, useful content, and color from raw tool output.
+//
+// WHAT:  Normalizes shell and generic tool results into a compact status badge.
+// WHY:   Raw tool output contains redundant labels like "exit_code:" and "stdout:".
+// RETURNS: badge — OK/ERROR/TIMEOUT; content — the most relevant output text; colorCode — ANSI color.
+func parseToolResult(result string) (badge, content, colorCode string) {
+	result = strings.TrimSpace(result)
+
+	if strings.HasPrefix(result, "timeout") {
+		return "TIMEOUT", strings.TrimSpace(strings.TrimPrefix(result, "timeout")), colorOrange
+	}
+
+	if strings.HasPrefix(result, "exit_code:") {
+		rest := strings.TrimSpace(strings.TrimPrefix(result, "exit_code:"))
+		newlineIdx := strings.Index(rest, "\n")
+		if newlineIdx < 0 {
+			return "OK", rest, colorBrightGreen
+		}
+
+		exitCodeStr := strings.TrimSpace(rest[:newlineIdx])
+		exitCode := 0
+		fmt.Sscanf(exitCodeStr, "%d", &exitCode)
+		remaining := rest[newlineIdx+1:]
+		stdout := extractToolSection(remaining, "stdout:")
+		stderr := extractToolSection(remaining, "stderr:")
+
+		if exitCode != 0 {
+			if stderr != "" {
+				return "ERROR", stderr, colorRed
+			}
+			if stdout != "" {
+				return "ERROR", stdout, colorRed
+			}
+			return "ERROR", "exit code " + exitCodeStr, colorRed
+		}
+		if stdout != "" {
+			return "OK", stdout, colorBrightGreen
+		}
+		return "OK", "", colorBrightGreen
+	}
+
+	if strings.HasPrefix(result, "error:") {
+		msg := strings.TrimSpace(strings.TrimPrefix(result, "error:"))
+		if idx := strings.Index(msg, "\n"); idx >= 0 {
+			msg = strings.TrimSpace(msg[:idx])
+		}
+		return "ERROR", msg, colorRed
+	}
+
+	return "OK", result, colorBrightGreen
+}
+
+// extractToolSection extracts the content of a labeled section such as "stdout:" or "stderr:".
+//
+// WHAT:  Pulls the text under a section label until the next known section label or EOF.
+// PARAMS: text — tool output after the exit_code line; label — section label to extract.
+// RETURNS: string — trimmed section content or empty if label not found.
+func extractToolSection(text, label string) string {
+	idx := strings.Index(text, label)
+	if idx < 0 {
+		return ""
+	}
+	after := text[idx+len(label):]
+	after = strings.TrimPrefix(after, "\n")
+
+	end := len(after)
+	for _, other := range []string{"stdout:", "stderr:"} {
+		if other == label {
+			continue
+		}
+		if i := strings.Index(after, other); i >= 0 && i < end {
+			end = i
+		}
+	}
+	return strings.TrimSpace(after[:end])
 }
 
 // renderLine renders one Markdown line using a minimal terminal-friendly subset.
@@ -520,6 +636,7 @@ func (c *Console) Run() error {
 		c.contentStarted = false
 		c.contentBuffer = ""
 		c.inCodeBlock = false
+		c.inToolGroup = false
 		c.lastPromptTokens = 0
 		c.lineOpen = false
 		c.Spinner.Start()
@@ -533,6 +650,7 @@ func (c *Console) Run() error {
 		c.flushPendingContent()
 		fmt.Fprintln(c.Out)
 		c.lineOpen = false
+		c.closeToolGroup()
 		c.responseSeparator()
 	}
 }

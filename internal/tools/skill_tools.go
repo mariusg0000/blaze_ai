@@ -41,6 +41,15 @@ func (t *LoadSkillTool) Name() string {
 	return "load_skill"
 }
 
+// FormatArgs extracts the skill name for display.
+func (t *LoadSkillTool) FormatArgs(args json.RawMessage) string {
+	parsed, err := ParseToolCallArgs[SkillArgs](args)
+	if err != nil || parsed.Name == "" {
+		return ""
+	}
+	return normalizeSkillName(parsed.Name)
+}
+
 // Description returns the human-readable description for the LLM.
 func (t *LoadSkillTool) Description() string {
 	return "Load a skill by name to activate it. The skill's full details will be available in the next prompt."
@@ -99,6 +108,15 @@ func (t *UnloadSkillTool) Name() string {
 	return "unload_skill"
 }
 
+// FormatArgs extracts the skill name for display.
+func (t *UnloadSkillTool) FormatArgs(args json.RawMessage) string {
+	parsed, err := ParseToolCallArgs[SkillArgs](args)
+	if err != nil || parsed.Name == "" {
+		return ""
+	}
+	return normalizeSkillName(parsed.Name)
+}
+
 // Description returns the human-readable description for the LLM.
 func (t *UnloadSkillTool) Description() string {
 	return "Unload a skill by name to deactivate it. The skill's details will no longer be in the prompt."
@@ -139,7 +157,9 @@ func (t *UnloadSkillTool) Execute(args json.RawMessage) string {
 //
 // WHAT:  Strips the optional .md suffix from a skill name.
 // WHY:   Available skills are displayed as filenames like memory.md, while discovery keys use
-//        the basename without extension, like memory.
+//
+//	the basename without extension, like memory.
+//
 // PARAMS: name — the skill name from tool input.
 // RETURNS: string — normalized internal skill name.
 func normalizeSkillName(name string) string {
