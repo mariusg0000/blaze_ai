@@ -1,0 +1,275 @@
+// session_test.go — tests for session creation, loading, appending, closing, and resume.
+// Uses temp directories to avoid touching the real app home.
+package session
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+// TestCreateInDir verifies that a new session is created with an empty message array.
+func TestCreateInDir(t *testing.T) {
+	dir := t.TempDir()
+	s, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() unexpected error: %v", err)
+	}
+	if s.Folder == "" {
+		t.Fatal("Folder is empty")
+	}
+	if len(s.Messages) != 0 {
+		t.Errorf("Messages = %d, want 0", len(s.Messages))
+	}
+	if s.ClosedCleanly {
+		t.Error("ClosedCleanly = true, want false")
+	}
+	path := filepath.Join(s.Folder, "session.json")
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("session.json not created: %v", err)
+	}
+}
+
+// TestLoad verifies that a created session can be loaded back.
+func TestLoad(t *testing.T) {
+	dir := t.TempDir()
+	s, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() failed: %v", err)
+	}
+	loaded, err := Load(s.Folder)
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+	if len(loaded.Messages) != 0 {
+		t.Errorf("Loaded Messages = %d, want 0", len(loaded.Messages))
+	}
+	if loaded.ClosedCleanly {
+		t.Error("Loaded ClosedCleanly = true, want false")
+	}
+	if loaded.Folder != s.Folder {
+		t.Errorf("Loaded Folder = %q, want %q", loaded.Folder, s.Folder)
+	}
+}
+
+// TestLoadMissing verifies that loading a non-existent folder returns an error.
+func TestLoadMissing(t *testing.T) {
+	dir := t.TempDir()
+	_, err := Load(filepath.Join(dir, "nonexistent"))
+	if err == nil {
+		t.Fatal("Load() expected error for missing session, got nil")
+	}
+}
+
+// TestAppend verifies that appending a message persists to disk.
+func TestAppend(t *testing.T) {
+	dir := t.TempDir()
+	s, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() failed: %v", err)
+	}
+	msg := Message{Role: "user", Content: "hello"}
+	if err := s.Append(msg); err != nil {
+		t.Fatalf("Append() unexpected error: %v", err)
+	}
+	if len(s.Messages) != 1 {
+		t.Fatalf("Messages = %d, want 1", len(s.Messages))
+	}
+	loaded, err := Load(s.Folder)
+	if err != nil {
+		t.Fatalf("Load() after Append failed: %v", err)
+	}
+	if len(loaded.Messages) != 1 {
+		t.Errorf("Loaded Messages = %d, want 1", len(loaded.Messages))
+	}
+}
+
+// TestAppendAll verifies appending multiple messages at once.
+func TestAppendAll(t *testing.T) {
+	dir := t.TempDir()
+	s, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() failed: %v", err)
+	}
+	msgs := []Message{
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "hi there"},
+		{Role: "user", Content: "do something"},
+	}
+	if err := s.AppendAll(msgs); err != nil {
+		t.Fatalf("AppendAll() unexpected error: %v", err)
+	}
+	if len(s.Messages) != 3 {
+		t.Fatalf("Messages = %d, want 3", len(s.Messages))
+	}
+	loaded, err := Load(s.Folder)
+	if err != nil {
+		t.Fatalf("Load() after AppendAll failed: %v", err)
+	}
+	if len(loaded.Messages) != 3 {
+		t.Errorf("Loaded Messages = %d, want 3", len(loaded.Messages))
+	}
+}
+
+// TestClose verifies that Close sets closed_cleanly and persists.
+func TestClose(t *testing.T) {
+	dir := t.TempDir()
+	s, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() failed: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close() unexpected error: %v", err)
+	}
+	if !s.ClosedCleanly {
+		t.Error("ClosedCleanly = false after Close, want true")
+	}
+	loaded, err := Load(s.Folder)
+	if err != nil {
+		t.Fatalf("Load() after Close failed: %v", err)
+	}
+	if !loaded.ClosedCleanly {
+		t.Error("Loaded ClosedCleanly = false, want true")
+	}
+}
+
+// TestLastCleanInDir verifies finding the last cleanly closed session.
+func TestLastCleanInDir(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() s1 failed: %v", err)
+	}
+
+	s2, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() s2 failed: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if err := s2.Close(); err != nil {
+		t.Fatalf("Close() s2 failed: %v", err)
+	}
+
+	_, err = CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() s3 failed: %v", err)
+	}
+
+	last, err := LastCleanInDir(dir)
+	if err != nil {
+		t.Fatalf("LastCleanInDir() unexpected error: %v", err)
+	}
+	if last.Folder != s2.Folder {
+		t.Errorf("LastCleanInDir() = %q, want %q (s2)", last.Folder, s2.Folder)
+	}
+}
+
+// TestLastCleanInDirNone verifies error when no clean session exists.
+func TestLastCleanInDirNone(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() failed: %v", err)
+	}
+
+	_, err = LastCleanInDir(dir)
+	if err != ErrNoCleanSession {
+		t.Errorf("LastCleanInDir() err = %v, want ErrNoCleanSession", err)
+	}
+}
+
+// TestLastCleanInDirEmpty verifies error when sessions directory is empty.
+func TestLastCleanInDirEmpty(t *testing.T) {
+	dir := t.TempDir()
+	_, err := LastCleanInDir(dir)
+	if err != ErrNoCleanSession {
+		t.Errorf("LastCleanInDir() err = %v, want ErrNoCleanSession", err)
+	}
+}
+
+// TestLastCleanInDirMissing verifies error when sessions directory does not exist.
+func TestLastCleanInDirMissing(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "nonexistent")
+	_, err := LastCleanInDir(dir)
+	if err != ErrNoCleanSession {
+		t.Errorf("LastCleanInDir() err = %v, want ErrNoCleanSession", err)
+	}
+}
+
+// TestLastCleanPicksNewest verifies that the newest clean session is returned.
+func TestLastCleanPicksNewest(t *testing.T) {
+	dir := t.TempDir()
+
+	s1, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() s1 failed: %v", err)
+	}
+	if err := s1.Close(); err != nil {
+		t.Fatalf("Close() s1 failed: %v", err)
+	}
+
+	time.Sleep(15 * time.Millisecond)
+
+	s2, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() s2 failed: %v", err)
+	}
+	if err := s2.Close(); err != nil {
+		t.Fatalf("Close() s2 failed: %v", err)
+	}
+
+	last, err := LastCleanInDir(dir)
+	if err != nil {
+		t.Fatalf("LastCleanInDir() unexpected error: %v", err)
+	}
+	if last.Folder != s2.Folder {
+		t.Errorf("LastCleanInDir() = %q, want %q (s2 is newer)", last.Folder, s2.Folder)
+	}
+}
+
+// TestSaveRoundTrip verifies that a full conversation persists and loads correctly.
+func TestSaveRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	s, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() failed: %v", err)
+	}
+	msgs := []Message{
+		{Role: "user", Content: "what is 2+2?"},
+		{Role: "assistant", Content: "4"},
+		{Role: "user", Content: "thanks"},
+		{Role: "assistant", Content: "you're welcome"},
+	}
+	if err := s.AppendAll(msgs); err != nil {
+		t.Fatalf("AppendAll() failed: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close() failed: %v", err)
+	}
+
+	loaded, err := Load(s.Folder)
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if len(loaded.Messages) != 4 {
+		t.Fatalf("Loaded Messages = %d, want 4", len(loaded.Messages))
+	}
+	if !loaded.ClosedCleanly {
+		t.Error("Loaded ClosedCleanly = false, want true")
+	}
+}
+
+// TestRandomName verifies that generated names are non-empty and unique.
+func TestRandomName(t *testing.T) {
+	name1 := randomName()
+	name2 := randomName()
+	if name1 == "" {
+		t.Error("randomName() returned empty string")
+	}
+	if name1 == name2 {
+		t.Error("randomName() returned duplicate names")
+	}
+}
