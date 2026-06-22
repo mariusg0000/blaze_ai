@@ -190,7 +190,7 @@ func (b *Builder) BuildRuntimePart(active *skills.ActiveList) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		parts = append(parts, agents)
+		parts = append(parts, "## Project Rules (AGENTS.md)\n\nThe following rules are loaded from the AGENTS.md file in the current working directory. Follow them for all work in this project.\n\n"+agents)
 	}
 
 	// 4. Memory (optional).
@@ -203,7 +203,12 @@ func (b *Builder) BuildRuntimePart(active *skills.ActiveList) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		parts = append(parts, mem)
+		memHeader := "## Memory (memory.md)\n\nThe following is the content of the persistent memory file {APP_HOME}/memory/memory.md. It is injected automatically on every prompt build. Do not use shell to read memory.\n\n"
+		memHeader, err = b.injectVariables(memHeader)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, memHeader+mem)
 	}
 
 	// 5. Skills section (optional).
