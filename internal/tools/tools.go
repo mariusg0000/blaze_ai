@@ -125,6 +125,40 @@ func AllToOpenAI(r *Registry) []OpenAITool {
 	return result
 }
 
+// OpenAIToolCall matches the OpenAI tool call format that must be sent back to the API.
+//
+// WHAT:  Tool call in the exact format the OpenAI API expects for assistant messages.
+// WHY:   The API requires type:"function" and nested function object; our internal ToolCall
+//        uses a flat structure without JSON tags that doesn't match.
+// PARAMS: ID — call identifier; Type — always "function"; Function — name and arguments.
+type OpenAIToolCall struct {
+	ID       string          `json:"id"`
+	Type     string          `json:"type"`
+	Function OpenAIFunction  `json:"function"`
+}
+
+// OpenAIFunction holds the function name and arguments in the OpenAI API format.
+type OpenAIFunction struct {
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
+}
+
+// ToOpenAIToolCall converts an internal ToolCall to the OpenAI API format.
+//
+// WHAT:  Wraps a ToolCall with the type and function fields required by the API.
+// PARAMS: tc — internal tool call.
+// RETURNS: OpenAIToolCall — API-compatible tool call.
+func ToOpenAIToolCall(tc ToolCall) OpenAIToolCall {
+	return OpenAIToolCall{
+		ID:   tc.ID,
+		Type: "function",
+		Function: OpenAIFunction{
+			Name:      tc.Name,
+			Arguments: tc.Arguments,
+		},
+	}
+}
+
 // ToolCall represents a tool call from the LLM response.
 //
 // WHAT:  Holds the parsed tool call from the assistant response.

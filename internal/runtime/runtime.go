@@ -154,7 +154,11 @@ func (a *Agent) RunTurn(userInput string) error {
 			Reasoning: resp.Reasoning,
 		}
 		if len(resp.ToolCalls) > 0 {
-			assistantMsg.ToolCalls = resp.ToolCalls
+			openaiCalls := make([]tools.OpenAIToolCall, 0, len(resp.ToolCalls))
+			for _, tc := range resp.ToolCalls {
+				openaiCalls = append(openaiCalls, tools.ToOpenAIToolCall(tc))
+			}
+			assistantMsg.ToolCalls = openaiCalls
 		}
 
 		// Persist assistant message.

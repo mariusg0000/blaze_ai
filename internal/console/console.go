@@ -226,6 +226,7 @@ func (c *Console) Run() error {
 			fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("error: %v", err)))
 		}
 		fmt.Fprintln(c.Out)
+		c.userSeparator()
 	}
 }
 
