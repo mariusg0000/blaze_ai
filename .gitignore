@@ -1,0 +1,40 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor state
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Go build output
+/bin/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.coverprofile
+coverage.out
+
+# Go workspace and local module cache
+go.work
+go.work.sum
+
+# Environment and secrets
+.env
+.env.*
+.direnv/
+
+# Logs and temp files
+*.log
+tmp/
+temp/
+
+# Local runtime data
+/blazeai/
+/.blazeai/
+app_home/
