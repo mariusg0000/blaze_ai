@@ -139,8 +139,8 @@ type OpenAIToolCall struct {
 
 // OpenAIFunction holds the function name and arguments in the OpenAI API format.
 type OpenAIFunction struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 // ToOpenAIToolCall converts an internal ToolCall to the OpenAI API format.
@@ -154,7 +154,7 @@ func ToOpenAIToolCall(tc ToolCall) OpenAIToolCall {
 		Type: "function",
 		Function: OpenAIFunction{
 			Name:      tc.Name,
-			Arguments: tc.Arguments,
+			Arguments: string(tc.Arguments),
 		},
 	}
 }

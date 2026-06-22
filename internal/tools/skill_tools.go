@@ -6,6 +6,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"blazeai/internal/skills"
 )
@@ -71,8 +72,9 @@ func (t *LoadSkillTool) Execute(args json.RawMessage) string {
 	if parsed.Name == "" {
 		return "error: name is required"
 	}
-	t.active.Load(parsed.Name)
-	return fmt.Sprintf("skill loaded: %s", parsed.Name)
+	name := normalizeSkillName(parsed.Name)
+	t.active.Load(name)
+	return fmt.Sprintf("skill loaded: %s", name)
 }
 
 // UnloadSkillTool removes a skill from the active skills list.
@@ -128,6 +130,18 @@ func (t *UnloadSkillTool) Execute(args json.RawMessage) string {
 	if parsed.Name == "" {
 		return "error: name is required"
 	}
-	t.active.Unload(parsed.Name)
-	return fmt.Sprintf("skill unloaded: %s", parsed.Name)
+	name := normalizeSkillName(parsed.Name)
+	t.active.Unload(name)
+	return fmt.Sprintf("skill unloaded: %s", name)
+}
+
+// normalizeSkillName converts the user-facing skill filename to the internal skill key.
+//
+// WHAT:  Strips the optional .md suffix from a skill name.
+// WHY:   Available skills are displayed as filenames like memory.md, while discovery keys use
+//        the basename without extension, like memory.
+// PARAMS: name — the skill name from tool input.
+// RETURNS: string — normalized internal skill name.
+func normalizeSkillName(name string) string {
+	return strings.TrimSuffix(name, ".md")
 }

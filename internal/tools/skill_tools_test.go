@@ -23,6 +23,23 @@ func TestLoadSkillExecute(t *testing.T) {
 	}
 }
 
+// TestLoadSkillExecuteWithMarkdownSuffix verifies .md names are normalized.
+func TestLoadSkillExecuteWithMarkdownSuffix(t *testing.T) {
+	active := skills.NewActiveList()
+	tool := NewLoadSkillTool(active)
+	args := json.RawMessage(`{"name":"memory.md"}`)
+	result := tool.Execute(args)
+	if !strings.Contains(result, "skill loaded: memory") {
+		t.Errorf("Execute() = %q, want 'skill loaded: memory'", result)
+	}
+	if !active.Has("memory") {
+		t.Error("active list does not contain normalized 'memory' after load")
+	}
+	if active.Has("memory.md") {
+		t.Error("active list should not contain raw 'memory.md' after load")
+	}
+}
+
 // TestLoadSkillExecuteEmptyName verifies error on empty name.
 func TestLoadSkillExecuteEmptyName(t *testing.T) {
 	active := skills.NewActiveList()
@@ -73,6 +90,21 @@ func TestUnloadSkillExecute(t *testing.T) {
 	}
 	if active.Has("memory") {
 		t.Error("active list still contains 'memory' after unload")
+	}
+}
+
+// TestUnloadSkillExecuteWithMarkdownSuffix verifies .md names are normalized on unload.
+func TestUnloadSkillExecuteWithMarkdownSuffix(t *testing.T) {
+	active := skills.NewActiveList()
+	active.Load("memory")
+	tool := NewUnloadSkillTool(active)
+	args := json.RawMessage(`{"name":"memory.md"}`)
+	result := tool.Execute(args)
+	if !strings.Contains(result, "skill unloaded: memory") {
+		t.Errorf("Execute() = %q, want 'skill unloaded: memory'", result)
+	}
+	if active.Has("memory") {
+		t.Error("active list still contains normalized 'memory' after unload")
 	}
 }
 
