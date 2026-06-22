@@ -18,6 +18,7 @@ import (
 // mockAgent creates a minimal agent for console tests (no real provider needed).
 func mockAgent(t *testing.T) *runtime.Agent {
 	t.Helper()
+	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
 	cfg := &config.Config{
 		Providers:      []config.Provider{{Name: "test", Endpoint: "http://localhost", APIKey: "sk-test"}},
