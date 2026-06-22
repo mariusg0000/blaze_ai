@@ -4,6 +4,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -79,9 +80,12 @@ func (t *ReplaceBlockTool) Parameters() json.RawMessage {
 // WHAT:  Performs the text replacement in the target file.
 // WHY:   Precise file editing without full rewrites.
 // HOW:   Reads file, finds exact match of old_block, replaces first occurrence, writes back.
-// PARAMS: args — raw JSON with file_path, old_block, new_block.
+// PARAMS: ctx — turn cancellation context; args — raw JSON with file_path, old_block, new_block.
 // RETURNS: string — success message or error description.
-func (t *ReplaceBlockTool) Execute(args json.RawMessage) string {
+func (t *ReplaceBlockTool) Execute(ctx context.Context, args json.RawMessage) string {
+	if ctx != nil && ctx.Err() != nil {
+		return "aborted before execution by user"
+	}
 	parsed, err := ParseToolCallArgs[ReplaceBlockArgs](args)
 	if err != nil {
 		return fmt.Sprintf("error: invalid arguments: %v", err)

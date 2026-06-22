@@ -3,6 +3,10 @@ package console
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,6 +61,29 @@ func newConsole(agent *runtime.Agent) (*Console, *bytes.Buffer) {
 		Spinner:          NewSpinner(out, false),
 		needContentLabel: true,
 	}, out
+}
+
+// setupStreamingConsole creates a console wired to a real streaming test server.
+func setupStreamingConsole(t *testing.T, handler http.HandlerFunc) (*Console, *bytes.Buffer, *httptest.Server) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	server := httptest.NewServer(handler)
+	dir := t.TempDir()
+	cfg := &config.Config{
+		Providers: []config.Provider{{Name: "test", Endpoint: server.URL, APIKey: "sk-test"}},
+		Roles:     config.Roles{Default: "test/test-model"},
+	}
+	sess, _ := session.CreateInDir(dir)
+	promptsDir := filepath.Join(dir, "prompts")
+	os.MkdirAll(promptsDir, 0755)
+	os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("sys"), 0644)
+	os.WriteFile(filepath.Join(promptsDir, "sysprompt.linux.md"), []byte("linux"), 0644)
+	agent, err := runtime.NewAgent(cfg, sess, platform.Linux, filepath.Join(dir, "skills"), promptsDir, dir, &mockHandler{})
+	if err != nil {
+		t.Fatalf("NewAgent() error: %v", err)
+	}
+	c, out := newConsole(agent)
+	return c, out, server
 }
 
 // TestOnContent verifies content is written to output with [BLAZE] label on first chunk.
@@ -569,5 +596,40 @@ func TestReaderReadLineEOF(t *testing.T) {
 	_, err := r.ReadLine()
 	if err == nil {
 		t.Error("ReadLine() expected EOF, got nil")
+	}
+}
+
+// TestRunAgentTurnInputInterrupt verifies a typed line aborts the active turn and is returned.
+func TestRunAgentTurnInputInterrupt(t *testing.T) {
+	c, _, server := setupStreamingConsole(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("response writer does not support flushing")
+		}
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"Hello"}}]}`)
+		fmt.Fprintln(w)
+		flusher.Flush()
+		<-r.Context().Done()
+	})
+	defer server.Close()
+
+	inputs := make(chan inputEvent, 1)
+	inputs <- inputEvent{line: "second message\n"}
+	next, err := c.runAgentTurn("first message", make(chan os.Signal), inputs)
+	if !errors.Is(err, runtime.ErrTurnAborted) {
+		t.Fatalf("runAgentTurn() error = %v, want ErrTurnAborted", err)
+	}
+	if next != "second message" {
+		t.Fatalf("next input = %q, want second message", next)
+	}
+	if len(c.Agent.Session.Messages) < 2 {
+		t.Fatalf("session has %d messages, want at least 2", len(c.Agent.Session.Messages))
+	}
+	if got := c.Agent.Session.Messages[len(c.Agent.Session.Messages)-1].Content; got != "User requested an urgent abort. The previous assistant turn was interrupted before completion. Tool execution may have produced partial side effects before cancellation. Do not continue the interrupted response. Wait for the user's next instruction." {
+		t.Fatalf("abort marker = %v", got)
+	}
+	if c.turnAborting.Load() {
+		t.Fatal("turnAborting should be reset after interrupted turn")
 	}
 }

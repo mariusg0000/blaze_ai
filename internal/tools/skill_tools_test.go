@@ -2,6 +2,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -14,7 +15,7 @@ func TestLoadSkillExecute(t *testing.T) {
 	active := skills.NewActiveList()
 	tool := NewLoadSkillTool(active)
 	args := json.RawMessage(`{"name":"memory"}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "skill loaded: memory") {
 		t.Errorf("Execute() = %q, want 'skill loaded: memory'", result)
 	}
@@ -28,7 +29,7 @@ func TestLoadSkillExecuteWithMarkdownSuffix(t *testing.T) {
 	active := skills.NewActiveList()
 	tool := NewLoadSkillTool(active)
 	args := json.RawMessage(`{"name":"memory.md"}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "skill loaded: memory") {
 		t.Errorf("Execute() = %q, want 'skill loaded: memory'", result)
 	}
@@ -45,7 +46,7 @@ func TestLoadSkillExecuteEmptyName(t *testing.T) {
 	active := skills.NewActiveList()
 	tool := NewLoadSkillTool(active)
 	args := json.RawMessage(`{"name":""}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error") {
 		t.Errorf("Execute() = %q, want error message", result)
 	}
@@ -56,7 +57,7 @@ func TestLoadSkillExecuteInvalidArgs(t *testing.T) {
 	active := skills.NewActiveList()
 	tool := NewLoadSkillTool(active)
 	args := json.RawMessage(`{invalid}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error") {
 		t.Errorf("Execute() = %q, want error message", result)
 	}
@@ -84,7 +85,7 @@ func TestUnloadSkillExecute(t *testing.T) {
 	active.Load("memory")
 	tool := NewUnloadSkillTool(active)
 	args := json.RawMessage(`{"name":"memory"}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "skill unloaded: memory") {
 		t.Errorf("Execute() = %q, want 'skill unloaded: memory'", result)
 	}
@@ -99,7 +100,7 @@ func TestUnloadSkillExecuteWithMarkdownSuffix(t *testing.T) {
 	active.Load("memory")
 	tool := NewUnloadSkillTool(active)
 	args := json.RawMessage(`{"name":"memory.md"}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "skill unloaded: memory") {
 		t.Errorf("Execute() = %q, want 'skill unloaded: memory'", result)
 	}
@@ -113,7 +114,7 @@ func TestUnloadSkillExecuteNotPresent(t *testing.T) {
 	active := skills.NewActiveList()
 	tool := NewUnloadSkillTool(active)
 	args := json.RawMessage(`{"name":"ghost"}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "skill unloaded: ghost") {
 		t.Errorf("Execute() = %q, want confirmation message", result)
 	}
@@ -124,7 +125,7 @@ func TestUnloadSkillExecuteEmptyName(t *testing.T) {
 	active := skills.NewActiveList()
 	tool := NewUnloadSkillTool(active)
 	args := json.RawMessage(`{"name":""}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error") {
 		t.Errorf("Execute() = %q, want error message", result)
 	}

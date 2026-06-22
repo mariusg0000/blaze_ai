@@ -87,9 +87,9 @@ func (s *ShellTool) Parameters() json.RawMessage {
 //
 //	and kills the full process group on timeout to avoid background children keeping pipes open.
 //
-// PARAMS: args — raw JSON with command and optional timeout.
+// PARAMS: ctx — turn cancellation context; args — raw JSON with command and optional timeout.
 // RETURNS: string — formatted stdout/stderr/exit_code, or "timeout <N>s exceeded" on timeout.
-func (s *ShellTool) Execute(args json.RawMessage) string {
+func (s *ShellTool) Execute(ctx context.Context, args json.RawMessage) string {
 	parsed, err := ParseToolCallArgs[ShellArgs](args)
 	if err != nil {
 		return fmt.Sprintf("error: invalid arguments: %v", err)
@@ -108,7 +108,10 @@ func (s *ShellTool) Execute(args json.RawMessage) string {
 		return fmt.Sprintf("error: cannot find shell: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 
 	var flag string
@@ -138,7 +141,10 @@ func (s *ShellTool) Execute(args json.RawMessage) string {
 	case <-ctx.Done():
 		killShellCommand(cmd)
 		<-done
-		return fmt.Sprintf("timeout %ds exceeded", timeoutSec)
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Sprintf("timeout %ds exceeded", timeoutSec)
+		}
+		return formatAbortedToolOutput(stdout.String(), stderr.String())
 	}
 
 	exitCode := 0
@@ -157,6 +163,21 @@ func (s *ShellTool) Execute(args json.RawMessage) string {
 	}
 	if stderr.Len() > 0 {
 		sb.WriteString(fmt.Sprintf("stderr:\n%s\n", stderr.String()))
+	}
+	return sb.String()
+}
+
+// formatAbortedToolOutput returns the partial output captured before user cancellation.
+func formatAbortedToolOutput(stdout, stderr string) string {
+	var sb strings.Builder
+	sb.WriteString("aborted by user")
+	if stdout != "" {
+		sb.WriteString("\nstdout:\n")
+		sb.WriteString(stdout)
+	}
+	if stderr != "" {
+		sb.WriteString("\nstderr:\n")
+		sb.WriteString(stderr)
 	}
 	return sb.String()
 }

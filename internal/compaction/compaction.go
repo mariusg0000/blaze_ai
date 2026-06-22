@@ -6,6 +6,7 @@
 package compaction
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -271,6 +272,7 @@ func (m *Manager) summarize(sessionFolder string, pruned []session.Message) (str
 
 	// Use the default model for summarization (per spec 05).
 	resp, err := m.Provider.Stream(
+		context.Background(),
 		[]session.Message{
 			{Role: "system", Content: summaryPrompt},
 			{Role: "user", Content: "Summarize the above conversation segment."},

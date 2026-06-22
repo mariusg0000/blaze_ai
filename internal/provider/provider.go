@@ -7,7 +7,9 @@ package provider
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +19,9 @@ import (
 	"blazeai/internal/session"
 	"blazeai/internal/tools"
 )
+
+// ErrAborted reports that the active provider stream was canceled by the user.
+var ErrAborted = errors.New("provider stream aborted")
 
 // Usage holds token usage from the provider response.
 //
@@ -150,7 +155,8 @@ type chatRequest struct {
 //
 // WHAT:  Configures the streaming response to include token usage.
 // WHY:   Compaction triggers on provider-reported prompt_tokens; usage is only sent
-//        in the stream when include_usage is set to true.
+//
+//	in the stream when include_usage is set to true.
 type streamOptions struct {
 	IncludeUsage bool `json:"include_usage"`
 }
@@ -160,16 +166,17 @@ type streamOptions struct {
 // WHAT:  The incremental content in one SSE chunk.
 // PARAMS: Content — text delta; ReasoningContent — reasoning text delta; ToolCalls — tool call deltas.
 type streamDelta struct {
-	Content         string           `json:"content,omitempty"`
-	ReasoningContent string          `json:"reasoning_content,omitempty"`
-	ToolCalls       []streamToolCall `json:"tool_calls,omitempty"`
+	Content          string           `json:"content,omitempty"`
+	ReasoningContent string           `json:"reasoning_content,omitempty"`
+	ToolCalls        []streamToolCall `json:"tool_calls,omitempty"`
 }
 
 // streamToolCall represents an incremental tool call in a streaming chunk.
 //
 // WHAT:  Tool call delta with index for assembling multi-chunk tool calls.
 // PARAMS: Index — position in the tool calls array; ID — call ID (first chunk only);
-//         Function — function name and arguments deltas.
+//
+//	Function — function name and arguments deltas.
 type streamToolCall struct {
 	Index    int            `json:"index"`
 	ID       string         `json:"id,omitempty"`
@@ -207,9 +214,14 @@ type streamChunk struct {
 // WHY:   The runtime needs streaming for real-time output and the full response for persistence.
 // HOW:   POSTs to /chat/completions with stream=true, reads SSE line by line, parses JSON chunks.
 // PARAMS: messages — the full prompt message array; toolDefs — OpenAI tool definitions or nil;
-//         onContent — callback called for each text delta (may be nil).
+//
+//	onContent — callback called for each text delta (may be nil).
+//
 // RETURNS: *Response — accumulated content, tool calls, and usage; error on HTTP or parse failure.
-func (c *Client) Stream(messages []session.Message, toolDefs []tools.OpenAITool, onContent func(string)) (*Response, error) {
+func (c *Client) Stream(ctx context.Context, messages []session.Message, toolDefs []tools.OpenAITool, onContent func(string)) (*Response, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	reqBody := chatRequest{
 		Model:         c.Model,
 		Messages:      messages,
@@ -223,7 +235,7 @@ func (c *Client) Stream(messages []session.Message, toolDefs []tools.OpenAITool,
 	}
 
 	url := strings.TrimRight(c.Endpoint, "/") + "/chat/completions"
-	req, err := http.NewRequest("POST", url, bytes.NewReader(bodyData))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyData))
 	if err != nil {
 		return nil, fmt.Errorf("cannot create request: %w", err)
 	}
@@ -233,6 +245,9 @@ func (c *Client) Stream(messages []session.Message, toolDefs []tools.OpenAITool,
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return &Response{}, ErrAborted
+		}
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -242,7 +257,7 @@ func (c *Client) Stream(messages []session.Message, toolDefs []tools.OpenAITool,
 		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	return parseSSEStream(resp.Body, onContent)
+	return parseSSEStream(ctx, resp.Body, onContent)
 }
 
 // parseSSEStream reads an SSE stream, parses JSON chunks, and accumulates the response.
@@ -252,7 +267,10 @@ func (c *Client) Stream(messages []session.Message, toolDefs []tools.OpenAITool,
 // HOW:   Reads line by line, skips non-data lines, parses JSON, accumulates content and tool calls.
 // PARAMS: reader — the response body; onContent — callback for text deltas (may be nil).
 // RETURNS: *Response — accumulated response; error on parse failure.
-func parseSSEStream(reader io.Reader, onContent func(string)) (*Response, error) {
+func parseSSEStream(ctx context.Context, reader io.Reader, onContent func(string)) (*Response, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
 
@@ -315,14 +333,32 @@ func parseSSEStream(reader io.Reader, onContent func(string)) (*Response, error)
 	}
 
 	if err := scanner.Err(); err != nil {
+		if ctx.Err() != nil {
+			finalizeToolCalls(result, toolCallMap, toolCallOrder)
+			return result, ErrAborted
+		}
 		return nil, fmt.Errorf("error reading SSE stream: %w", err)
 	}
-
-	for _, idx := range toolCallOrder {
-		result.ToolCalls = append(result.ToolCalls, *toolCallMap[idx])
+	if ctx.Err() != nil {
+		finalizeToolCalls(result, toolCallMap, toolCallOrder)
+		return result, ErrAborted
 	}
 
+	finalizeToolCalls(result, toolCallMap, toolCallOrder)
+
 	return result, nil
+}
+
+// finalizeToolCalls appends only complete tool calls assembled from the SSE stream.
+func finalizeToolCalls(result *Response, toolCallMap map[int]*tools.ToolCall, toolCallOrder []int) {
+	result.ToolCalls = result.ToolCalls[:0]
+	for _, idx := range toolCallOrder {
+		tc := toolCallMap[idx]
+		if tc == nil || tc.ID == "" || tc.Name == "" || len(tc.Arguments) == 0 || !json.Valid(tc.Arguments) {
+			continue
+		}
+		result.ToolCalls = append(result.ToolCalls, *tc)
+	}
 }
 
 // appendRawJSON appends a string fragment to a raw JSON byte slice.

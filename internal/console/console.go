@@ -6,12 +6,16 @@
 package console
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"blazeai/internal/runtime"
 )
@@ -54,6 +58,13 @@ type Console struct {
 	needContentLabel bool
 	lastPromptTokens int
 	lineOpen         bool
+	turnAborting     atomic.Bool
+}
+
+// inputEvent carries one console input line or a terminal read error.
+type inputEvent struct {
+	line string
+	err  error
 }
 
 // NewConsole creates a Console with TTY auto-detection.
@@ -217,6 +228,9 @@ func (c *Console) OnUsage(promptTokens int) {
 // WHAT:  Streams LLM text content to the console.
 // PARAMS: delta — the text chunk from the LLM.
 func (c *Console) OnContent(delta string) {
+	if c.turnAborting.Load() {
+		return
+	}
 	if c.inToolGroup {
 		c.closeToolGroup()
 		c.needContentLabel = true
@@ -251,6 +265,9 @@ func (c *Console) OnContent(delta string) {
 // WHAT:  Displays a tool call notification.
 // PARAMS: name — tool name; args — raw JSON arguments.
 func (c *Console) OnToolCall(name string, args string) {
+	if c.turnAborting.Load() {
+		return
+	}
 	if !c.contentStarted {
 		c.contentStarted = true
 		c.Spinner.Stop()
@@ -283,6 +300,9 @@ func (c *Console) OnToolCall(name string, args string) {
 // WHAT:  Displays tool result status and the most relevant output line.
 // PARAMS: name — tool name; result — the raw tool output.
 func (c *Console) OnToolResult(name string, result string) {
+	if c.turnAborting.Load() {
+		return
+	}
 	badge, content, colorCode := parseToolResult(result)
 	badgeLabel := "[" + badge + "]"
 	if content != "" {
@@ -646,20 +666,34 @@ func (c *Console) promptLabel() string {
 // HOW:   Loops reading input, dispatches slash commands or sends input to the agent.
 // RETURNS: error if a fatal error occurs.
 func (c *Console) Run() error {
+	inputs := c.startInputReader()
+	pending := ""
+	promptShown := false
+
 	for {
-		fmt.Fprint(c.Out, c.promptLabel())
-		input, err := c.Reader.ReadLine()
-		if err == io.EOF {
-			fmt.Fprintln(c.Out)
-			return nil
+		if pending == "" {
+			if !promptShown {
+				fmt.Fprint(c.Out, c.promptLabel())
+				promptShown = true
+			}
+			event, ok := <-inputs
+			if !ok || event.err == io.EOF {
+				fmt.Fprintln(c.Out)
+				return nil
+			}
+			if event.err != nil {
+				return fmt.Errorf("input error: %w", event.err)
+			}
+			pending = strings.TrimSpace(event.line)
 		}
-		if err != nil {
-			return fmt.Errorf("input error: %w", err)
-		}
-		input = strings.TrimSpace(input)
+
+		input := pending
+		pending = ""
 		if input == "" {
+			promptShown = false
 			continue
 		}
+		promptShown = false
 
 		// Handle slash commands.
 		if strings.HasPrefix(input, "/") {
@@ -688,18 +722,105 @@ func (c *Console) Run() error {
 		c.lineOpen = false
 		c.Spinner.Start()
 
+		interrupts := make(chan os.Signal, 1)
+		signal.Notify(interrupts, os.Interrupt)
+
 		// Run the agent turn.
-		if err := c.Agent.RunTurn(input); err != nil {
+		nextInput, err := c.runAgentTurn(input, interrupts, inputs)
+		if err != nil && !errors.Is(err, runtime.ErrTurnAborted) {
 			c.Spinner.Stop()
 			fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("error: %v", err)))
 			c.lineOpen = false
 		}
+		signal.Stop(interrupts)
 		c.flushPendingContent()
 		fmt.Fprintln(c.Out)
 		c.lineOpen = false
 		c.closeToolGroup()
 		c.responseSeparator()
+		if nextInput != "" {
+			pending = nextInput
+		}
 	}
+}
+
+// startInputReader continuously reads console input lines in the background.
+func (c *Console) startInputReader() <-chan inputEvent {
+	ch := make(chan inputEvent)
+	go func() {
+		defer close(ch)
+		for {
+			line, err := c.Reader.ReadLine()
+			ch <- inputEvent{line: line, err: err}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return ch
+}
+
+// runAgentTurn executes one agent turn while listening for Ctrl+C abort requests.
+func (c *Console) runAgentTurn(input string, interrupts <-chan os.Signal, inputs <-chan inputEvent) (string, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- c.Agent.RunTurn(ctx, input)
+	}()
+
+	nextInput := ""
+	activeInputs := inputs
+
+	for {
+		select {
+		case err := <-errCh:
+			c.turnAborting.Store(false)
+			return nextInput, err
+		case event, ok := <-activeInputs:
+			if !ok || event.err == io.EOF {
+				activeInputs = nil
+				c.turnAborting.Store(true)
+				cancel()
+				continue
+			}
+			if event.err != nil {
+				c.turnAborting.Store(false)
+				return "", fmt.Errorf("input error: %w", event.err)
+			}
+			trimmed := strings.TrimSpace(event.line)
+			if trimmed == "" {
+				continue
+			}
+			if nextInput == "" {
+				nextInput = trimmed
+			}
+			if c.turnAborting.Load() {
+				continue
+			}
+			c.abortCurrentTurn(cancel)
+		case <-interrupts:
+			if c.turnAborting.Load() {
+				continue
+			}
+			c.abortCurrentTurn(cancel)
+		}
+	}
+}
+
+// abortCurrentTurn stops visible turn activity and requests cancellation from the runtime.
+func (c *Console) abortCurrentTurn(cancel context.CancelFunc) {
+	c.turnAborting.Store(true)
+	c.Spinner.Stop()
+	cancel()
+	c.contentBuffer = ""
+	if c.lineOpen {
+		fmt.Fprintln(c.Out)
+		c.lineOpen = false
+	}
+	c.closeToolGroup()
+	fmt.Fprintln(c.Out, c.color(colorRed, c.bold("[ABORTED] current turn cancelled")))
 }
 
 // handleCommand processes a slash command. Returns (handled, shouldExit, error).

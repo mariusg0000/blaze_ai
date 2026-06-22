@@ -2,6 +2,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -14,11 +15,11 @@ type dummyTool struct {
 	desc string
 }
 
-func (d *dummyTool) Name() string                           { return d.name }
-func (d *dummyTool) Description() string                    { return d.desc }
-func (d *dummyTool) Parameters() json.RawMessage            { return json.RawMessage(`{"type":"object"}`) }
-func (d *dummyTool) Execute(args json.RawMessage) string    { return "ok" }
-func (d *dummyTool) FormatArgs(args json.RawMessage) string { return "" }
+func (d *dummyTool) Name() string                                             { return d.name }
+func (d *dummyTool) Description() string                                      { return d.desc }
+func (d *dummyTool) Parameters() json.RawMessage                              { return json.RawMessage(`{"type":"object"}`) }
+func (d *dummyTool) Execute(ctx context.Context, args json.RawMessage) string { return "ok" }
+func (d *dummyTool) FormatArgs(args json.RawMessage) string                   { return "" }
 
 // TestRegistryRegisterAndGet verifies basic register and lookup.
 func TestRegistryRegisterAndGet(t *testing.T) {

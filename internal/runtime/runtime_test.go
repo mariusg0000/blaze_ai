@@ -3,13 +3,17 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"blazeai/internal/config"
 	"blazeai/internal/platform"
@@ -22,11 +26,21 @@ type mockHandler struct {
 	toolCalls   []string
 	toolResults []string
 	usages      []int
+	onContent   func(string)
+	onToolCall  func(string, string)
 }
 
-func (h *mockHandler) OnContent(delta string) { h.content = append(h.content, delta) }
+func (h *mockHandler) OnContent(delta string) {
+	h.content = append(h.content, delta)
+	if h.onContent != nil {
+		h.onContent(delta)
+	}
+}
 func (h *mockHandler) OnToolCall(name string, args string) {
 	h.toolCalls = append(h.toolCalls, name)
+	if h.onToolCall != nil {
+		h.onToolCall(name, args)
+	}
 }
 func (h *mockHandler) OnToolResult(name string, result string) {
 	h.toolResults = append(h.toolResults, name+": "+result)
@@ -80,7 +94,7 @@ func TestRunTurnTextResponse(t *testing.T) {
 	})
 	defer server.Close()
 
-	err := agent.RunTurn("hi")
+	err := agent.RunTurn(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("RunTurn() error: %v", err)
 	}
@@ -116,7 +130,7 @@ func TestRunTurnWithToolCall(t *testing.T) {
 	})
 	defer server.Close()
 
-	err := agent.RunTurn("run echo hi")
+	err := agent.RunTurn(context.Background(), "run echo hi")
 	if err != nil {
 		t.Fatalf("RunTurn() error: %v", err)
 	}
@@ -156,7 +170,7 @@ func TestRunTurnUnknownTool(t *testing.T) {
 	})
 	defer server.Close()
 
-	err := agent.RunTurn("call unknown tool")
+	err := agent.RunTurn(context.Background(), "call unknown tool")
 	if err != nil {
 		t.Fatalf("RunTurn() error: %v", err)
 	}
@@ -192,7 +206,7 @@ func TestRunTurnSanitizesIncompleteToolCalls(t *testing.T) {
 		t.Fatalf("AppendAll() failed: %v", err)
 	}
 
-	if err := agent.RunTurn("new user"); err != nil {
+	if err := agent.RunTurn(context.Background(), "new user"); err != nil {
 		t.Fatalf("RunTurn() error: %v", err)
 	}
 
@@ -207,6 +221,90 @@ func TestRunTurnSanitizesIncompleteToolCalls(t *testing.T) {
 	}
 	if len(agent.Session.Messages) != 3 {
 		t.Fatalf("session has %d messages, want 3 after sanitize + response", len(agent.Session.Messages))
+	}
+}
+
+// TestRunTurnAbortDuringStreamPersistsPartialHistory verifies stream abort keeps partial content and abort marker.
+func TestRunTurnAbortDuringStreamPersistsPartialHistory(t *testing.T) {
+	agent, h, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("response writer does not support flushing")
+		}
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"Hello"}}]}`)
+		fmt.Fprintln(w)
+		flusher.Flush()
+		<-r.Context().Done()
+	})
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	h.onContent = func(delta string) {
+		if delta == "Hello" {
+			cancel()
+		}
+	}
+	err := agent.RunTurn(ctx, "hi")
+	if !errors.Is(err, ErrTurnAborted) {
+		t.Fatalf("RunTurn() error = %v, want ErrTurnAborted", err)
+	}
+	if len(agent.Session.Messages) != 3 {
+		t.Fatalf("session has %d messages, want 3", len(agent.Session.Messages))
+	}
+	if got := agent.Session.Messages[1].Role; got != "assistant" {
+		t.Fatalf("assistant role = %q, want assistant", got)
+	}
+	if got := agent.Session.Messages[1].Content; got != "Hello" {
+		t.Fatalf("assistant content = %v, want Hello", got)
+	}
+	if got := agent.Session.Messages[2].Content; got != userAbortMessage {
+		t.Fatalf("abort marker = %v, want %q", got, userAbortMessage)
+	}
+}
+
+// TestRunTurnAbortDuringToolPersistsToolResult verifies active tool abort is preserved in session.
+func TestRunTurnAbortDuringToolPersistsToolResult(t *testing.T) {
+	callCount := 0
+	agent, h, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"shell","arguments":"{\"command\":\"sleep 30\",\"timeout\":60}"}}]}}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "data: [DONE]")
+		fmt.Fprintln(w)
+	})
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	h.onToolCall = func(name string, args string) {
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			cancel()
+		}()
+	}
+	err := agent.RunTurn(ctx, "run slow command")
+	if !errors.Is(err, ErrTurnAborted) {
+		t.Fatalf("RunTurn() error = %v, want ErrTurnAborted", err)
+	}
+	if callCount != 1 {
+		t.Fatalf("LLM was called %d times, want 1", callCount)
+	}
+	if len(agent.Session.Messages) != 4 {
+		t.Fatalf("session has %d messages, want 4", len(agent.Session.Messages))
+	}
+	toolMsg := agent.Session.Messages[2]
+	if toolMsg.Role != "tool" {
+		t.Fatalf("tool role = %q, want tool", toolMsg.Role)
+	}
+	content, ok := toolMsg.Content.(string)
+	if !ok || !strings.Contains(content, "aborted by user") {
+		t.Fatalf("tool content = %v, want aborted by user", toolMsg.Content)
+	}
+	if got := agent.Session.Messages[3].Content; got != userAbortMessage {
+		t.Fatalf("abort marker = %v, want %q", got, userAbortMessage)
 	}
 }
 

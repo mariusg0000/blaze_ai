@@ -2,6 +2,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -14,7 +15,7 @@ import (
 func TestShellExecuteSuccess(t *testing.T) {
 	tool := NewShellTool(platform.Linux)
 	args := json.RawMessage(`{"command":"echo hello"}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "hello") {
 		t.Errorf("Execute() = %q, want output containing 'hello'", result)
 	}
@@ -27,7 +28,7 @@ func TestShellExecuteSuccess(t *testing.T) {
 func TestShellExecuteStderr(t *testing.T) {
 	tool := NewShellTool(platform.Linux)
 	args := json.RawMessage(`{"command":"echo error_msg >&2"}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error_msg") {
 		t.Errorf("Execute() = %q, want stderr containing 'error_msg'", result)
 	}
@@ -37,7 +38,7 @@ func TestShellExecuteStderr(t *testing.T) {
 func TestShellExecuteNonZeroExit(t *testing.T) {
 	tool := NewShellTool(platform.Linux)
 	args := json.RawMessage(`{"command":"exit 42"}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "exit_code: 42") {
 		t.Errorf("Execute() = %q, want exit_code: 42", result)
 	}
@@ -48,7 +49,7 @@ func TestShellExecuteTimeout(t *testing.T) {
 	tool := NewShellTool(platform.Linux)
 	// Use a 1-second timeout with a 5-second sleep.
 	args := json.RawMessage(`{"command":"sleep 5","timeout":1}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	expected := "timeout 1s exceeded"
 	if result != expected {
 		t.Errorf("Execute() = %q, want %q", result, expected)
@@ -62,7 +63,7 @@ func TestShellExecuteTimeoutKillsBackgroundChildren(t *testing.T) {
 	args := json.RawMessage(`{"command":"sleep 30 & sleep 30","timeout":1}`)
 	resultCh := make(chan string, 1)
 	go func() {
-		resultCh <- tool.Execute(args)
+		resultCh <- tool.Execute(context.Background(), args)
 	}()
 
 	select {
@@ -75,12 +76,37 @@ func TestShellExecuteTimeoutKillsBackgroundChildren(t *testing.T) {
 	}
 }
 
+// TestShellExecuteUserAbort verifies cancellation returns partial aborted output instead of timeout.
+func TestShellExecuteUserAbort(t *testing.T) {
+	tool := NewShellTool(platform.Linux)
+	args := json.RawMessage(`{"command":"echo start; sleep 30","timeout":60}`)
+	ctx, cancel := context.WithCancel(context.Background())
+	resultCh := make(chan string, 1)
+	go func() {
+		resultCh <- tool.Execute(ctx, args)
+	}()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	select {
+	case result := <-resultCh:
+		if !strings.Contains(result, "aborted by user") {
+			t.Errorf("Execute() = %q, want aborted by user", result)
+		}
+		if !strings.Contains(result, "start") {
+			t.Errorf("Execute() = %q, want partial stdout", result)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("Execute() hung after user abort")
+	}
+}
+
 // TestShellExecuteDefaultTimeout verifies default timeout is used when not specified.
 func TestShellExecuteDefaultTimeout(t *testing.T) {
 	tool := NewShellTool(platform.Linux)
 	// Just verify the tool works without a timeout parameter.
 	args := json.RawMessage(`{"command":"echo quick"}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "quick") {
 		t.Errorf("Execute() = %q, want output containing 'quick'", result)
 	}
@@ -90,7 +116,7 @@ func TestShellExecuteDefaultTimeout(t *testing.T) {
 func TestShellExecuteEmptyCommand(t *testing.T) {
 	tool := NewShellTool(platform.Linux)
 	args := json.RawMessage(`{"command":""}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error") {
 		t.Errorf("Execute() = %q, want error message", result)
 	}
@@ -100,7 +126,7 @@ func TestShellExecuteEmptyCommand(t *testing.T) {
 func TestShellExecuteInvalidArgs(t *testing.T) {
 	tool := NewShellTool(platform.Linux)
 	args := json.RawMessage(`{invalid}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error") {
 		t.Errorf("Execute() = %q, want error message", result)
 	}
@@ -135,7 +161,7 @@ func TestShellParameters(t *testing.T) {
 func TestShellExecuteMultilineOutput(t *testing.T) {
 	tool := NewShellTool(platform.Linux)
 	args := json.RawMessage(`{"command":"echo line1 && echo line2"}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "line1") || !strings.Contains(result, "line2") {
 		t.Errorf("Execute() = %q, want both lines", result)
 	}

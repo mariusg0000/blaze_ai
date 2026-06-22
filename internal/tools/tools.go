@@ -4,6 +4,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 )
@@ -23,7 +24,7 @@ type Tool interface {
 	// Parameters returns the JSON schema for the tool's parameters.
 	Parameters() json.RawMessage
 	// Execute runs the tool with the given JSON arguments and returns a result string.
-	Execute(args json.RawMessage) string
+	Execute(ctx context.Context, args json.RawMessage) string
 	// FormatArgs returns a human-readable summary of the tool call arguments for display.
 	FormatArgs(args json.RawMessage) string
 }

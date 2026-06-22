@@ -4,6 +4,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -71,9 +72,12 @@ func (t *LoadSkillTool) Parameters() json.RawMessage {
 
 // Execute adds the skill name to the active list.
 //
-// PARAMS: args — raw JSON with the skill name.
+// PARAMS: ctx — turn cancellation context; args — raw JSON with the skill name.
 // RETURNS: string — confirmation message.
-func (t *LoadSkillTool) Execute(args json.RawMessage) string {
+func (t *LoadSkillTool) Execute(ctx context.Context, args json.RawMessage) string {
+	if ctx != nil && ctx.Err() != nil {
+		return "aborted before execution by user"
+	}
 	parsed, err := ParseToolCallArgs[SkillArgs](args)
 	if err != nil {
 		return fmt.Sprintf("error: invalid arguments: %v", err)
@@ -138,9 +142,12 @@ func (t *UnloadSkillTool) Parameters() json.RawMessage {
 
 // Execute removes the skill name from the active list.
 //
-// PARAMS: args — raw JSON with the skill name.
+// PARAMS: ctx — turn cancellation context; args — raw JSON with the skill name.
 // RETURNS: string — confirmation message.
-func (t *UnloadSkillTool) Execute(args json.RawMessage) string {
+func (t *UnloadSkillTool) Execute(ctx context.Context, args json.RawMessage) string {
+	if ctx != nil && ctx.Err() != nil {
+		return "aborted before execution by user"
+	}
 	parsed, err := ParseToolCallArgs[SkillArgs](args)
 	if err != nil {
 		return fmt.Sprintf("error: invalid arguments: %v", err)

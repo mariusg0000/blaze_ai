@@ -2,6 +2,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -25,7 +26,7 @@ func TestReplaceBlockSuccess(t *testing.T) {
 	path := writeTestFile(t, "line1\nold block\nline3")
 	tool := NewReplaceBlockTool()
 	args := json.RawMessage(`{"file_path":"` + path + `","old_block":"old block","new_block":"new block"}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "block replaced") {
 		t.Errorf("Execute() = %q, want 'block replaced'", result)
 	}
@@ -43,7 +44,7 @@ func TestReplaceBlockNotFound(t *testing.T) {
 	path := writeTestFile(t, "line1\nline2")
 	tool := NewReplaceBlockTool()
 	args := json.RawMessage(`{"file_path":"` + path + `","old_block":"nonexistent","new_block":"replacement"}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "not found") {
 		t.Errorf("Execute() = %q, want 'not found' error", result)
 	}
@@ -53,7 +54,7 @@ func TestReplaceBlockNotFound(t *testing.T) {
 func TestReplaceBlockFileMissing(t *testing.T) {
 	tool := NewReplaceBlockTool()
 	args := json.RawMessage(`{"file_path":"/nonexistent/path/file.txt","old_block":"old","new_block":"new"}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error") {
 		t.Errorf("Execute() = %q, want error message", result)
 	}
@@ -63,7 +64,7 @@ func TestReplaceBlockFileMissing(t *testing.T) {
 func TestReplaceBlockEmptyFilePath(t *testing.T) {
 	tool := NewReplaceBlockTool()
 	args := json.RawMessage(`{"file_path":"","old_block":"old","new_block":"new"}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error") {
 		t.Errorf("Execute() = %q, want error message", result)
 	}
@@ -74,7 +75,7 @@ func TestReplaceBlockEmptyOldBlock(t *testing.T) {
 	path := writeTestFile(t, "content")
 	tool := NewReplaceBlockTool()
 	args := json.RawMessage(`{"file_path":"` + path + `","old_block":"","new_block":"new"}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error") {
 		t.Errorf("Execute() = %q, want error message", result)
 	}
@@ -85,7 +86,7 @@ func TestReplaceBlockMultiline(t *testing.T) {
 	path := writeTestFile(t, "header\nold line 1\nold line 2\nfooter")
 	tool := NewReplaceBlockTool()
 	args := json.RawMessage(`{"file_path":"` + path + `","old_block":"old line 1\nold line 2","new_block":"new line 1\nnew line 2"}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "block replaced") {
 		t.Errorf("Execute() = %q, want 'block replaced'", result)
 	}
@@ -100,7 +101,7 @@ func TestReplaceBlockOnlyFirstOccurrence(t *testing.T) {
 	path := writeTestFile(t, "target\ntarget\ntarget")
 	tool := NewReplaceBlockTool()
 	args := json.RawMessage(`{"file_path":"` + path + `","old_block":"target","new_block":"replaced"}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "block replaced") {
 		t.Errorf("Execute() = %q, want 'block replaced'", result)
 	}
@@ -116,7 +117,7 @@ func TestReplaceBlockOnlyFirstOccurrence(t *testing.T) {
 func TestReplaceBlockInvalidArgs(t *testing.T) {
 	tool := NewReplaceBlockTool()
 	args := json.RawMessage(`{invalid}`)
-	result := tool.Execute(args)
+	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error") {
 		t.Errorf("Execute() = %q, want error message", result)
 	}

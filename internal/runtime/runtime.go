@@ -7,6 +7,8 @@
 package runtime
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -20,6 +22,11 @@ import (
 	"blazeai/internal/skills"
 	"blazeai/internal/tools"
 )
+
+// ErrTurnAborted reports that the active turn was canceled by the user.
+var ErrTurnAborted = errors.New("turn aborted")
+
+const userAbortMessage = "User requested an urgent abort. The previous assistant turn was interrupted before completion. Tool execution may have produced partial side effects before cancellation. Do not continue the interrupted response. Wait for the user's next instruction."
 
 // Handler is the contract between the agent core and transports.
 // The agent core calls these methods during execution; each transport implements them.
@@ -121,11 +128,14 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 //
 //	appends assistant + tool result messages, loops if tools were called.
 //
-// PARAMS: userInput — the user's text input.
+// PARAMS: ctx — turn cancellation context; userInput — the user's text input.
 // RETURNS: error if the LLM call or tool execution fails fatally.
-func (a *Agent) RunTurn(userInput string) error {
+func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 	if a.Handler == nil {
 		return fmt.Errorf("runtime handler is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	if err := a.sanitizeSession(); err != nil {
@@ -156,9 +166,12 @@ func (a *Agent) RunTurn(userInput string) error {
 
 		// Stream LLM response.
 		toolDefs := tools.AllToOpenAI(a.Tools)
-		resp, err := a.Provider.Stream(messages, toolDefs, a.Handler.OnContent)
-		if err != nil {
+		resp, err := a.Provider.Stream(ctx, messages, toolDefs, a.Handler.OnContent)
+		if err != nil && !errors.Is(err, provider.ErrAborted) {
 			return fmt.Errorf("LLM stream failed: %w", err)
+		}
+		if resp == nil {
+			resp = &provider.Response{}
 		}
 
 		// Report prompt token usage to the transport.
@@ -180,9 +193,20 @@ func (a *Agent) RunTurn(userInput string) error {
 			assistantMsg.ToolCalls = openaiCalls
 		}
 
-		// Persist assistant message.
-		if err := a.Session.Append(assistantMsg); err != nil {
-			return fmt.Errorf("cannot persist assistant message: %w", err)
+		if shouldPersistAssistantMessage(assistantMsg) {
+			if err := a.Session.Append(assistantMsg); err != nil {
+				return fmt.Errorf("cannot persist assistant message: %w", err)
+			}
+		}
+
+		if errors.Is(err, provider.ErrAborted) {
+			if err := a.appendAbortedToolResults(resp.ToolCalls, 0); err != nil {
+				return err
+			}
+			if err := a.appendAbortMarker(); err != nil {
+				return err
+			}
+			return ErrTurnAborted
 		}
 
 		// No tool calls — check compaction and finish turn.
@@ -196,7 +220,16 @@ func (a *Agent) RunTurn(userInput string) error {
 		}
 
 		// Execute tool calls and append results.
-		for _, tc := range resp.ToolCalls {
+		for idx, tc := range resp.ToolCalls {
+			if ctx.Err() != nil {
+				if err := a.appendAbortedToolResults(resp.ToolCalls, idx); err != nil {
+					return err
+				}
+				if err := a.appendAbortMarker(); err != nil {
+					return err
+				}
+				return ErrTurnAborted
+			}
 			a.Handler.OnToolCall(tc.Name, a.Tools.FormatArgs(tc.Name, tc.Arguments))
 
 			tool := a.Tools.Get(tc.Name)
@@ -214,7 +247,7 @@ func (a *Agent) RunTurn(userInput string) error {
 				continue
 			}
 
-			result := tool.Execute(tc.Arguments)
+			result := tool.Execute(ctx, tc.Arguments)
 			a.Handler.OnToolResult(tc.Name, result)
 
 			if err := a.Session.Append(session.Message{
@@ -225,10 +258,52 @@ func (a *Agent) RunTurn(userInput string) error {
 			}); err != nil {
 				return fmt.Errorf("cannot persist tool result: %w", err)
 			}
+
+			if ctx.Err() != nil {
+				if err := a.appendAbortedToolResults(resp.ToolCalls, idx+1); err != nil {
+					return err
+				}
+				if err := a.appendAbortMarker(); err != nil {
+					return err
+				}
+				return ErrTurnAborted
+			}
 		}
 
 		// Loop back to LLM with tool results included in session history.
 	}
+}
+
+// shouldPersistAssistantMessage reports whether a partial or complete assistant message is worth saving.
+func shouldPersistAssistantMessage(msg session.Message) bool {
+	content, _ := msg.Content.(string)
+	return content != "" || msg.Reasoning != "" || msg.ToolCalls != nil
+}
+
+// appendAbortMarker records the user's abort as a new user message in session history.
+func (a *Agent) appendAbortMarker() error {
+	if err := a.Session.Append(session.Message{Role: "user", Content: userAbortMessage}); err != nil {
+		return fmt.Errorf("cannot persist abort marker: %w", err)
+	}
+	return nil
+}
+
+// appendAbortedToolResults adds tool result messages for unexecuted tool calls after an abort.
+func (a *Agent) appendAbortedToolResults(toolCalls []tools.ToolCall, start int) error {
+	if start < 0 {
+		start = 0
+	}
+	for i := start; i < len(toolCalls); i++ {
+		if err := a.Session.Append(session.Message{
+			Role:       "tool",
+			Content:    "aborted before execution by user",
+			ToolCallID: toolCalls[i].ID,
+			Name:       toolCalls[i].Name,
+		}); err != nil {
+			return fmt.Errorf("cannot persist aborted tool result: %w", err)
+		}
+	}
+	return nil
 }
 
 // sanitizeSession removes any trailing incomplete tool-call round before an LLM call.
