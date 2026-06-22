@@ -31,14 +31,17 @@ const sessionJSONName = "session.json"
 // Message represents a single message in the conversation, exactly as sent to the LLM.
 // The structure follows the OpenAI chat message format with role and content.
 // Tool calls and tool results are preserved as-is for session replay.
+// Reasoning is stored intact on disk and stripped only from the LLM payload.
 //
 // WHAT:  One message in the conversation history.
 // WHY:   session.json stores the complete message array for prompt rebuilding and resume.
-// PARAMS: Role — sender role; Content — message text; ToolCalls — optional tool call array;
-//         ToolCallID — optional tool result reference ID; Name — optional tool name for results.
+// PARAMS: Role — sender role; Content — message text; Reasoning — reasoning text (kept intact on disk);
+//         ToolCalls — optional tool call array; ToolCallID — optional tool result reference ID;
+//         Name — optional tool name for results.
 type Message struct {
 	Role       string      `json:"role"`
 	Content    interface{} `json:"content,omitempty"`
+	Reasoning  string      `json:"reasoning,omitempty"`
 	ToolCalls  interface{} `json:"tool_calls,omitempty"`
 	ToolCallID string      `json:"tool_call_id,omitempty"`
 	Name       string      `json:"name,omitempty"`

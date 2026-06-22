@@ -32,6 +32,9 @@ func setupAgent(t *testing.T, handler http.HandlerFunc) (*Agent, *mockHandler, *
 	t.Helper()
 	server := httptest.NewServer(handler)
 
+	// Override HOME so config.Save() writes to a temp directory.
+	t.Setenv("HOME", t.TempDir())
+
 	cfg := &config.Config{
 		Providers: []config.Provider{
 			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},

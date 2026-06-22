@@ -59,7 +59,42 @@ func TestNewClientProviderNotFound(t *testing.T) {
 	}
 }
 
-// TestStreamContent verifies streaming text content.
+// TestStreamReasoning verifies reasoning_content capture from streaming.
+func TestStreamReasoning(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"reasoning_content":"thinking about"}}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"reasoning_content":" the answer"}}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"42"}}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "data: [DONE]")
+		fmt.Fprintln(w)
+	}))
+	defer server.Close()
+
+	cfg := mockProvider(t, server)
+	client, err := NewClient(cfg, "test/test-model")
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+
+	resp, err := client.Stream([]session.Message{{Role: "user", Content: "what is the answer"}}, nil, nil)
+	if err != nil {
+		t.Fatalf("Stream() error: %v", err)
+	}
+	if resp.Reasoning != "thinking about the answer" {
+		t.Errorf("Reasoning = %q, want 'thinking about the answer'", resp.Reasoning)
+	}
+	if resp.Content != "42" {
+		t.Errorf("Content = %q, want '42'", resp.Content)
+	}
+}
+
+
 func TestStreamContent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

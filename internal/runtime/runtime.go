@@ -133,6 +133,9 @@ func (a *Agent) RunTurn(userInput string) error {
 			return fmt.Errorf("cannot build prompt: %w", err)
 		}
 
+		// Strip reasoning parts from payload (keep newest N, global count).
+		messages = a.Compactor.StripReasoningFromPayload(messages)
+
 		// Stream LLM response.
 		toolDefs := tools.AllToOpenAI(a.Tools)
 		resp, err := a.Provider.Stream(messages, toolDefs, a.Handler.OnContent)
@@ -142,8 +145,9 @@ func (a *Agent) RunTurn(userInput string) error {
 
 		// Build assistant message.
 		assistantMsg := session.Message{
-			Role:    "assistant",
-			Content: resp.Content,
+			Role:      "assistant",
+			Content:   resp.Content,
+			Reasoning: resp.Reasoning,
 		}
 		if len(resp.ToolCalls) > 0 {
 			assistantMsg.ToolCalls = resp.ToolCalls
@@ -218,6 +222,9 @@ func (a *Agent) SetModel(modelID string) error {
 	a.Provider = client
 	a.ModelID = modelID
 	a.Config.LastModel = modelID
+	if err := a.Config.Save(); err != nil {
+		return fmt.Errorf("cannot persist model selection: %w", err)
+	}
 	return nil
 }
 

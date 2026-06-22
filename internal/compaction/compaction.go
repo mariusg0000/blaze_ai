@@ -54,7 +54,7 @@ func (m *Manager) ShouldCompact(usage *provider.Usage) bool {
 //
 // WHAT:  Local token estimate for a single message.
 // WHY:   Used for cut point selection during pruning.
-// PARAMS: msg — the message to estimate; strippedReasoningCount — how many reasoning parts are already stripped.
+// PARAMS: msg — the message to estimate; willStripReasoning — whether reasoning will be stripped from this message in the payload.
 // RETURNS: int — estimated token count.
 func (m *Manager) estimateTokens(msg session.Message, willStripReasoning bool) int {
 	coef := m.Config.Compaction.TokenCoefficient
@@ -67,6 +67,11 @@ func (m *Manager) estimateTokens(msg session.Message, willStripReasoning bool) i
 	// Content part.
 	if content, ok := msg.Content.(string); ok {
 		totalChars += len(content)
+	}
+
+	// Reasoning part: counts as 0 if it will be stripped.
+	if !willStripReasoning {
+		totalChars += len(msg.Reasoning)
 	}
 
 	// Tool calls part.
@@ -84,6 +89,7 @@ func (m *Manager) estimateTokens(msg session.Message, willStripReasoning bool) i
 // findCutPoint walks messages from newest to oldest, summing estimated tokens,
 // and returns the index where the retained tail reaches minTokens.
 // Ensures tool boundary safety: no split between a tool call and its result.
+// Stripped reasoning parts count as 0 tokens per spec 05.
 //
 // WHAT:  Finds the prune boundary that retains approximately minTokens of recent messages.
 // WHY:   Pruning must retain enough recent context while respecting tool call/result boundaries.
@@ -91,12 +97,16 @@ func (m *Manager) estimateTokens(msg session.Message, willStripReasoning bool) i
 // RETURNS: int — cut point index (messages before this index are pruned).
 func (m *Manager) findCutPoint(messages []session.Message, minTokens int) int {
 	willStrip := m.Config.StripReasoning.Enable
+	preserveLast := m.Config.StripReasoning.PreserveLast
+
+	// Determine which messages will have reasoning stripped (older than newest N with reasoning).
+	stripSet := m.buildReasoningStripSet(messages, willStrip, preserveLast)
 
 	accumulated := 0
 	cutIndex := len(messages)
 
 	for i := len(messages) - 1; i >= 0; i-- {
-		tokens := m.estimateTokens(messages[i], willStrip)
+		tokens := m.estimateTokens(messages[i], stripSet[i])
 		if accumulated+tokens > minTokens {
 			break
 		}
@@ -111,17 +121,56 @@ func (m *Manager) findCutPoint(messages []session.Message, minTokens int) int {
 		prevMsg := messages[cutIndex-1]
 		curMsg := messages[cutIndex]
 		if prevMsg.Role == "assistant" && prevMsg.ToolCalls != nil && curMsg.Role == "tool" {
-			// Include the assistant message with tool calls in the retained tail.
 			cutIndex = cutIndex - 1
 		}
 		// Also check if the message before the cut is a tool result without its assistant call.
 		if cutIndex > 0 && messages[cutIndex-1].Role == "tool" && curMsg.Role == "assistant" && curMsg.ToolCalls != nil {
-			// The tool result before the cut belongs to a tool call after the cut; move cut back.
 			cutIndex = cutIndex - 1
 		}
 	}
 
 	return cutIndex
+}
+
+// buildReasoningStripSet returns a map indicating which messages will have reasoning stripped.
+// Messages with reasoning that are older than the newest N will be stripped.
+//
+// WHAT:  Determines which messages have reasoning that will be stripped in the payload.
+// WHY:   The token estimator needs to know which reasoning counts as 0 tokens.
+// PARAMS: messages — full message array; enable — whether stripping is enabled; preserveLast — newest N to keep.
+// RETURNS: map[int]bool — true for messages whose reasoning will be stripped.
+func (m *Manager) buildReasoningStripSet(messages []session.Message, enable bool, preserveLast int) map[int]bool {
+	stripSet := make(map[int]bool, len(messages))
+	if !enable {
+		return stripSet
+	}
+
+	// Count reasoning messages from the end.
+	reasoningCount := 0
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Reasoning != "" {
+			reasoningCount++
+		}
+	}
+
+	if reasoningCount <= preserveLast {
+		return stripSet
+	}
+
+	// Mark older reasoning messages for stripping.
+	kept := 0
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Reasoning == "" {
+			continue
+		}
+		if kept < preserveLast {
+			kept++
+			continue
+		}
+		stripSet[i] = true
+	}
+
+	return stripSet
 }
 
 // isAboveHardCap checks if the provider-reported tokens exceed the hard cap.
@@ -236,6 +285,7 @@ func (m *Manager) summarize(sessionFolder string, pruned []session.Message) (str
 }
 
 // buildTranscript constructs a text transcript from pruned messages for the summarizer.
+// Reasoning is included as [REASONING]...[/REASONING] only for the newest N reasoning messages.
 //
 // WHAT:  Converts pruned messages into a compact text transcript.
 // WHY:   The summarizer needs a text representation of the pruned segment.
@@ -245,11 +295,34 @@ func (m *Manager) buildTranscript(pruned []session.Message) string {
 	var sb strings.Builder
 	preserveLast := m.Config.StripReasoning.PreserveLast
 
-	// Count reasoning parts globally from the end of the pruned segment.
-	reasoningSeen := 0
+	// Pre-compute which reasoning messages to keep (newest N).
+	reasoningIndices := make(map[int]bool)
+	kept := 0
+	for i := len(pruned) - 1; i >= 0; i-- {
+		if pruned[i].Reasoning != "" {
+			if m.Config.StripReasoning.Enable {
+				reasoningCount := 0
+				for _, msg := range pruned {
+					if msg.Reasoning != "" {
+						reasoningCount++
+					}
+				}
+				if reasoningCount > preserveLast && kept >= preserveLast {
+					continue
+				}
+			}
+			reasoningIndices[i] = true
+			kept++
+		}
+	}
 
-	for _, msg := range pruned {
+	for i, msg := range pruned {
 		var parts []string
+
+		// Include reasoning for newest N only.
+		if msg.Reasoning != "" && reasoningIndices[i] {
+			parts = append(parts, fmt.Sprintf("[REASONING]%s[/REASONING]", msg.Reasoning))
+		}
 
 		if content, ok := msg.Content.(string); ok && content != "" {
 			parts = append(parts, content)
@@ -268,13 +341,6 @@ func (m *Manager) buildTranscript(pruned []session.Message) string {
 
 		if len(parts) == 0 {
 			continue
-		}
-
-		// Check if this message would have its reasoning stripped.
-		// In the transcript, we include reasoning for the newest N only.
-		wouldStrip := m.Config.StripReasoning.Enable && reasoningSeen >= preserveLast
-		if !wouldStrip {
-			reasoningSeen++
 		}
 
 		sb.WriteString(fmt.Sprintf("[%s] %s\n", msg.Role, strings.Join(parts, " ")))
@@ -438,6 +504,10 @@ func (m *Manager) buildSyntheticMessage(sessionFolder string) session.Message {
 	}
 }
 
+// syntheticPrefix is the text prefix that identifies a synthetic summary message.
+// Used to detect and replace existing synthetic messages on resume.
+const syntheticPrefix = "These are historical segment summaries"
+
 // LoadSummariesForResume rebuilds the synthetic summary message when continuing a session with -c.
 //
 // WHAT:  Loads summaries from disk and returns a synthetic message for session resume.
@@ -453,13 +523,45 @@ func (m *Manager) LoadSummariesForResume(sessionFolder string) *session.Message 
 	return &msg
 }
 
+// RebuildForResume removes any existing synthetic summary message from the session
+// and prepends a fresh one rebuilt from summary files on disk.
+//
+// WHAT:  Rebuilds the synthetic summary message on -c resume.
+// WHY:   Spec 05 requires summaries loaded automatically and synthetic message rebuilt on -c.
+// HOW:   Detects existing synthetic by prefix, removes it, rebuilds from summary files, prepends.
+// PARAMS: sess — the resumed session.
+// RETURNS: error if saving fails.
+func (m *Manager) RebuildForResume(sess *session.Session) error {
+	// Remove existing synthetic message(s) from the start of the message array.
+	filtered := make([]session.Message, 0, len(sess.Messages))
+	for i, msg := range sess.Messages {
+		if content, ok := msg.Content.(string); ok && strings.HasPrefix(content, syntheticPrefix) {
+			continue
+		}
+		filtered = append(filtered, sess.Messages[i])
+	}
+	sess.Messages = filtered
+
+	// Rebuild synthetic from summary files.
+	synthetic := m.LoadSummariesForResume(sess.Folder)
+	if synthetic == nil {
+		// No summaries — just save the filtered session.
+		return sess.Save()
+	}
+
+	// Prepend synthetic message.
+	sess.Messages = append([]session.Message{*synthetic}, sess.Messages...)
+	return sess.Save()
+}
+
 // StripReasoningFromPayload replaces reasoning parts in the message array with empty text.
 // Only the newest N reasoning parts are kept. The count is global across all messages.
 //
-// WHAT:  Removes reasoning parts from the payload sent to the LLM.
+// WHAT:  Removes reasoning from the payload sent to the LLM, keeping only the newest N.
 // WHY:   Reduces token usage while preserving the newest reasoning context.
+// HOW:   Counts messages with non-empty reasoning from the end, clears reasoning on older messages.
 // PARAMS: messages — the message array to strip.
-// RETURNS: []session.Message — new array with reasoning parts stripped.
+// RETURNS: []session.Message — new array with reasoning stripped on older messages.
 func (m *Manager) StripReasoningFromPayload(messages []session.Message) []session.Message {
 	if !m.Config.StripReasoning.Enable {
 		return messages
@@ -469,13 +571,32 @@ func (m *Manager) StripReasoningFromPayload(messages []session.Message) []sessio
 	result := make([]session.Message, len(messages))
 	copy(result, messages)
 
-	// Count total reasoning parts from the end.
-	// Since we don't have explicit reasoning parts in the current Message struct,
-	// this is a placeholder for when reasoning support is added.
-	// The current Message struct uses Content as interface{} which could hold
-	// structured parts including reasoning. For now, this is a no-op since
-	// the current implementation doesn't parse reasoning parts separately.
-	_ = preserveLast
+	// Count messages with reasoning from the end (global count).
+	reasoningCount := 0
+	for i := len(result) - 1; i >= 0; i-- {
+		if result[i].Reasoning != "" {
+			reasoningCount++
+		}
+	}
+
+	// If total reasoning messages <= preserveLast, keep all.
+	if reasoningCount <= preserveLast {
+		return result
+	}
+
+	// Walk from newest, keep reasoning for the newest N, strip the rest.
+	kept := 0
+	for i := len(result) - 1; i >= 0; i-- {
+		if result[i].Reasoning == "" {
+			continue
+		}
+		if kept < preserveLast {
+			kept++
+			continue
+		}
+		// Strip reasoning from this message.
+		result[i].Reasoning = ""
+	}
 
 	return result
 }

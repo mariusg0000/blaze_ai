@@ -33,9 +33,10 @@ type Usage struct {
 //
 // WHAT:  The accumulated result of a streamed LLM response.
 // WHY:   The runtime needs the full assistant message, tool calls, and usage after streaming ends.
-// PARAMS: Content — accumulated text; ToolCalls — parsed tool calls; Usage — token counts.
+// PARAMS: Content — accumulated text; Reasoning — accumulated reasoning text; ToolCalls — parsed tool calls; Usage — token counts.
 type Response struct {
 	Content   string
+	Reasoning string
 	ToolCalls []tools.ToolCall
 	Usage     *Usage
 }
@@ -138,19 +139,30 @@ func (c *Client) ListModels() ([]string, error) {
 //
 // WHAT:  OpenAI-compatible chat completion request with streaming and tools.
 type chatRequest struct {
-	Model    string             `json:"model"`
-	Messages []session.Message  `json:"messages"`
-	Tools    []tools.OpenAITool `json:"tools,omitempty"`
-	Stream   bool               `json:"stream"`
+	Model         string             `json:"model"`
+	Messages      []session.Message  `json:"messages"`
+	Tools         []tools.OpenAITool `json:"tools,omitempty"`
+	Stream        bool               `json:"stream"`
+	StreamOptions *streamOptions     `json:"stream_options,omitempty"`
+}
+
+// streamOptions controls what additional data is included in the streaming response.
+//
+// WHAT:  Configures the streaming response to include token usage.
+// WHY:   Compaction triggers on provider-reported prompt_tokens; usage is only sent
+//        in the stream when include_usage is set to true.
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 // streamDelta represents the delta object in a streaming SSE chunk.
 //
 // WHAT:  The incremental content in one SSE chunk.
-// PARAMS: Content — text delta; ToolCalls — tool call deltas.
+// PARAMS: Content — text delta; ReasoningContent — reasoning text delta; ToolCalls — tool call deltas.
 type streamDelta struct {
-	Content   string           `json:"content,omitempty"`
-	ToolCalls []streamToolCall `json:"tool_calls,omitempty"`
+	Content         string           `json:"content,omitempty"`
+	ReasoningContent string          `json:"reasoning_content,omitempty"`
+	ToolCalls       []streamToolCall `json:"tool_calls,omitempty"`
 }
 
 // streamToolCall represents an incremental tool call in a streaming chunk.
@@ -199,10 +211,11 @@ type streamChunk struct {
 // RETURNS: *Response — accumulated content, tool calls, and usage; error on HTTP or parse failure.
 func (c *Client) Stream(messages []session.Message, toolDefs []tools.OpenAITool, onContent func(string)) (*Response, error) {
 	reqBody := chatRequest{
-		Model:    c.Model,
-		Messages: messages,
-		Tools:    toolDefs,
-		Stream:   true,
+		Model:         c.Model,
+		Messages:      messages,
+		Tools:         toolDefs,
+		Stream:        true,
+		StreamOptions: &streamOptions{IncludeUsage: true},
 	}
 	bodyData, err := json.Marshal(reqBody)
 	if err != nil {
@@ -274,6 +287,10 @@ func parseSSEStream(reader io.Reader, onContent func(string)) (*Response, error)
 				if onContent != nil {
 					onContent(delta.Content)
 				}
+			}
+
+			if delta.ReasoningContent != "" {
+				result.Reasoning += delta.ReasoningContent
 			}
 
 			for _, tc := range delta.ToolCalls {

@@ -95,6 +95,13 @@ func run() error {
 		return fmt.Errorf("cannot create agent: %w", err)
 	}
 
+	// On -c resume, rebuild synthetic summary message from summary files.
+	if *continueFlag && agent.Compactor != nil {
+		if err := agent.Compactor.RebuildForResume(sess); err != nil {
+			return fmt.Errorf("cannot rebuild summaries for resume: %w", err)
+		}
+	}
+
 	// Register skill tools that need the active list.
 	agent.Tools.Register(tools.NewLoadSkillTool(agent.Active))
 	agent.Tools.Register(tools.NewUnloadSkillTool(agent.Active))

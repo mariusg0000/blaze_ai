@@ -351,9 +351,185 @@ func TestStripReasoningDisabled(t *testing.T) {
 		StripReasoning: config.StripReasoning{Enable: false, PreserveLast: 5},
 	}
 	m := NewManager(cfg, nil)
-	msgs := []session.Message{{Role: "user", Content: "test"}}
+	msgs := []session.Message{{Role: "user", Content: "test", Reasoning: "thinking"}}
 	result := m.StripReasoningFromPayload(msgs)
-	if len(result) != 1 || result[0].Content != "test" {
-		t.Error("StripReasoningFromPayload modified messages when disabled")
+	if len(result) != 1 || result[0].Reasoning != "thinking" {
+		t.Error("StripReasoningFromPayload modified reasoning when disabled")
+	}
+}
+
+// TestStripReasoningPreserveAll verifies all reasoning kept when count <= preserveLast.
+func TestStripReasoningPreserveAll(t *testing.T) {
+	m, server := setupManager(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	msgs := []session.Message{
+		{Role: "assistant", Content: "a1", Reasoning: "r1"},
+		{Role: "assistant", Content: "a2", Reasoning: "r2"},
+	}
+	result := m.StripReasoningFromPayload(msgs)
+	if result[0].Reasoning != "r1" || result[1].Reasoning != "r2" {
+		t.Error("reasoning stripped when count <= preserveLast (5)")
+	}
+}
+
+// TestStripReasoningStripsOlder verifies older reasoning is stripped beyond preserveLast.
+func TestStripReasoningStripsOlder(t *testing.T) {
+	cfg := &config.Config{
+		Compaction:     config.DefaultCompaction(),
+		StripReasoning: config.StripReasoning{Enable: true, PreserveLast: 2},
+	}
+	m := NewManager(cfg, nil)
+
+	msgs := []session.Message{
+		{Role: "assistant", Content: "a1", Reasoning: "r1"},
+		{Role: "assistant", Content: "a2", Reasoning: "r2"},
+		{Role: "assistant", Content: "a3", Reasoning: "r3"},
+		{Role: "assistant", Content: "a4", Reasoning: "r4"},
+	}
+	result := m.StripReasoningFromPayload(msgs)
+	// Newest 2 (r3, r4) kept, older 2 (r1, r2) stripped.
+	if result[0].Reasoning != "" {
+		t.Errorf("r1 not stripped, got %q", result[0].Reasoning)
+	}
+	if result[1].Reasoning != "" {
+		t.Errorf("r2 not stripped, got %q", result[1].Reasoning)
+	}
+	if result[2].Reasoning != "r3" {
+		t.Errorf("r3 stripped, got %q", result[2].Reasoning)
+	}
+	if result[3].Reasoning != "r4" {
+		t.Errorf("r4 stripped, got %q", result[3].Reasoning)
+	}
+}
+
+// TestStripReasoningNoReasoning verifies messages without reasoning are unchanged.
+func TestStripReasoningNoReasoning(t *testing.T) {
+	m, server := setupManager(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	msgs := []session.Message{
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "hi"},
+	}
+	result := m.StripReasoningFromPayload(msgs)
+	if result[0].Content != "hello" || result[1].Content != "hi" {
+		t.Error("non-reasoning messages modified")
+	}
+}
+
+// TestBuildTranscriptWithReasoning verifies reasoning appears in transcript for newest N.
+func TestBuildTranscriptWithReasoning(t *testing.T) {
+	cfg := &config.Config{
+		Compaction:     config.DefaultCompaction(),
+		StripReasoning: config.StripReasoning{Enable: true, PreserveLast: 1},
+	}
+	m := NewManager(cfg, nil)
+
+	msgs := []session.Message{
+		{Role: "assistant", Content: "a1", Reasoning: "old reasoning"},
+		{Role: "assistant", Content: "a2", Reasoning: "new reasoning"},
+	}
+	transcript := m.buildTranscript(msgs)
+	if !strings.Contains(transcript, "new reasoning") {
+		t.Error("transcript missing newest reasoning")
+	}
+	if strings.Contains(transcript, "old reasoning") {
+		t.Error("transcript should not include older reasoning (preserveLast=1)")
+	}
+}
+
+// TestEstimateTokensReasoningStripped verifies reasoning counts as 0 when stripped.
+func TestEstimateTokensReasoningStripped(t *testing.T) {
+	m, server := setupManager(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	msg := session.Message{Content: "hello", Reasoning: "thinking about it"}
+	tokensWith := m.estimateTokens(msg, false)
+	tokensWithout := m.estimateTokens(msg, true)
+	if tokensWith <= tokensWithout {
+		t.Errorf("tokensWith(%d) should > tokensWithout(%d) when reasoning is non-empty", tokensWith, tokensWithout)
+	}
+}
+
+// TestRebuildForResumeWithSummaries verifies synthetic message is rebuilt on resume.
+func TestRebuildForResumeWithSummaries(t *testing.T) {
+	m, server := setupManager(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	sess := makeSession(t, []session.Message{
+		{Role: "system", Content: syntheticPrefix + " old synthetic"},
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "hi"},
+	})
+
+	// Save a summary file.
+	m.saveSummary(sess.Folder, "fresh summary content")
+
+	if err := m.RebuildForResume(sess); err != nil {
+		t.Fatalf("RebuildForResume() error: %v", err)
+	}
+
+	// First message should be synthetic with fresh content.
+	if len(sess.Messages) == 0 {
+		t.Fatal("no messages after rebuild")
+	}
+	content, ok := sess.Messages[0].Content.(string)
+	if !ok {
+		t.Fatal("first message content is not string")
+	}
+	if !strings.Contains(content, "fresh summary content") {
+		t.Errorf("synthetic message missing fresh summary: %q", content)
+	}
+	if strings.Contains(content, "old synthetic") {
+		t.Error("synthetic message still contains old synthetic text")
+	}
+
+	// Original messages should be preserved.
+	if len(sess.Messages) != 3 {
+		t.Errorf("messages = %d, want 3 (synthetic + user + assistant)", len(sess.Messages))
+	}
+}
+
+// TestRebuildForResumeNoSummaries verifies old synthetic is removed when no summaries exist.
+func TestRebuildForResumeNoSummaries(t *testing.T) {
+	m, server := setupManager(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	sess := makeSession(t, []session.Message{
+		{Role: "system", Content: syntheticPrefix + " old synthetic"},
+		{Role: "user", Content: "hello"},
+	})
+
+	if err := m.RebuildForResume(sess); err != nil {
+		t.Fatalf("RebuildForResume() error: %v", err)
+	}
+
+	// Old synthetic should be removed, no new one added.
+	if len(sess.Messages) != 1 {
+		t.Errorf("messages = %d, want 1 (just user)", len(sess.Messages))
+	}
+	content, ok := sess.Messages[0].Content.(string)
+	if !ok || content != "hello" {
+		t.Errorf("first message = %v, want 'hello'", sess.Messages[0].Content)
+	}
+}
+
+// TestRebuildForResumeNoSynthetic verifies no change when no synthetic and no summaries.
+func TestRebuildForResumeNoSynthetic(t *testing.T) {
+	m, server := setupManager(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	sess := makeSession(t, []session.Message{
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "hi"},
+	})
+
+	originalCount := len(sess.Messages)
+	if err := m.RebuildForResume(sess); err != nil {
+		t.Fatalf("RebuildForResume() error: %v", err)
+	}
+	if len(sess.Messages) != originalCount {
+		t.Errorf("messages = %d, want %d (unchanged)", len(sess.Messages), originalCount)
 	}
 }

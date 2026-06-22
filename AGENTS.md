@@ -150,8 +150,6 @@ Before any commit:
 
 Native todos are the only active implementation tracker. Use the native `todoread` and `todowrite` tools, referred to here as TodoRead and TodoWrite.
 
-Do **not** create, modify, reset, or commit `task.md` for task tracking.
-
 Follow these steps **in strict order** for every implementation task. Do not skip, reorder, or start implementation early.
 
 ### STEP 0 — Remain in Planning Mode by default
@@ -290,11 +288,32 @@ When available in the project, validation must pass: **formatter, linter, strict
 
 ## 8. Testing
 
-Tests required for non-trivial logic: branching, I/O, transformations, validation, retries, parsing, rendering, persistence, protocol handling, state mutation.
+Testing must be proportional to risk and task size.
 
-**Minimum**: one happy path, one edge case, one error path. Place in the conventional location (`tests/`, `__tests__/`, or framework equivalent). If no test structure exists, **ask before creating one**.
+Add or update tests when the change affects non-trivial behavior, data correctness, validation, parsing, retries, persistence, protocol handling, rendering logic, public APIs, security-sensitive logic, or state mutation.
 
-**Exempt**: DTOs, trivial accessors, pass-through wrappers, static config, pure documentation changes.
+For substantial behavior changes, cover at least:
+- one expected path
+- one important edge case
+- one important failure path
+
+For small, low-risk, or mechanical changes, a focused validation command, smoke test, type check, linter, or direct manual verification is acceptable. Do not create unnecessary tests just to satisfy a fixed count.
+
+Place tests in the conventional location (`tests/`, `__tests__/`, or framework equivalent).
+
+If no test structure exists:
+- for small changes, do not create one unless clearly useful; report what validation was done instead
+- for substantial behavior changes, ask before creating a new test structure
+
+Exempt:
+- DTOs
+- trivial accessors
+- pass-through wrappers
+- static config
+- pure documentation changes
+- file moves/renames without behavior change
+- typo or formatting-only changes
+- Quick Mode changes unless the quick change directly affects executable behavior
 
 ---
 
