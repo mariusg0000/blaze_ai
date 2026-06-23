@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 
+	"blazeai/internal/config"
+	"blazeai/internal/helpers"
 	"blazeai/internal/memory"
 	"blazeai/internal/platform"
 	"blazeai/internal/session"
@@ -32,14 +34,19 @@ var variablePattern = regexp.MustCompile(`\{([A-Z_][A-Z0-9_]*)\}`)
 // WHAT:  Holds configuration for prompt building and assembles prompts on every LLM call.
 // WHY:   The prompt is rebuilt fresh from disk every time per spec — nothing is reused.
 // PARAMS: PromptsDir — path to the project's prompts directory (sysprompt.md, sysprompt.<os>.md);
-//         BuiltinSkillsDir — path to the project's builtin skills directory;
-//         WorkDir — current work folder for AGENTS.md resolution;
-//         OS — the detected operating system for selecting the OS-specific prompt.
+//
+//	BuiltinSkillsDir — path to the project's builtin skills directory;
+//	WorkDir — current work folder for AGENTS.md resolution;
+//	OS — the detected operating system for selecting the OS-specific prompt;
+//	HelperSetup — user UX preferences for host helper installation prompts;
+//	HelperLookup — binary lookup function for helper detection (injectable for tests).
 type Builder struct {
 	PromptsDir       string
 	BuiltinSkillsDir string
 	WorkDir          string
 	OS               platform.OS
+	HelperSetup      config.HelperSetup
+	HelperLookup     helpers.LookupFunc
 }
 
 // injectVariables replaces known variable placeholders in text with resolved values.
@@ -211,7 +218,22 @@ func (b *Builder) BuildRuntimePart(active *skills.ActiveList) (string, error) {
 		parts = append(parts, memHeader+mem)
 	}
 
-	// 5. Skills section (optional).
+	// 5. Host helpers (optional).
+	lookup := b.HelperLookup
+	if lookup == nil {
+		lookup = helpers.DefaultLookup
+	}
+	helperStatuses := helpers.Detect(lookup)
+	helperSection := helpers.BuildPromptSection(helperStatuses, b.WorkDir, b.HelperSetup)
+	if helperSection != "" {
+		helperSection, err = b.injectVariables(helperSection)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, helperSection)
+	}
+
+	// 6. Skills section (optional).
 	skillsSection, err := b.buildSkillsSection(active)
 	if err != nil {
 		return "", err

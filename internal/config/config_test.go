@@ -329,3 +329,66 @@ func TestSplitModelIDNoSlash(t *testing.T) {
 		t.Errorf("model = %q, want empty", model)
 	}
 }
+
+// TestDefaultHelperSetup verifies default HelperSetup values.
+func TestDefaultHelperSetup(t *testing.T) {
+	cfg := Default()
+	if cfg.HelperSetup.Dismissed {
+		t.Error("Default() HelperSetup.Dismissed = true, want false")
+	}
+	if cfg.HelperSetup.Declined == nil {
+		t.Error("Default() HelperSetup.Declined = nil, want empty slice")
+	}
+}
+
+// TestLoadFromWithoutHelperSetup verifies backward-compatibility:
+// configs without helperSetup field load successfully with zero-value.
+func TestLoadFromWithoutHelperSetup(t *testing.T) {
+	raw := struct {
+		Providers      []Provider     `json:"providers"`
+		FavoriteModels []string       `json:"favorite_models"`
+		Roles          Roles          `json:"roles"`
+		Compaction     Compaction     `json:"compaction"`
+		StripReasoning StripReasoning `json:"stripReasoning"`
+	}{
+		Providers: []Provider{
+			{Name: "test", Endpoint: "https://example.com/v1", APIKey: "sk-test"},
+		},
+		FavoriteModels: []string{"test/model"},
+		Roles: Roles{
+			Default: "test/model",
+		},
+		Compaction:     DefaultCompaction(),
+		StripReasoning: DefaultStripReasoning(),
+	}
+	path := writeConfigToTemp(t, raw)
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom() without helperSetup failed: %v", err)
+	}
+	if loaded.HelperSetup.Dismissed {
+		t.Error("HelperSetup.Dismissed = true for old config, want false (zero-value)")
+	}
+}
+
+// TestSaveLoadHelperSetup verifies round-trip preservation of helper setup preferences.
+func TestSaveLoadHelperSetup(t *testing.T) {
+	cfg := validConfig()
+	cfg.HelperSetup.Dismissed = true
+	cfg.HelperSetup.Declined = []string{"rg", "fd"}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config", "config.json")
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo() failed: %v", err)
+	}
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom() after SaveTo() failed: %v", err)
+	}
+	if !loaded.HelperSetup.Dismissed {
+		t.Error("HelperSetup.Dismissed = false, want true")
+	}
+	if len(loaded.HelperSetup.Declined) != 2 {
+		t.Errorf("HelperSetup.Declined = %v, want [rg fd]", loaded.HelperSetup.Declined)
+	}
+}

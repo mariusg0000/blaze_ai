@@ -76,12 +76,25 @@ type StripReasoning struct {
 	PreserveLast int  `json:"preserveLast"`
 }
 
+// HelperSetup holds user preferences for optional host helper utility setup prompts.
+// It does NOT store whether a helper is actually installed — that is detected live.
+//
+// WHAT:  UX preferences for helper installation suggestions.
+// WHY:   Avoids annoying the user with repeated install prompts for utilities they declined.
+// PARAMS: Dismissed — suppress all optional helper install suggestions; Declined — helpers explicitly declined.
+type HelperSetup struct {
+	Dismissed bool     `json:"dismissed"`
+	Declined  []string `json:"declined,omitempty"`
+}
+
 // Config is the root configuration structure loaded from config.json.
 //
 // WHAT:  The single source of truth for BlazeAI runtime configuration.
 // WHY:   All runtime behavior depends on these values; no fallbacks are applied silently.
 // PARAMS: Providers — endpoint definitions; FavoriteModels — model list; Roles — role assignments;
-//         Compaction — thresholds; StripReasoning — payload settings; LastModel — persisted selection.
+//
+//	Compaction — thresholds; StripReasoning — payload settings; LastModel — persisted selection;
+//	HelperSetup — UX preferences for optional host helper installation prompts.
 type Config struct {
 	Providers      []Provider     `json:"providers"`
 	FavoriteModels []string       `json:"favorite_models"`
@@ -89,6 +102,7 @@ type Config struct {
 	Compaction     Compaction     `json:"compaction"`
 	StripReasoning StripReasoning `json:"stripReasoning"`
 	LastModel      string         `json:"last_model,omitempty"`
+	HelperSetup    HelperSetup    `json:"helperSetup,omitempty"`
 }
 
 // DefaultCompaction returns the pre-filled compaction thresholds from spec 05.
@@ -132,6 +146,10 @@ func Default() *Config {
 		Roles:          Roles{},
 		Compaction:     DefaultCompaction(),
 		StripReasoning: DefaultStripReasoning(),
+		HelperSetup: HelperSetup{
+			Dismissed: false,
+			Declined:  []string{},
+		},
 	}
 }
 

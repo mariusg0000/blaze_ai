@@ -3,11 +3,14 @@
 package prompt
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"blazeai/internal/config"
+	"blazeai/internal/helpers"
 	"blazeai/internal/platform"
 	"blazeai/internal/session"
 	"blazeai/internal/skills"
@@ -355,5 +358,178 @@ func TestBuildRuntimePartOrder(t *testing.T) {
 	if !(universalIdx < osIdx && osIdx < agentsIdx && agentsIdx < skillsIdx) {
 		t.Errorf("wrong order: universal=%d os=%d agents=%d skills=%d",
 			universalIdx, osIdx, agentsIdx, skillsIdx)
+	}
+}
+
+// fakeLookup returns a helpers.LookupFunc that reports only the given names as available.
+func fakeHelperLookup(names []string) helpers.LookupFunc {
+	avail := make(map[string]bool)
+	for _, n := range names {
+		avail[n] = true
+	}
+	return func(name string) (string, error) {
+		if avail[name] {
+			return fmt.Sprintf("/usr/bin/%s", name), nil
+		}
+		return "", fmt.Errorf("not found")
+	}
+}
+
+// TestBuildRuntimePartHelperAvailable verifies available helpers appear in the runtime part.
+func TestBuildRuntimePartHelperAvailable(t *testing.T) {
+	promptsDir, _, workDir := setupTestDirs(t)
+
+	b := &Builder{
+		PromptsDir:       promptsDir,
+		BuiltinSkillsDir: filepath.Join(t.TempDir(), "noskills"),
+		WorkDir:          workDir,
+		OS:               platform.Linux,
+		HelperSetup:      config.HelperSetup{},
+		HelperLookup:     fakeHelperLookup([]string{"rg", "jq", "curl"}),
+	}
+	result, err := b.BuildRuntimePart(skills.NewActiveList())
+	if err != nil {
+		t.Fatalf("BuildRuntimePart() error: %v", err)
+	}
+	if !strings.Contains(result, "## Available Host Helpers") {
+		t.Error("runtime part missing Available Host Helpers section")
+	}
+	if !strings.Contains(result, "rg") || !strings.Contains(result, "jq") {
+		t.Error("runtime part missing available helper names")
+	}
+}
+
+// TestBuildRuntimePartHelperMissingNotDismissed verifies missing core helpers appear when not dismissed.
+func TestBuildRuntimePartHelperMissingNotDismissed(t *testing.T) {
+	promptsDir, _, workDir := setupTestDirs(t)
+
+	b := &Builder{
+		PromptsDir:       promptsDir,
+		BuiltinSkillsDir: filepath.Join(t.TempDir(), "noskills"),
+		WorkDir:          workDir,
+		OS:               platform.Linux,
+		HelperSetup:      config.HelperSetup{},
+		HelperLookup:     fakeHelperLookup([]string{"git"}),
+	}
+	result, err := b.BuildRuntimePart(skills.NewActiveList())
+	if err != nil {
+		t.Fatalf("BuildRuntimePart() error: %v", err)
+	}
+	if !strings.Contains(result, "## Optional Host Helpers") {
+		t.Error("runtime part missing Optional Host Helpers section")
+	}
+	if !strings.Contains(result, "rg") {
+		t.Error("runtime part missing missing rg in optional section")
+	}
+}
+
+// TestBuildRuntimePartHelperMissingDismissed verifies optional section suppressed when dismissed.
+func TestBuildRuntimePartHelperMissingDismissed(t *testing.T) {
+	promptsDir, _, workDir := setupTestDirs(t)
+
+	b := &Builder{
+		PromptsDir:       promptsDir,
+		BuiltinSkillsDir: filepath.Join(t.TempDir(), "noskills"),
+		WorkDir:          workDir,
+		OS:               platform.Linux,
+		HelperSetup:      config.HelperSetup{Dismissed: true},
+		HelperLookup:     fakeHelperLookup([]string{"git"}),
+	}
+	result, err := b.BuildRuntimePart(skills.NewActiveList())
+	if err != nil {
+		t.Fatalf("BuildRuntimePart() error: %v", err)
+	}
+	if strings.Contains(result, "Optional Host Helpers") {
+		t.Error("runtime part should not contain Optional Host Helpers when dismissed=true")
+	}
+}
+
+// TestBuildRuntimePartHelperDeclined verifies declined helpers don't appear in optional.
+func TestBuildRuntimePartHelperDeclined(t *testing.T) {
+	promptsDir, _, workDir := setupTestDirs(t)
+
+	b := &Builder{
+		PromptsDir:       promptsDir,
+		BuiltinSkillsDir: filepath.Join(t.TempDir(), "noskills"),
+		WorkDir:          workDir,
+		OS:               platform.Linux,
+		HelperSetup:      config.HelperSetup{Declined: []string{"rg", "fd"}},
+		HelperLookup:     fakeHelperLookup([]string{"git"}),
+	}
+	result, err := b.BuildRuntimePart(skills.NewActiveList())
+	if err != nil {
+		t.Fatalf("BuildRuntimePart() error: %v", err)
+	}
+	// Only check the optional section for declined helpers; full prompt may contain
+	// unrelated system data from the host memory.md file.
+	optIdx := strings.Index(result, "## Optional Host Helpers")
+	if optIdx < 0 {
+		t.Fatal("expected Optional Host Helpers section")
+	}
+	nextSectionIdx := strings.Index(result[optIdx+1:], "\n## ")
+	if nextSectionIdx < 0 {
+		nextSectionIdx = len(result) - optIdx - 1
+	}
+	optSection := result[optIdx+1 : optIdx+1+nextSectionIdx]
+	if strings.Contains(optSection, "rg") {
+		t.Error("optional section should not contain declined helper rg")
+	}
+	if !strings.Contains(optSection, "jq") {
+		t.Error("optional section should contain non-declined missing jq")
+	}
+}
+
+// TestBuildRuntimePartHelperOrder verifies helper section is after memory, before skills.
+func TestBuildRuntimePartHelperOrder(t *testing.T) {
+	promptsDir, builtinSkillsDir, workDir := setupTestDirs(t)
+
+	b := &Builder{
+		PromptsDir:       promptsDir,
+		BuiltinSkillsDir: builtinSkillsDir,
+		WorkDir:          workDir,
+		OS:               platform.Linux,
+		HelperSetup:      config.HelperSetup{},
+		HelperLookup:     fakeHelperLookup([]string{"rg", "fd", "jq", "git", "curl"}),
+	}
+	result, err := b.BuildRuntimePart(skills.NewActiveList())
+	if err != nil {
+		t.Fatalf("BuildRuntimePart() error: %v", err)
+	}
+
+	universalIdx := strings.Index(result, "Universal System Prompt")
+	osIdx := strings.Index(result, "Linux System Prompt")
+	agentsIdx := strings.Index(result, "Project Rules")
+	helpersIdx := strings.Index(result, "Available Host Helpers")
+	skillsIdx := strings.Index(result, "Available Skills")
+
+	if universalIdx < 0 || osIdx < 0 || helpersIdx < 0 || skillsIdx < 0 {
+		t.Fatalf("missing sections: universal=%d os=%d helpers=%d skills=%d",
+			universalIdx, osIdx, helpersIdx, skillsIdx)
+	}
+	// Check: universal < OS < AGENTS < memory? Actually memory header is empty, so check helpers < skills.
+	if !(osIdx < agentsIdx && agentsIdx < helpersIdx && helpersIdx < skillsIdx) {
+		t.Errorf("wrong order: os=%d agents=%d helpers=%d skills=%d (expected: OS < AGENTS < helpers < skills)",
+			osIdx, agentsIdx, helpersIdx, skillsIdx)
+	}
+}
+
+// TestBuildRuntimePartHelperNoHelpers verifies no helpers section when nothing is available.
+func TestBuildRuntimePartHelperNoHelpers(t *testing.T) {
+	promptsDir, _, workDir := setupTestDirs(t)
+
+	b := &Builder{
+		PromptsDir:       promptsDir,
+		BuiltinSkillsDir: filepath.Join(t.TempDir(), "noskills"),
+		WorkDir:          workDir,
+		OS:               platform.Linux,
+		HelperSetup:      config.HelperSetup{Dismissed: true},
+		HelperLookup:     fakeHelperLookup(nil),
+	}
+	result, err := b.BuildRuntimePart(skills.NewActiveList())
+	if err != nil {
+		t.Fatalf("BuildRuntimePart() error: %v", err)
+	}
+	if strings.Contains(result, "Host") {
+		t.Error("runtime part should not contain any Host Helpers section when nothing to show")
 	}
 }
