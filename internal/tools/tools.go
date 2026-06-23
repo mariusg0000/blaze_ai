@@ -201,3 +201,11 @@ func ParseToolCallArgs[T any](args json.RawMessage) (T, error) {
 	}
 	return result, nil
 }
+
+// truncateDisplay limits a fallback display string to a maximum length for console output.
+func truncateDisplay(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-3] + "..."
+}

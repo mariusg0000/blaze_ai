@@ -55,7 +55,7 @@ func (t *LoadSkillTool) FormatArgs(args json.RawMessage) string {
 	if parsed.Name == "" {
 		return ""
 	}
-	return normalizeSkillName(parsed.Name)
+	return truncateDisplay(normalizeSkillName(parsed.Name), 80)
 }
 
 // Description returns the human-readable description for the LLM.
@@ -135,7 +135,7 @@ func (t *UnloadSkillTool) FormatArgs(args json.RawMessage) string {
 	if parsed.Name == "" {
 		return ""
 	}
-	return normalizeSkillName(parsed.Name)
+	return truncateDisplay(normalizeSkillName(parsed.Name), 80)
 }
 
 // Description returns the human-readable description for the LLM.

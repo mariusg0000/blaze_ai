@@ -167,3 +167,35 @@ func TestShellExecuteMultilineOutput(t *testing.T) {
 		t.Errorf("Execute() = %q, want both lines", result)
 	}
 }
+
+// TestShellExecuteOutputLimitStdout verifies broad stdout output is stopped at the hard cap.
+func TestShellExecuteOutputLimitStdout(t *testing.T) {
+	tool := NewShellTool(platform.Linux)
+	args := json.RawMessage(`{"command":"yes x | head -c 200000"}`)
+	result := tool.Execute(context.Background(), args)
+	if !strings.Contains(result, "shell output exceeded the 150 kB limit") {
+		t.Fatalf("Execute() = %q, want output limit error", result)
+	}
+	if !strings.Contains(result, "Refine the command") || !strings.Contains(result, "sequential chunks below 150 kB") {
+		t.Fatalf("Execute() = %q, want refinement guidance", result)
+	}
+	if strings.Contains(result, "stdout:\n") {
+		t.Fatalf("Execute() = %q, should not include partial stdout", result)
+	}
+}
+
+// TestShellExecuteOutputLimitStderr verifies broad stderr output is stopped at the hard cap.
+func TestShellExecuteOutputLimitStderr(t *testing.T) {
+	tool := NewShellTool(platform.Linux)
+	args := json.RawMessage(`{"command":"yes x | head -c 200000 1>&2"}`)
+	result := tool.Execute(context.Background(), args)
+	if !strings.Contains(result, "shell output exceeded the 150 kB limit") {
+		t.Fatalf("Execute() = %q, want output limit error", result)
+	}
+	if !strings.Contains(result, "stderr_bytes=") {
+		t.Fatalf("Execute() = %q, want stderr byte metadata", result)
+	}
+	if strings.Contains(result, "stderr:\n") {
+		t.Fatalf("Execute() = %q, should not include partial stderr", result)
+	}
+}

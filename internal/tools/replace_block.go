@@ -52,7 +52,7 @@ func (t *ReplaceBlockTool) FormatArgs(args json.RawMessage) string {
 	if parsed.FilePath == "" {
 		return ""
 	}
-	return parsed.FilePath
+	return truncateDisplay(parsed.FilePath, 80)
 }
 
 // Description returns the human-readable description for the LLM.

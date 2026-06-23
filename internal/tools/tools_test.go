@@ -4,6 +4,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"blazeai/internal/platform"
@@ -164,6 +165,22 @@ func TestShellFormatArgsFallback(t *testing.T) {
 	result := s.FormatArgs(json.RawMessage(`{"command":"cat '/path/file'"}`))
 	if result != "cat '/path/file'" {
 		t.Errorf("FormatArgs() = %q, want %q", result, "cat '/path/file'")
+	}
+}
+
+// TestShellFormatArgsFallbackTruncated verifies shell fallback is truncated at 80 chars.
+func TestShellFormatArgsFallbackTruncated(t *testing.T) {
+	s := NewShellTool(platform.Linux)
+	longCmd := "echo "
+	for i := 0; i < 90; i++ {
+		longCmd += "x"
+	}
+	result := s.FormatArgs(json.RawMessage(`{"command":"` + longCmd + `"}`))
+	if len(result) > 80 {
+		t.Errorf("FormatArgs() len = %d, want ≤ 80", len(result))
+	}
+	if !strings.HasSuffix(result, "...") {
+		t.Errorf("FormatArgs() = %q, want truncated with '...'", result)
 	}
 }
 

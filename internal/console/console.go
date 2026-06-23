@@ -276,9 +276,6 @@ func (c *Console) OnToolCall(name string, args string) {
 		c.openToolGroup()
 	}
 	argStr := args
-	if len(argStr) > 80 {
-		argStr = argStr[:77] + "..."
-	}
 	if argStr != "" {
 		fmt.Fprintf(c.Out, "%s %s\n",
 			c.color(colorGreen, c.bold("[>>> "+name+"]")),
@@ -310,15 +307,15 @@ func (c *Console) OnToolResult(name string, result string) {
 		}
 	}
 	if content != "" {
-		fmt.Fprintf(c.Out, "%s %s: %s\n",
-			c.color(colorCode, c.bold("[<<< "+name+"]")),
-			status,
+		fmt.Fprintf(c.Out, "%s %s %s\n",
+			c.color(colorBlue, c.bold("[<<< "+name+"]")),
+			c.color(colorCode, status+":"),
 			content,
 		)
 	} else {
 		fmt.Fprintf(c.Out, "%s %s\n",
-			c.color(colorCode, c.bold("[<<< "+name+"]")),
-			status,
+			c.color(colorBlue, c.bold("[<<< "+name+"]")),
+			c.color(colorCode, status),
 		)
 	}
 	c.lineOpen = false
