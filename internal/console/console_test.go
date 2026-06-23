@@ -268,15 +268,12 @@ func TestOnContentTable(t *testing.T) {
 // TestOnToolCall verifies tool call display.
 func TestOnToolCall(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
-	c.OnToolCall("shell", "ls")
+	c.OnToolCall("shell", "inspect package.json scripts")
 	output := out.String()
-	if !strings.Contains(output, "[CALL]") {
-		t.Errorf("output missing [CALL]: %q", output)
+	if !strings.Contains(output, "[>>> shell]") {
+		t.Errorf("output missing [>>> shell]: %q", output)
 	}
-	if !strings.Contains(output, "shell") {
-		t.Errorf("output missing tool name: %q", output)
-	}
-	if !strings.Contains(output, "shell        ls") {
+	if !strings.Contains(output, "inspect package.json scripts") {
 		t.Errorf("output missing formatted args: %q", output)
 	}
 	if !strings.Contains(output, "tools ") {
@@ -289,11 +286,8 @@ func TestOnToolCallEmptyArgs(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolCall("shell", "")
 	output := out.String()
-	if strings.Contains(output, " - ") {
-		t.Errorf("output should not contain dash for empty args: %q", output)
-	}
-	if !strings.Contains(output, "shell\n") {
-		t.Errorf("output missing tool name: %q", output)
+	if !strings.Contains(output, "[>>> shell]\n") {
+		t.Errorf("output missing compact empty call line: %q", output)
 	}
 }
 
@@ -303,7 +297,7 @@ func TestOnToolCallAfterContent(t *testing.T) {
 	c.OnContent("hello")
 	c.OnToolCall("shell", "ls")
 	output := out.String()
-	if !strings.Contains(output, "hello\ntools ------------------------------------------------------\n[CALL]") {
+	if !strings.Contains(output, "hello\ntools ------------------------------------------------------\n[>>> shell]") {
 		t.Errorf("output missing newline before tool call block: %q", output)
 	}
 }
@@ -313,13 +307,10 @@ func TestOnToolResultSuccess(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nhi\n")
 	output := out.String()
-	if !strings.Contains(output, "[OK]") || !strings.Contains(output, "shell") {
+	if !strings.Contains(output, "[<<< shell]") {
 		t.Errorf("output missing compact tool result: %q", output)
 	}
-	if !strings.Contains(output, "[OK]") {
-		t.Errorf("output missing [OK] status: %q", output)
-	}
-	if !strings.Contains(output, "[OK] shell        hi") {
+	if !strings.Contains(output, "[<<< shell] ok: hi") {
 		t.Errorf("output missing compact content: %q", output)
 	}
 	if strings.Contains(output, "exit_code") {
@@ -332,8 +323,8 @@ func TestOnToolResultErrorExitCode(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolResult("shell", "exit_code: 1\nstderr:\nfile not found\n")
 	output := out.String()
-	if !strings.Contains(output, "[ERROR]") {
-		t.Errorf("output missing [ERROR] status: %q", output)
+	if !strings.Contains(output, "[<<< shell] error:") {
+		t.Errorf("output missing error status: %q", output)
 	}
 	if !strings.Contains(output, "file not found") {
 		t.Errorf("output missing stderr content: %q", output)
@@ -345,8 +336,8 @@ func TestOnToolResultTimeout(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolResult("shell", "timeout 1s exceeded")
 	output := out.String()
-	if !strings.Contains(output, "[TIMEOUT]") {
-		t.Errorf("output missing [TIMEOUT] status: %q", output)
+	if !strings.Contains(output, "[<<< shell] timeout:") {
+		t.Errorf("output missing timeout status: %q", output)
 	}
 }
 
@@ -355,8 +346,8 @@ func TestOnToolResultGenericError(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolResult("shell", "error: unknown tool: x")
 	output := out.String()
-	if !strings.Contains(output, "[ERROR]") {
-		t.Errorf("output missing [ERROR] status: %q", output)
+	if !strings.Contains(output, "[<<< shell] error:") {
+		t.Errorf("output missing error status: %q", output)
 	}
 	if !strings.Contains(output, "unknown tool") {
 		t.Errorf("output missing error content: %q", output)
@@ -367,18 +358,18 @@ func TestOnToolResultGenericError(t *testing.T) {
 func TestOnToolRoundTripAfterContent(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnContent("hello")
-	c.OnToolCall("shell", "ls")
+	c.OnToolCall("shell", "inspect package.json scripts")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nok\n")
 	c.closeToolGroup()
 	output := out.String()
-	if !strings.Contains(output, "hello\ntools ------------------------------------------------------\n[CALL]") {
+	if !strings.Contains(output, "hello\ntools ------------------------------------------------------\n[>>> shell]") {
 		t.Errorf("tool call block not separated from content: %q", output)
 	}
-	if !strings.Contains(output, "shell        ls\n[OK] shell") {
+	if !strings.Contains(output, "[>>> shell] inspect package.json scripts\n[<<< shell] ok: ok") {
 		t.Errorf("tool response formatting unexpected: %q", output)
 	}
 	// Group should close with a trailing separator after the last response.
-	if !strings.Contains(output, "[OK] shell        ok\n------------------------------------------------------------") {
+	if !strings.Contains(output, "[<<< shell] ok: ok\n------------------------------------------------------------") {
 		t.Errorf("tool group not closed with separator: %q", output)
 	}
 }
@@ -386,9 +377,9 @@ func TestOnToolRoundTripAfterContent(t *testing.T) {
 // TestToolGroupConsecutive verifies multiple consecutive tools share one group.
 func TestToolGroupConsecutive(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
-	c.OnToolCall("shell", "ls")
+	c.OnToolCall("shell", "list root")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\na\n")
-	c.OnToolCall("shell", "cat")
+	c.OnToolCall("shell", "inspect config")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nb\n")
 	c.closeToolGroup()
 	output := out.String()
@@ -398,10 +389,10 @@ func TestToolGroupConsecutive(t *testing.T) {
 	if strings.Count(output, "------------------------------------------------------------") != 1 {
 		t.Errorf("expected one closing divider, got %d: %q", strings.Count(output, "------------------------------------------------------------"), output)
 	}
-	if !strings.Contains(output, "[CALL] shell        ls\n[OK] shell") {
+	if !strings.Contains(output, "[>>> shell] list root\n[<<< shell] ok: a") {
 		t.Errorf("first tool call missing: %q", output)
 	}
-	if !strings.Contains(output, "[CALL] shell        cat\n[OK] shell") {
+	if !strings.Contains(output, "[>>> shell] inspect config\n[<<< shell] ok: b") {
 		t.Errorf("second tool call missing: %q", output)
 	}
 }
@@ -409,10 +400,10 @@ func TestToolGroupConsecutive(t *testing.T) {
 // TestToolGroupInterruptedByContent verifies content between tools closes and reopens the group.
 func TestToolGroupInterruptedByContent(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
-	c.OnToolCall("shell", "ls")
+	c.OnToolCall("shell", "list root")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\na\n")
 	c.OnContent("continuing")
-	c.OnToolCall("shell", "cat")
+	c.OnToolCall("shell", "inspect config")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nb\n")
 	c.closeToolGroup()
 	output := out.String()

@@ -17,7 +17,8 @@ import (
 // WHAT:  Parsed arguments for skill management tools.
 // PARAMS: Name — the skill name to load or unload.
 type SkillArgs struct {
-	Name string `json:"name"`
+	Name    string `json:"name"`
+	Purpose string `json:"purpose,omitempty"`
 }
 
 // LoadSkillTool adds a skill to the active skills list.
@@ -45,7 +46,13 @@ func (t *LoadSkillTool) Name() string {
 // FormatArgs extracts the skill name for display.
 func (t *LoadSkillTool) FormatArgs(args json.RawMessage) string {
 	parsed, err := ParseToolCallArgs[SkillArgs](args)
-	if err != nil || parsed.Name == "" {
+	if err != nil {
+		return ""
+	}
+	if strings.TrimSpace(parsed.Purpose) != "" {
+		return strings.TrimSpace(parsed.Purpose)
+	}
+	if parsed.Name == "" {
 		return ""
 	}
 	return normalizeSkillName(parsed.Name)
@@ -61,12 +68,16 @@ func (t *LoadSkillTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
+			"purpose": {
+				"type": "string",
+				"description": "A concise 1-2 sentence summary of this skill change. State the intent and the skill being activated."
+			},
 			"name": {
 				"type": "string",
 				"description": "The skill name to load."
 			}
 		},
-		"required": ["name"]
+		"required": ["purpose", "name"]
 	}`)
 }
 
@@ -115,7 +126,13 @@ func (t *UnloadSkillTool) Name() string {
 // FormatArgs extracts the skill name for display.
 func (t *UnloadSkillTool) FormatArgs(args json.RawMessage) string {
 	parsed, err := ParseToolCallArgs[SkillArgs](args)
-	if err != nil || parsed.Name == "" {
+	if err != nil {
+		return ""
+	}
+	if strings.TrimSpace(parsed.Purpose) != "" {
+		return strings.TrimSpace(parsed.Purpose)
+	}
+	if parsed.Name == "" {
 		return ""
 	}
 	return normalizeSkillName(parsed.Name)
@@ -131,12 +148,16 @@ func (t *UnloadSkillTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
+			"purpose": {
+				"type": "string",
+				"description": "A concise 1-2 sentence summary of this skill change. State the intent and the skill being deactivated."
+			},
 			"name": {
 				"type": "string",
 				"description": "The skill name to unload."
 			}
 		},
-		"required": ["name"]
+		"required": ["purpose", "name"]
 	}`)
 }
 

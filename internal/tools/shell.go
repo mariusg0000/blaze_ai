@@ -23,6 +23,7 @@ import (
 type ShellArgs struct {
 	Command string `json:"command"`
 	Timeout *int   `json:"timeout,omitempty"`
+	Purpose string `json:"purpose,omitempty"`
 }
 
 // ShellTool executes shell commands on the host via the platform-selected shell.
@@ -50,7 +51,13 @@ func (s *ShellTool) Name() string {
 // FormatArgs extracts the command for display.
 func (s *ShellTool) FormatArgs(args json.RawMessage) string {
 	parsed, err := ParseToolCallArgs[ShellArgs](args)
-	if err != nil || parsed.Command == "" {
+	if err != nil {
+		return ""
+	}
+	if strings.TrimSpace(parsed.Purpose) != "" {
+		return strings.TrimSpace(parsed.Purpose)
+	}
+	if parsed.Command == "" {
 		return ""
 	}
 	return parsed.Command
@@ -66,6 +73,10 @@ func (s *ShellTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
+			"purpose": {
+				"type": "string",
+				"description": "A concise 1-2 sentence summary of this shell call. State what it does, why it is needed, the exact command it uses, and the file or files or folders it inspects or changes when relevant."
+			},
 			"command": {
 				"type": "string",
 				"description": "The shell command to execute."
@@ -75,7 +86,7 @@ func (s *ShellTool) Parameters() json.RawMessage {
 				"description": "Optional timeout in seconds. Default: 60."
 			}
 		},
-		"required": ["command"]
+		"required": ["purpose", "command"]
 	}`)
 }
 

@@ -280,15 +280,13 @@ func (c *Console) OnToolCall(name string, args string) {
 		argStr = argStr[:77] + "..."
 	}
 	if argStr != "" {
-		fmt.Fprintf(c.Out, "%s %-12s %s\n",
-			c.color(colorGreen, c.bold("[CALL]")),
-			name,
+		fmt.Fprintf(c.Out, "%s %s\n",
+			c.color(colorGreen, c.bold("[>>> "+name+"]")),
 			argStr,
 		)
 	} else {
-		fmt.Fprintf(c.Out, "%s %s\n",
-			c.color(colorGreen, c.bold("[CALL]")),
-			name,
+		fmt.Fprintf(c.Out, "%s\n",
+			c.color(colorGreen, c.bold("[>>> "+name+"]")),
 		)
 	}
 	c.lineOpen = false
@@ -304,7 +302,7 @@ func (c *Console) OnToolResult(name string, result string) {
 		return
 	}
 	badge, content, colorCode := parseToolResult(result)
-	badgeLabel := "[" + badge + "]"
+	status := strings.ToLower(badge)
 	if content != "" {
 		content = strings.ReplaceAll(content, "\n", " ")
 		if len(content) > 100 {
@@ -312,15 +310,15 @@ func (c *Console) OnToolResult(name string, result string) {
 		}
 	}
 	if content != "" {
-		fmt.Fprintf(c.Out, "%s %-12s %s\n",
-			c.color(colorCode, c.bold(badgeLabel)),
-			name,
+		fmt.Fprintf(c.Out, "%s %s: %s\n",
+			c.color(colorCode, c.bold("[<<< "+name+"]")),
+			status,
 			content,
 		)
 	} else {
 		fmt.Fprintf(c.Out, "%s %s\n",
-			c.color(colorCode, c.bold(badgeLabel)),
-			name,
+			c.color(colorCode, c.bold("[<<< "+name+"]")),
+			status,
 		)
 	}
 	c.lineOpen = false

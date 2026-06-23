@@ -9,6 +9,26 @@ import (
 	"blazeai/internal/platform"
 )
 
+func schemaIncludesRequiredPurpose(t *testing.T, raw json.RawMessage) {
+	t.Helper()
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Required   []string                   `json:"required"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("cannot parse schema: %v", err)
+	}
+	if _, ok := schema.Properties["purpose"]; !ok {
+		t.Fatal("schema missing purpose property")
+	}
+	for _, name := range schema.Required {
+		if name == "purpose" {
+			return
+		}
+	}
+	t.Fatal("schema missing required purpose field")
+}
+
 // dummyTool is a minimal Tool implementation for registry tests.
 type dummyTool struct {
 	name string
@@ -129,8 +149,17 @@ func TestRegistryFormatArgsMissingTool(t *testing.T) {
 	}
 }
 
-// TestShellFormatArgs verifies shell tool formats command for display.
+// TestShellFormatArgs verifies shell tool prefers purpose for display.
 func TestShellFormatArgs(t *testing.T) {
+	s := NewShellTool(platform.Linux)
+	result := s.FormatArgs(json.RawMessage(`{"purpose":"Inspect package.json scripts","command":"cat '/path/file'"}`))
+	if result != "Inspect package.json scripts" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "Inspect package.json scripts")
+	}
+}
+
+// TestShellFormatArgsFallback verifies shell falls back to command when purpose is missing.
+func TestShellFormatArgsFallback(t *testing.T) {
 	s := NewShellTool(platform.Linux)
 	result := s.FormatArgs(json.RawMessage(`{"command":"cat '/path/file'"}`))
 	if result != "cat '/path/file'" {
@@ -138,8 +167,17 @@ func TestShellFormatArgs(t *testing.T) {
 	}
 }
 
-// TestLoadSkillFormatArgs verifies load_skill formats name for display.
+// TestLoadSkillFormatArgs verifies load_skill prefers purpose for display.
 func TestLoadSkillFormatArgs(t *testing.T) {
+	l := NewLoadSkillTool(nil)
+	result := l.FormatArgs(json.RawMessage(`{"purpose":"Load memory skill for persistence rules","name":"memory.md"}`))
+	if result != "Load memory skill for persistence rules" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "Load memory skill for persistence rules")
+	}
+}
+
+// TestLoadSkillFormatArgsFallback verifies load_skill falls back to normalized skill name.
+func TestLoadSkillFormatArgsFallback(t *testing.T) {
 	l := NewLoadSkillTool(nil)
 	result := l.FormatArgs(json.RawMessage(`{"name":"memory.md"}`))
 	if result != "memory" {
@@ -147,8 +185,17 @@ func TestLoadSkillFormatArgs(t *testing.T) {
 	}
 }
 
-// TestUnloadSkillFormatArgs verifies unload_skill formats name for display.
+// TestUnloadSkillFormatArgs verifies unload_skill prefers purpose for display.
 func TestUnloadSkillFormatArgs(t *testing.T) {
+	u := NewUnloadSkillTool(nil)
+	result := u.FormatArgs(json.RawMessage(`{"purpose":"Unload memory skill after finishing persistence update","name":"memory"}`))
+	if result != "Unload memory skill after finishing persistence update" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "Unload memory skill after finishing persistence update")
+	}
+}
+
+// TestUnloadSkillFormatArgsFallback verifies unload_skill falls back to skill name.
+func TestUnloadSkillFormatArgsFallback(t *testing.T) {
 	u := NewUnloadSkillTool(nil)
 	result := u.FormatArgs(json.RawMessage(`{"name":"memory"}`))
 	if result != "memory" {
@@ -156,8 +203,17 @@ func TestUnloadSkillFormatArgs(t *testing.T) {
 	}
 }
 
-// TestReplaceBlockFormatArgs verifies replace_block formats file path for display.
+// TestReplaceBlockFormatArgs verifies replace_block prefers purpose for display.
 func TestReplaceBlockFormatArgs(t *testing.T) {
+	r := NewReplaceBlockTool()
+	result := r.FormatArgs(json.RawMessage(`{"purpose":"Update console renderer in internal/console/console.go","file_path":"/path/to/file.go","old_block":"old","new_block":"new"}`))
+	if result != "Update console renderer in internal/console/console.go" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "Update console renderer in internal/console/console.go")
+	}
+}
+
+// TestReplaceBlockFormatArgsFallback verifies replace_block falls back to file path.
+func TestReplaceBlockFormatArgsFallback(t *testing.T) {
 	r := NewReplaceBlockTool()
 	result := r.FormatArgs(json.RawMessage(`{"file_path":"/path/to/file.go","old_block":"old","new_block":"new"}`))
 	if result != "/path/to/file.go" {

@@ -74,9 +74,11 @@ func TestLoadSkillName(t *testing.T) {
 // TestLoadSkillParameters verifies parameters is valid JSON.
 func TestLoadSkillParameters(t *testing.T) {
 	tool := NewLoadSkillTool(skills.NewActiveList())
-	if !json.Valid(tool.Parameters()) {
+	params := tool.Parameters()
+	if !json.Valid(params) {
 		t.Error("Parameters() is not valid JSON")
 	}
+	schemaIncludesRequiredPurpose(t, params)
 }
 
 // TestUnloadSkillExecute verifies that a skill is removed from the active list.
@@ -142,7 +144,9 @@ func TestUnloadSkillName(t *testing.T) {
 // TestUnloadSkillParameters verifies parameters is valid JSON.
 func TestUnloadSkillParameters(t *testing.T) {
 	tool := NewUnloadSkillTool(skills.NewActiveList())
-	if !json.Valid(tool.Parameters()) {
+	params := tool.Parameters()
+	if !json.Valid(params) {
 		t.Error("Parameters() is not valid JSON")
 	}
+	schemaIncludesRequiredPurpose(t, params)
 }

@@ -155,6 +155,7 @@ func TestShellParameters(t *testing.T) {
 	if !json.Valid(params) {
 		t.Errorf("Parameters() is not valid JSON: %s", params)
 	}
+	schemaIncludesRequiredPurpose(t, params)
 }
 
 // TestShellExecuteMultilineOutput verifies multiline command output.

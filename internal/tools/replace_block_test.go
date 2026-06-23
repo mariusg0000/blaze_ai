@@ -134,7 +134,9 @@ func TestReplaceBlockName(t *testing.T) {
 // TestReplaceBlockParameters verifies parameters is valid JSON.
 func TestReplaceBlockParameters(t *testing.T) {
 	tool := NewReplaceBlockTool()
-	if !json.Valid(tool.Parameters()) {
+	params := tool.Parameters()
+	if !json.Valid(params) {
 		t.Error("Parameters() is not valid JSON")
 	}
+	schemaIncludesRequiredPurpose(t, params)
 }

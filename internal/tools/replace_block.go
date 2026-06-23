@@ -19,6 +19,7 @@ type ReplaceBlockArgs struct {
 	FilePath string `json:"file_path"`
 	OldBlock string `json:"old_block"`
 	NewBlock string `json:"new_block"`
+	Purpose  string `json:"purpose,omitempty"`
 }
 
 // ReplaceBlockTool replaces a block of text in a file.
@@ -42,7 +43,13 @@ func (t *ReplaceBlockTool) Name() string {
 // FormatArgs extracts the file path for display.
 func (t *ReplaceBlockTool) FormatArgs(args json.RawMessage) string {
 	parsed, err := ParseToolCallArgs[ReplaceBlockArgs](args)
-	if err != nil || parsed.FilePath == "" {
+	if err != nil {
+		return ""
+	}
+	if strings.TrimSpace(parsed.Purpose) != "" {
+		return strings.TrimSpace(parsed.Purpose)
+	}
+	if parsed.FilePath == "" {
 		return ""
 	}
 	return parsed.FilePath
@@ -58,6 +65,10 @@ func (t *ReplaceBlockTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
+			"purpose": {
+				"type": "string",
+				"description": "A concise 1-2 sentence summary of this edit. State the intent and the file being changed."
+			},
 			"file_path": {
 				"type": "string",
 				"description": "The path to the file to edit."
@@ -71,7 +82,7 @@ func (t *ReplaceBlockTool) Parameters() json.RawMessage {
 				"description": "The new text block to write in place of the old block."
 			}
 		},
-		"required": ["file_path", "old_block", "new_block"]
+		"required": ["purpose", "file_path", "old_block", "new_block"]
 	}`)
 }
 
