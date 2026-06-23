@@ -32,6 +32,7 @@ type Skill struct {
 	Name        string
 	Description string
 	Details     string
+	Dir         string
 }
 
 // ActiveList holds the in-memory list of active skill names for the current session.
@@ -178,14 +179,14 @@ func Discover(builtinDir string) (map[string]*Skill, error) {
 		return nil, err
 	}
 	customDir := filepath.Join(home, "skills")
-	if err := discoverFromDir(customDir, skills); err != nil {
+	if err := discoverCustomFromDir(customDir, skills); err != nil {
 		return nil, fmt.Errorf("custom skills: %w", err)
 	}
 
 	return skills, nil
 }
 
-// discoverFromDir reads all .md files from a directory and adds valid skills to the map.
+// discoverFromDir reads builtin .md skill files from one directory and adds valid skills to the map.
 // Invalid files (missing sections) are skipped silently — only errors from directory
 // listing or file reading are returned.
 //
@@ -224,6 +225,45 @@ func discoverFromDir(dir string, skills map[string]*Skill) error {
 	return nil
 }
 
+// discoverCustomFromDir reads custom skills from {APP_HOME}/skills/<name>/skill.md folders.
+// Invalid skill folders are skipped silently — only directory listing or file read errors return.
+//
+// WHAT:  Scans custom skill directories and reads each folder's skill.md file.
+// WHY:   Custom skills may carry scripts, data, or other resources alongside the main skill file.
+// HOW:   Lists subdirectories, reads skill.md from each, parses it, and records the folder path.
+// PARAMS: dir — custom skills root; skills — map to populate (existing entries are overridden).
+func discoverCustomFromDir(dir string, skills map[string]*Skill) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		skillName := entry.Name()
+		skillDir := filepath.Join(dir, skillName)
+		path := filepath.Join(skillDir, "skill.md")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("cannot read skill %s: %w", path, err)
+		}
+		skill, err := Parse(skillName, string(data))
+		if err != nil {
+			continue
+		}
+		skill.Dir = skillDir
+		skills[skillName] = skill
+	}
+	return nil
+}
+
 // SortedNames returns skill names from a map sorted alphabetically.
 //
 // WHAT:  Returns a sorted list of skill names.
@@ -252,7 +292,7 @@ func DiscoverFromDirs(builtinDir, customDir string) (map[string]*Skill, error) {
 	if err := discoverFromDir(builtinDir, skills); err != nil {
 		return nil, fmt.Errorf("builtin skills: %w", err)
 	}
-	if err := discoverFromDir(customDir, skills); err != nil {
+	if err := discoverCustomFromDir(customDir, skills); err != nil {
 		return nil, fmt.Errorf("custom skills: %w", err)
 	}
 
@@ -279,7 +319,7 @@ func DiscoverFromFS(builtinFS fs.FS) (map[string]*Skill, error) {
 		return nil, err
 	}
 	customDir := filepath.Join(home, "skills")
-	if err := discoverFromDir(customDir, skills); err != nil {
+	if err := discoverCustomFromDir(customDir, skills); err != nil {
 		return nil, fmt.Errorf("custom skills: %w", err)
 	}
 

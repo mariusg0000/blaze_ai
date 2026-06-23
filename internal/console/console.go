@@ -129,7 +129,7 @@ func (c *Console) closeToolGroup() {
 	if !c.inToolGroup {
 		return
 	}
-	c.divider("", "", false)
+	c.divider("", colorGreen, false)
 	c.inToolGroup = false
 }
 
@@ -165,7 +165,11 @@ func (c *Console) divider(label, labelColor string, boldLabel bool) {
 	if label == "" {
 		line := strings.Repeat(char, dividerWidth)
 		if c.IsTTY {
-			fmt.Fprintln(c.Out, c.color(colorLightGray, line))
+			lineCol := colorLightGray
+			if labelColor != "" {
+				lineCol = labelColor
+			}
+			fmt.Fprintln(c.Out, c.color(lineCol, line))
 			return
 		}
 		fmt.Fprintln(c.Out, line)
@@ -184,7 +188,11 @@ func (c *Console) divider(label, labelColor string, boldLabel bool) {
 		if labelColor != "" {
 			styledLabel = c.color(labelColor, styledLabel)
 		}
-		fmt.Fprintf(c.Out, "%s %s\n", styledLabel, c.color(colorLightGray, tail))
+		lineColor := colorLightGray
+		if labelColor != "" {
+			lineColor = labelColor
+		}
+		fmt.Fprintf(c.Out, "%s %s\n", styledLabel, c.color(lineColor, tail))
 		return
 	}
 	fmt.Fprintf(c.Out, "%s %s\n", label, tail)

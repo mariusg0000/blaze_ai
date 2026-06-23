@@ -21,6 +21,20 @@ func writeSkill(t *testing.T, dir, filename, content string) string {
 	return path
 }
 
+// writeCustomSkill writes a custom skill folder with skill.md.
+func writeCustomSkill(t *testing.T, root, name, content string) string {
+	t.Helper()
+	skillDir := filepath.Join(root, name)
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("cannot create custom skill dir %s: %v", skillDir, err)
+	}
+	path := filepath.Join(skillDir, "skill.md")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("cannot write custom skill %s: %v", path, err)
+	}
+	return path
+}
+
 // TestParseValid verifies that a well-formed skill file parses correctly.
 func TestParseValid(t *testing.T) {
 	content := `[DESCRIPTION]
@@ -176,7 +190,7 @@ func TestDiscoverFromDirs(t *testing.T) {
 
 	writeSkill(t, builtin, "memory.md", "[DESCRIPTION]\nBuiltin memory.\n\n[DETAILS]\nBuiltin details.")
 	writeSkill(t, builtin, "create_skill.md", "[DESCRIPTION]\nBuiltin create.\n\n[DETAILS]\nBuiltin create details.")
-	writeSkill(t, custom, "my_skill.md", "[DESCRIPTION]\nCustom skill.\n\n[DETAILS]\nCustom details.")
+	writeCustomSkill(t, custom, "my_skill", "[DESCRIPTION]\nCustom skill.\n\n[DETAILS]\nCustom details.")
 
 	skills, err := DiscoverFromDirs(builtin, custom)
 	if err != nil {
@@ -202,7 +216,7 @@ func TestDiscoverCollisionCustomWins(t *testing.T) {
 	custom := filepath.Join(t.TempDir(), "custom")
 
 	writeSkill(t, builtin, "memory.md", "[DESCRIPTION]\nBuiltin memory.\n\n[DETAILS]\nBuiltin details.")
-	writeSkill(t, custom, "memory.md", "[DESCRIPTION]\nCustom memory.\n\n[DETAILS]\nCustom details.")
+	writeCustomSkill(t, custom, "memory", "[DESCRIPTION]\nCustom memory.\n\n[DETAILS]\nCustom details.")
 
 	skills, err := DiscoverFromDirs(builtin, custom)
 	if err != nil {
@@ -236,6 +250,43 @@ func TestDiscoverSkipsInvalid(t *testing.T) {
 	}
 	if skills["invalid"] != nil {
 		t.Error("invalid skill should have been skipped")
+	}
+}
+
+// TestDiscoverCustomSkillFolder verifies custom skills are loaded from folder/skill.md layout.
+func TestDiscoverCustomSkillFolder(t *testing.T) {
+	builtin := filepath.Join(t.TempDir(), "builtin")
+	custom := filepath.Join(t.TempDir(), "custom")
+
+	writeCustomSkill(t, custom, "project_hub", "[DESCRIPTION]\nFolder custom skill.\n\n[DETAILS]\nFolder details.")
+
+	discovered, err := DiscoverFromDirs(builtin, custom)
+	if err != nil {
+		t.Fatalf("DiscoverFromDirs() unexpected error: %v", err)
+	}
+	skill := discovered["project_hub"]
+	if skill == nil {
+		t.Fatal("project_hub skill not found")
+	}
+	if skill.Dir != filepath.Join(custom, "project_hub") {
+		t.Errorf("Dir = %q, want %q", skill.Dir, filepath.Join(custom, "project_hub"))
+	}
+}
+
+// TestDiscoverCustomSkillFolderMissingMainFile verifies missing skill.md is skipped.
+func TestDiscoverCustomSkillFolderMissingMainFile(t *testing.T) {
+	builtin := filepath.Join(t.TempDir(), "builtin")
+	custom := filepath.Join(t.TempDir(), "custom")
+	if err := os.MkdirAll(filepath.Join(custom, "broken_skill"), 0755); err != nil {
+		t.Fatalf("cannot create broken skill dir: %v", err)
+	}
+
+	discovered, err := DiscoverFromDirs(builtin, custom)
+	if err != nil {
+		t.Fatalf("DiscoverFromDirs() unexpected error: %v", err)
+	}
+	if len(discovered) != 0 {
+		t.Fatalf("discovered %d skills, want 0", len(discovered))
 	}
 }
 
@@ -293,9 +344,9 @@ func TestDiscoverSkipsDirs(t *testing.T) {
 // TestSortedNames verifies alphabetical ordering.
 func TestSortedNames(t *testing.T) {
 	skills := map[string]*Skill{
-		"zebra":  {},
-		"apple":  {},
-		"mango":  {},
+		"zebra": {},
+		"apple": {},
+		"mango": {},
 	}
 	names := SortedNames(skills)
 	if len(names) != 3 {

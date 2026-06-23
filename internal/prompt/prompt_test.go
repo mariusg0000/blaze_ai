@@ -46,6 +46,14 @@ func setupTestDirs(t *testing.T) (promptsFS, builtinSkillsFS fs.FS, workDir stri
 	writeFile(t, filepath.Join(builtinSkillsDir, "memory.md"),
 		"[DESCRIPTION]\nMemory management skill.\n\n[DETAILS]\nMemory lives at {APP_HOME}/memory/memory.md.\n")
 
+	appHome, err := platform.AppHome()
+	if err != nil {
+		t.Fatalf("platform.AppHome() error: %v", err)
+	}
+	customSkillDir := filepath.Join(appHome, "skills", "project_hub")
+	writeFile(t, filepath.Join(customSkillDir, "skill.md"),
+		"[DESCRIPTION]\nProject Hub skill with local scripts at {SKILL_DIR}/scripts/run.py.\n\n[DETAILS]\nUse local helper at {SKILL_DIR}/scripts/run.py.\n")
+
 	// AGENTS.md in work dir.
 	writeFile(t, filepath.Join(workDir, "AGENTS.md"),
 		"# Project Rules\n\nUse {APP_HOME} for paths.\n")
@@ -58,6 +66,9 @@ func setupTestDirs(t *testing.T) (promptsFS, builtinSkillsFS fs.FS, workDir stri
 // writeFile writes content to a path, failing the test on error.
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("cannot create parent dir for %s: %v", path, err)
+	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("cannot write %s: %v", path, err)
 	}
@@ -278,6 +289,19 @@ func TestBuildRuntimePartActiveSkills(t *testing.T) {
 	}
 	if !strings.Contains(result, "Memory lives at") {
 		t.Error("runtime part missing active skill details")
+	}
+}
+
+// TestInjectVariablesForSkillDir verifies {SKILL_DIR} is injected for skill-scoped content.
+func TestInjectVariablesForSkillDir(t *testing.T) {
+	b := &Builder{WorkDir: "/tmp/work", OSInfo: "Linux"}
+	result, err := b.injectVariablesForSkill("Run {SKILL_DIR}/scripts/run.py", "/tmp/skill/project_hub")
+	if err != nil {
+		t.Fatalf("injectVariablesForSkill() error: %v", err)
+	}
+	expected := "Run /tmp/skill/project_hub/scripts/run.py"
+	if result != expected {
+		t.Fatalf("injectVariablesForSkill() = %q, want %q", result, expected)
 	}
 }
 

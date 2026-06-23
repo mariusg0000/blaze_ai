@@ -62,6 +62,12 @@ type Builder struct {
 // PARAMS: text — the raw text containing placeholders.
 // RETURNS: string — text with known variables replaced; unknown ones preserved.
 func (b *Builder) injectVariables(text string) (string, error) {
+	return b.injectVariablesForSkill(text, "")
+}
+
+// injectVariablesForSkill replaces known placeholders in prompt and skill text.
+// {SKILL_DIR} is resolved only when a concrete skill directory is provided.
+func (b *Builder) injectVariablesForSkill(text, skillDir string) (string, error) {
 	home, err := platform.AppHome()
 	if err != nil {
 		return "", err
@@ -75,6 +81,11 @@ func (b *Builder) injectVariables(text string) (string, error) {
 			return b.WorkDir
 		case "OS_INFO":
 			return b.OSInfo
+		case "SKILL_DIR":
+			if skillDir != "" {
+				return skillDir
+			}
+			return match
 		default:
 			return match
 		}
@@ -140,7 +151,11 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, error) 
 	sb.WriteString("## Available Skills\n\n")
 	for _, name := range skills.SortedNames(discovered) {
 		skill := discovered[name]
-		sb.WriteString(fmt.Sprintf("- **%s.md**: %s\n", name, skill.Description))
+		description, err := b.injectVariablesForSkill(skill.Description, skill.Dir)
+		if err != nil {
+			return "", err
+		}
+		sb.WriteString(fmt.Sprintf("- **%s.md**: %s\n", name, description))
 	}
 
 	// Active skills block: [DETAILS] of every active skill.
@@ -153,7 +168,11 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, error) 
 			if !ok {
 				continue
 			}
-			sb.WriteString(fmt.Sprintf("### %s.md\n\n%s\n\n", name, skill.Details))
+			details, err := b.injectVariablesForSkill(skill.Details, skill.Dir)
+			if err != nil {
+				return "", err
+			}
+			sb.WriteString(fmt.Sprintf("### %s.md\n\n%s\n\n", name, details))
 		}
 	}
 
@@ -247,10 +266,6 @@ func (b *Builder) BuildRuntimePart(active *skills.ActiveList) (string, error) {
 		return "", err
 	}
 	if skillsSection != "" {
-		skillsSection, err = b.injectVariables(skillsSection)
-		if err != nil {
-			return "", err
-		}
 		parts = append(parts, skillsSection)
 	}
 
