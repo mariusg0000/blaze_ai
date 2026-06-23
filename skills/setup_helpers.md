@@ -1,5 +1,5 @@
 [DESCRIPTION]
-Diagnose and optionally help install cross-platform host helper utilities such as rg, fd, jq, git, and curl.
+Load when host tools are missing or the user asks about installing helpers. Use for `rg`, `fd`, `jq`, `git`, `curl`, and approval-safe install guidance.
 
 [DETAILS]
 # Setup Helpers

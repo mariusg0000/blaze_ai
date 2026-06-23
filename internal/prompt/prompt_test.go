@@ -210,6 +210,9 @@ func TestBuildRuntimePartFull(t *testing.T) {
 	if !strings.Contains(result, "memory.md") {
 		t.Error("runtime part missing skill file name")
 	}
+	if !strings.Contains(result, "Only skills listed under `## Active Skills` are active right now") {
+		t.Error("runtime part missing explicit active skill state guidance")
+	}
 }
 
 // TestBuildRuntimePartMissingUniversal verifies error when universal prompt is missing.
@@ -289,6 +292,9 @@ func TestBuildRuntimePartActiveSkills(t *testing.T) {
 	}
 	if !strings.Contains(result, "Memory lives at") {
 		t.Error("runtime part missing active skill details")
+	}
+	if !strings.Contains(result, "Do not infer current active skills from older `load_skill` or `unload_skill` tool results") {
+		t.Error("runtime part missing history-versus-state guidance")
 	}
 }
 

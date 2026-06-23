@@ -157,6 +157,7 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, error) 
 		}
 		sb.WriteString(fmt.Sprintf("- **%s.md**: %s\n", name, description))
 	}
+	sb.WriteString("\nOnly skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.\n")
 
 	// Active skills block: [DETAILS] of every active skill.
 	activeNames := active.List()

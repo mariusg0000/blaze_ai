@@ -1,5 +1,5 @@
 [DESCRIPTION]
-Configure BlazeAI providers, models, and roles. Assist the user with editing config.json for provider definitions, model lists, and role assignments.
+Load when the user wants to configure BlazeAI models or providers. Use for `config.json`, API keys, favorite models, and role assignments.
 
 [DETAILS]
 # Customize Me

@@ -1,5 +1,5 @@
 [DESCRIPTION]
-Persistent memory for BlazeAI. The memory file content is injected automatically on every prompt build, so do not load this skill just to read memory. Load it only when you need the write/update rules for storing facts in the memory file.
+Load when the user wants to store, update, or clean persistent memory facts. Use for the write rules and compact `memory.md` format.
 
 [DETAILS]
 # Memory Skill
