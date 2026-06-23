@@ -36,7 +36,7 @@ func setupTestDirs(t *testing.T) (promptsFS, builtinSkillsFS fs.FS, workDir stri
 
 	// Universal prompt with {APP_HOME} variable.
 	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"),
-		"# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n")
+		"# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n## Tool Discipline\n- Keep relevant loaded skills active across follow-up turns on the same topic or task.\n- Unload a skill only when the user clearly changes topic or task, or when the loaded skill would interfere with the next turn.\n")
 
 	// OS prompt.
 	writeFile(t, filepath.Join(promptsDir, "sysprompt.linux.md"),
@@ -175,6 +175,12 @@ func TestBuildRuntimePartFull(t *testing.T) {
 	if !strings.Contains(result, "Linux System Prompt") {
 		t.Error("runtime part missing OS prompt")
 	}
+	if !strings.Contains(result, "Keep relevant loaded skills active across follow-up turns on the same topic or task.") {
+		t.Error("runtime part missing keep-loaded skills guidance")
+	}
+	if !strings.Contains(result, "Unload a skill only when the user clearly changes topic or task") {
+		t.Error("runtime part missing unload-on-topic-shift guidance")
+	}
 
 	// AGENTS.md present.
 	if !strings.Contains(result, "Project Rules") {
@@ -277,6 +283,7 @@ func TestBuildRuntimePartActiveSkills(t *testing.T) {
 
 // TestBuildRuntimePartNoSkills verifies that missing skills are omitted silently.
 func TestBuildRuntimePartNoSkills(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
 	promptsDir := filepath.Join(root, "prompts")
 	os.MkdirAll(promptsDir, 0755)

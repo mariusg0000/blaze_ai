@@ -140,7 +140,7 @@ func (t *UnloadSkillTool) FormatArgs(args json.RawMessage) string {
 
 // Description returns the human-readable description for the LLM.
 func (t *UnloadSkillTool) Description() string {
-	return "Unload a skill by name to deactivate it. The skill's details will no longer be in the prompt."
+	return "Unload a skill by name to deactivate it for subsequent prompts. Use this when the user clearly changes topic or task, or when the loaded skill would interfere with the next turn. Do not unload a skill immediately after one successful action if the conversation is continuing in the same domain."
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -150,11 +150,11 @@ func (t *UnloadSkillTool) Parameters() json.RawMessage {
 		"properties": {
 			"purpose": {
 				"type": "string",
-				"description": "A concise 1-2 sentence summary of this skill change. State the intent and the skill being deactivated."
+				"description": "A concise 1-2 sentence summary of this skill change. State the intent and the skill being deactivated, and use unload only for a clear topic or task shift or when the skill would interfere with the next turn."
 			},
 			"name": {
 				"type": "string",
-				"description": "The skill name to unload."
+				"description": "The skill name to unload from subsequent prompts. Do not use this for reflex cleanup after a single successful action in the same ongoing domain."
 			}
 		},
 		"required": ["purpose", "name"]
