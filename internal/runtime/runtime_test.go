@@ -74,7 +74,7 @@ func setupAgent(t *testing.T, handler http.HandlerFunc) (*Agent, *mockHandler, *
 	os.WriteFile(filepath.Join(promptsDir, "sysprompt.linux.md"), []byte("linux"), 0644)
 
 	h := &mockHandler{}
-	agent, err := NewAgent(cfg, sess, platform.Linux, filepath.Join(dir, "skills"), promptsDir, dir, h)
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(filepath.Join(dir, "skills")), os.DirFS(promptsDir), dir, h)
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
@@ -422,7 +422,7 @@ func TestNewAgentBadModel(t *testing.T) {
 
 	dir := t.TempDir()
 	sess, _ := session.CreateInDir(dir)
-	_, err := NewAgent(cfg, sess, platform.Linux, "", "", dir, &mockHandler{})
+	_, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(dir), os.DirFS(dir), dir, &mockHandler{})
 	if err == nil {
 		t.Fatal("NewAgent() expected error for missing provider, got nil")
 	}

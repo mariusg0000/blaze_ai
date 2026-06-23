@@ -8,6 +8,7 @@ package skills
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -256,4 +257,67 @@ func DiscoverFromDirs(builtinDir, customDir string) (map[string]*Skill, error) {
 	}
 
 	return skills, nil
+}
+
+// DiscoverFromFS discovers builtin skills from an fs.FS (e.g. embedded assets)
+// and custom skills from disk (app_home/skills/). Custom skills override builtin by name.
+//
+// WHAT:  Scans builtin skills from an FS and custom skills from disk.
+// WHY:   Enables embed.FS usage for builtin skills.
+// HOW:   Reads from builtinFS first, then app_home/skills via discoverFromDir.
+// PARAMS: builtinFS — filesystem containing builtin skill .md files.
+// RETURNS: map[string]*Skill — all discovered skills keyed by name; error on read failure.
+func DiscoverFromFS(builtinFS fs.FS) (map[string]*Skill, error) {
+	skills := make(map[string]*Skill)
+
+	if err := discoverFromFS(builtinFS, skills); err != nil {
+		return nil, fmt.Errorf("builtin skills: %w", err)
+	}
+
+	home, err := platform.AppHome()
+	if err != nil {
+		return nil, err
+	}
+	customDir := filepath.Join(home, "skills")
+	if err := discoverFromDir(customDir, skills); err != nil {
+		return nil, fmt.Errorf("custom skills: %w", err)
+	}
+
+	return skills, nil
+}
+
+// discoverFromFS reads all .md files from an fs.FS and adds valid skills to the map.
+//
+// WHAT:  Scans an fs.FS for skill files and adds them to the skills map.
+// WHY:   Works with embedded filesystems (embed.FS), os.DirFS, or any fs.FS.
+// HOW:   Lists .md files, reads each, parses, adds to map. Skips invalid files.
+// PARAMS: fsys — the filesystem to scan; skills — map to populate.
+func discoverFromFS(fsys fs.FS, skills map[string]*Skill) error {
+	entries, err := fs.ReadDir(fsys, ".")
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		skillName := strings.TrimSuffix(name, ".md")
+		data, err := fs.ReadFile(fsys, name)
+		if err != nil {
+			return fmt.Errorf("cannot read skill %s: %w", name, err)
+		}
+		skill, err := Parse(skillName, string(data))
+		if err != nil {
+			continue
+		}
+		skills[skillName] = skill
+	}
+	return nil
 }

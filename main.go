@@ -8,6 +8,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 
 	"blazeai/internal/config"
@@ -88,8 +89,15 @@ func run() error {
 		}
 	}
 
-	// Resolve builtin paths.
-	promptsDir, builtinSkillsDir := resolveBuiltinPaths()
+	// Resolve embedded builtin assets.
+	promptsFS, err := fs.Sub(embeddedPrompts, "prompts")
+	if err != nil {
+		return fmt.Errorf("cannot resolve embedded prompts: %w", err)
+	}
+	builtinSkillsFS, err := fs.Sub(embeddedBuiltinSkills, "skills")
+	if err != nil {
+		return fmt.Errorf("cannot resolve embedded skills: %w", err)
+	}
 
 	// Get work directory.
 	workDir, err := os.Getwd()
@@ -98,7 +106,7 @@ func run() error {
 	}
 
 	// Create agent and console.
-	agent, err := runtime.NewAgent(cfg, sess, osType, builtinSkillsDir, promptsDir, workDir, nil)
+	agent, err := runtime.NewAgent(cfg, sess, osType, builtinSkillsFS, promptsFS, workDir, nil)
 	if err != nil {
 		return fmt.Errorf("cannot create agent: %w", err)
 	}

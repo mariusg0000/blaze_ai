@@ -34,7 +34,7 @@ func mockAgent(t *testing.T) *runtime.Agent {
 	os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("sys"), 0644)
 	os.WriteFile(filepath.Join(promptsDir, "sysprompt.linux.md"), []byte("linux"), 0644)
 
-	agent, err := runtime.NewAgent(cfg, sess, platform.Linux, filepath.Join(dir, "skills"), promptsDir, dir, &mockHandler{})
+	agent, err := runtime.NewAgent(cfg, sess, platform.Linux, os.DirFS(filepath.Join(dir, "skills")), os.DirFS(promptsDir), dir, &mockHandler{})
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
@@ -78,7 +78,7 @@ func setupStreamingConsole(t *testing.T, handler http.HandlerFunc) (*Console, *b
 	os.MkdirAll(promptsDir, 0755)
 	os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("sys"), 0644)
 	os.WriteFile(filepath.Join(promptsDir, "sysprompt.linux.md"), []byte("linux"), 0644)
-	agent, err := runtime.NewAgent(cfg, sess, platform.Linux, filepath.Join(dir, "skills"), promptsDir, dir, &mockHandler{})
+	agent, err := runtime.NewAgent(cfg, sess, platform.Linux, os.DirFS(filepath.Join(dir, "skills")), os.DirFS(promptsDir), dir, &mockHandler{})
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}

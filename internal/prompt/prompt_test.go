@@ -4,6 +4,7 @@ package prompt
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,12 +18,14 @@ import (
 )
 
 // setupTestDirs creates temp directories with prompt and skill files for testing.
-// Returns promptsDir, builtinSkillsDir, workDir.
-func setupTestDirs(t *testing.T) (promptsDir, builtinSkillsDir, workDir string) {
+// Returns promptsFS, builtinSkillsFS, workDir. Sets HOME to temp dir for isolation.
+func setupTestDirs(t *testing.T) (promptsFS, builtinSkillsFS fs.FS, workDir string) {
 	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+
 	root := t.TempDir()
-	promptsDir = filepath.Join(root, "prompts")
-	builtinSkillsDir = filepath.Join(root, "skills")
+	promptsDir := filepath.Join(root, "prompts")
+	builtinSkillsDir := filepath.Join(root, "skills")
 	workDir = filepath.Join(root, "work")
 
 	for _, dir := range []string{promptsDir, builtinSkillsDir, workDir} {
@@ -47,6 +50,8 @@ func setupTestDirs(t *testing.T) (promptsDir, builtinSkillsDir, workDir string) 
 	writeFile(t, filepath.Join(workDir, "AGENTS.md"),
 		"# Project Rules\n\nUse {APP_HOME} for paths.\n")
 
+	promptsFS = os.DirFS(promptsDir)
+	builtinSkillsFS = os.DirFS(builtinSkillsDir)
 	return
 }
 
@@ -139,13 +144,13 @@ func TestInjectVariablesNoPlaceholders(t *testing.T) {
 
 // TestBuildRuntimePartFull verifies the full runtime part with all sources.
 func TestBuildRuntimePartFull(t *testing.T) {
-	promptsDir, builtinSkillsDir, workDir := setupTestDirs(t)
+	promptsFS, builtinSkillsFS, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsDir:       promptsDir,
-		BuiltinSkillsDir: builtinSkillsDir,
-		WorkDir:          workDir,
-		OS:               platform.Linux,
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: builtinSkillsFS,
+		WorkDir:         workDir,
+		OS:              platform.Linux,
 	}
 	active := skills.NewActiveList()
 	result, err := b.BuildRuntimePart(active)
@@ -194,10 +199,10 @@ func TestBuildRuntimePartFull(t *testing.T) {
 func TestBuildRuntimePartMissingUniversal(t *testing.T) {
 	root := t.TempDir()
 	b := &Builder{
-		PromptsDir:       filepath.Join(root, "noprompts"),
-		BuiltinSkillsDir: filepath.Join(root, "skills"),
-		WorkDir:          root,
-		OS:               platform.Linux,
+		PromptsFS:       os.DirFS(filepath.Join(root, "noprompts")),
+		BuiltinSkillsFS: os.DirFS(filepath.Join(root, "skills")),
+		WorkDir:         root,
+		OS:              platform.Linux,
 	}
 	_, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != ErrUniversalPromptMissing {
@@ -213,10 +218,10 @@ func TestBuildRuntimePartMissingOSPrompt(t *testing.T) {
 	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "universal")
 
 	b := &Builder{
-		PromptsDir:       promptsDir,
-		BuiltinSkillsDir: filepath.Join(root, "skills"),
-		WorkDir:          root,
-		OS:               platform.Linux,
+		PromptsFS:       os.DirFS(promptsDir),
+		BuiltinSkillsFS: os.DirFS(filepath.Join(root, "skills")),
+		WorkDir:         root,
+		OS:              platform.Linux,
 	}
 	_, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != ErrOSPromptMissing {
@@ -226,15 +231,15 @@ func TestBuildRuntimePartMissingOSPrompt(t *testing.T) {
 
 // TestBuildRuntimePartNoAgentsMD verifies that missing AGENTS.md is omitted silently.
 func TestBuildRuntimePartNoAgentsMD(t *testing.T) {
-	promptsDir, builtinSkillsDir, _ := setupTestDirs(t)
+	promptsFS, builtinSkillsFS, _ := setupTestDirs(t)
 	// Use a work dir without AGENTS.md.
 	emptyWork := t.TempDir()
 
 	b := &Builder{
-		PromptsDir:       promptsDir,
-		BuiltinSkillsDir: builtinSkillsDir,
-		WorkDir:          emptyWork,
-		OS:               platform.Linux,
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: builtinSkillsFS,
+		WorkDir:         emptyWork,
+		OS:              platform.Linux,
 	}
 	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {
@@ -247,13 +252,13 @@ func TestBuildRuntimePartNoAgentsMD(t *testing.T) {
 
 // TestBuildRuntimePartActiveSkills verifies that active skills inject [DETAILS].
 func TestBuildRuntimePartActiveSkills(t *testing.T) {
-	promptsDir, builtinSkillsDir, workDir := setupTestDirs(t)
+	promptsFS, builtinSkillsFS, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsDir:       promptsDir,
-		BuiltinSkillsDir: builtinSkillsDir,
-		WorkDir:          workDir,
-		OS:               platform.Linux,
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: builtinSkillsFS,
+		WorkDir:         workDir,
+		OS:              platform.Linux,
 	}
 	active := skills.NewActiveList()
 	active.Load("memory")
@@ -279,10 +284,10 @@ func TestBuildRuntimePartNoSkills(t *testing.T) {
 	writeFile(t, filepath.Join(promptsDir, "sysprompt.linux.md"), "linux")
 
 	b := &Builder{
-		PromptsDir:       promptsDir,
-		BuiltinSkillsDir: filepath.Join(root, "noskills"),
-		WorkDir:          root,
-		OS:               platform.Linux,
+		PromptsFS:       os.DirFS(promptsDir),
+		BuiltinSkillsFS: os.DirFS(filepath.Join(root, "noskills")),
+		WorkDir:         root,
+		OS:              platform.Linux,
 	}
 	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {
@@ -295,13 +300,13 @@ func TestBuildRuntimePartNoSkills(t *testing.T) {
 
 // TestBuild verifies the full prompt assembly with session messages.
 func TestBuild(t *testing.T) {
-	promptsDir, builtinSkillsDir, workDir := setupTestDirs(t)
+	promptsFS, builtinSkillsFS, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsDir:       promptsDir,
-		BuiltinSkillsDir: builtinSkillsDir,
-		WorkDir:          workDir,
-		OS:               platform.Linux,
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: builtinSkillsFS,
+		WorkDir:         workDir,
+		OS:              platform.Linux,
 	}
 
 	sess := &session.Session{
@@ -333,13 +338,13 @@ func TestBuild(t *testing.T) {
 
 // TestBuildEmptySession verifies that Build works with an empty session.
 func TestBuildEmptySession(t *testing.T) {
-	promptsDir, builtinSkillsDir, workDir := setupTestDirs(t)
+	promptsFS, builtinSkillsFS, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsDir:       promptsDir,
-		BuiltinSkillsDir: builtinSkillsDir,
-		WorkDir:          workDir,
-		OS:               platform.Linux,
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: builtinSkillsFS,
+		WorkDir:         workDir,
+		OS:              platform.Linux,
 	}
 
 	sess := &session.Session{Messages: []session.Message{}}
@@ -358,14 +363,14 @@ func TestBuildEmptySession(t *testing.T) {
 
 // TestBuildRuntimePartOrder verifies source order: universal → OS → helpers → AGENTS → skills.
 func TestBuildRuntimePartOrder(t *testing.T) {
-	promptsDir, builtinSkillsDir, workDir := setupTestDirs(t)
+	promptsFS, builtinSkillsFS, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsDir:       promptsDir,
-		BuiltinSkillsDir: builtinSkillsDir,
-		WorkDir:          workDir,
-		OS:               platform.Linux,
-		HelperLookup:     fakeHelperLookup([]string{"rg", "fd", "jq", "git", "curl"}),
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: builtinSkillsFS,
+		WorkDir:         workDir,
+		OS:              platform.Linux,
+		HelperLookup:    fakeHelperLookup([]string{"rg", "fd", "jq", "git", "curl"}),
 	}
 	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {
@@ -405,15 +410,15 @@ func fakeHelperLookup(names []string) helpers.LookupFunc {
 
 // TestBuildRuntimePartHelperAvailable verifies available helpers appear in the runtime part.
 func TestBuildRuntimePartHelperAvailable(t *testing.T) {
-	promptsDir, _, workDir := setupTestDirs(t)
+	promptsFS, _, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsDir:       promptsDir,
-		BuiltinSkillsDir: filepath.Join(t.TempDir(), "noskills"),
-		WorkDir:          workDir,
-		OS:               platform.Linux,
-		HelperSetup:      config.HelperSetup{},
-		HelperLookup:     fakeHelperLookup([]string{"rg", "jq", "curl"}),
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: os.DirFS(filepath.Join(t.TempDir(), "noskills")),
+		WorkDir:         workDir,
+		OS:              platform.Linux,
+		HelperSetup:     config.HelperSetup{},
+		HelperLookup:    fakeHelperLookup([]string{"rg", "jq", "curl"}),
 	}
 	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {
@@ -429,15 +434,15 @@ func TestBuildRuntimePartHelperAvailable(t *testing.T) {
 
 // TestBuildRuntimePartHelperMissingNotDismissed verifies missing core helpers appear when not dismissed.
 func TestBuildRuntimePartHelperMissingNotDismissed(t *testing.T) {
-	promptsDir, _, workDir := setupTestDirs(t)
+	promptsFS, _, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsDir:       promptsDir,
-		BuiltinSkillsDir: filepath.Join(t.TempDir(), "noskills"),
-		WorkDir:          workDir,
-		OS:               platform.Linux,
-		HelperSetup:      config.HelperSetup{},
-		HelperLookup:     fakeHelperLookup([]string{"git"}),
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: os.DirFS(filepath.Join(t.TempDir(), "noskills")),
+		WorkDir:         workDir,
+		OS:              platform.Linux,
+		HelperSetup:     config.HelperSetup{},
+		HelperLookup:    fakeHelperLookup([]string{"git"}),
 	}
 	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {
@@ -453,15 +458,15 @@ func TestBuildRuntimePartHelperMissingNotDismissed(t *testing.T) {
 
 // TestBuildRuntimePartHelperMissingDismissed verifies optional section suppressed when dismissed.
 func TestBuildRuntimePartHelperMissingDismissed(t *testing.T) {
-	promptsDir, _, workDir := setupTestDirs(t)
+	promptsFS, _, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsDir:       promptsDir,
-		BuiltinSkillsDir: filepath.Join(t.TempDir(), "noskills"),
-		WorkDir:          workDir,
-		OS:               platform.Linux,
-		HelperSetup:      config.HelperSetup{Dismissed: true},
-		HelperLookup:     fakeHelperLookup([]string{"git"}),
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: os.DirFS(filepath.Join(t.TempDir(), "noskills")),
+		WorkDir:         workDir,
+		OS:              platform.Linux,
+		HelperSetup:     config.HelperSetup{Dismissed: true},
+		HelperLookup:    fakeHelperLookup([]string{"git"}),
 	}
 	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {
@@ -474,15 +479,15 @@ func TestBuildRuntimePartHelperMissingDismissed(t *testing.T) {
 
 // TestBuildRuntimePartHelperDeclined verifies declined helpers don't appear in optional.
 func TestBuildRuntimePartHelperDeclined(t *testing.T) {
-	promptsDir, _, workDir := setupTestDirs(t)
+	promptsFS, _, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsDir:       promptsDir,
-		BuiltinSkillsDir: filepath.Join(t.TempDir(), "noskills"),
-		WorkDir:          workDir,
-		OS:               platform.Linux,
-		HelperSetup:      config.HelperSetup{Declined: []string{"rg", "fd"}},
-		HelperLookup:     fakeHelperLookup([]string{"git"}),
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: os.DirFS(filepath.Join(t.TempDir(), "noskills")),
+		WorkDir:         workDir,
+		OS:              platform.Linux,
+		HelperSetup:     config.HelperSetup{Declined: []string{"rg", "fd"}},
+		HelperLookup:    fakeHelperLookup([]string{"git"}),
 	}
 	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {
@@ -509,15 +514,15 @@ func TestBuildRuntimePartHelperDeclined(t *testing.T) {
 
 // TestBuildRuntimePartHelperOrder verifies helper section is after OS prompt, before AGENTS.md.
 func TestBuildRuntimePartHelperOrder(t *testing.T) {
-	promptsDir, builtinSkillsDir, workDir := setupTestDirs(t)
+	promptsFS, builtinSkillsFS, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsDir:       promptsDir,
-		BuiltinSkillsDir: builtinSkillsDir,
-		WorkDir:          workDir,
-		OS:               platform.Linux,
-		HelperSetup:      config.HelperSetup{},
-		HelperLookup:     fakeHelperLookup([]string{"rg", "fd", "jq", "git", "curl"}),
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: builtinSkillsFS,
+		WorkDir:         workDir,
+		OS:              platform.Linux,
+		HelperSetup:     config.HelperSetup{},
+		HelperLookup:    fakeHelperLookup([]string{"rg", "fd", "jq", "git", "curl"}),
 	}
 	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {
@@ -542,15 +547,15 @@ func TestBuildRuntimePartHelperOrder(t *testing.T) {
 
 // TestBuildRuntimePartHelperNoHelpers verifies no helpers section when nothing is available.
 func TestBuildRuntimePartHelperNoHelpers(t *testing.T) {
-	promptsDir, _, workDir := setupTestDirs(t)
+	promptsFS, _, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsDir:       promptsDir,
-		BuiltinSkillsDir: filepath.Join(t.TempDir(), "noskills"),
-		WorkDir:          workDir,
-		OS:               platform.Linux,
-		HelperSetup:      config.HelperSetup{Dismissed: true},
-		HelperLookup:     fakeHelperLookup(nil),
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: os.DirFS(filepath.Join(t.TempDir(), "noskills")),
+		WorkDir:         workDir,
+		OS:              platform.Linux,
+		HelperSetup:     config.HelperSetup{Dismissed: true},
+		HelperLookup:    fakeHelperLookup(nil),
 	}
 	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {

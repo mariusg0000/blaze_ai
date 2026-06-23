@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"blazeai/internal/tools"
 )
 
 // TestCreateInDir verifies that a new session is created with an empty message array.
@@ -304,7 +306,6 @@ func TestLastInDirMissing(t *testing.T) {
 	}
 }
 
-
 func TestSaveRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	s, err := CreateInDir(dir)
@@ -481,5 +482,88 @@ func TestSanitizeKeepsCompleteMultiToolCall(t *testing.T) {
 
 	if len(s.Messages) != 4 {
 		t.Fatalf("Messages = %d, want 4 (complete multi-call kept)", len(s.Messages))
+	}
+}
+
+// TestSanitizeMessagesRemovesLeadingOrphanTool verifies standalone tool messages are dropped.
+func TestSanitizeMessagesRemovesLeadingOrphanTool(t *testing.T) {
+	sanitized, removed := SanitizeMessages([]Message{
+		{Role: "tool", Content: "orphan", ToolCallID: "call_1", Name: "shell"},
+		{Role: "assistant", Content: "done"},
+	})
+
+	if len(sanitized) != 1 || sanitized[0].Role != "assistant" {
+		t.Fatalf("sanitized = %#v, want only assistant message", sanitized)
+	}
+	if len(removed) != 1 || removed[0].Role != "tool" {
+		t.Fatalf("removed = %#v, want one orphan tool", removed)
+	}
+}
+
+// TestSanitizeMessagesRemovesMismatchedToolID verifies unexpected tool_call_id values are removed.
+func TestSanitizeMessagesRemovesMismatchedToolID(t *testing.T) {
+	sanitized, removed := SanitizeMessages([]Message{
+		{Role: "assistant", ToolCalls: []interface{}{map[string]interface{}{"id": "call_1"}}},
+		{Role: "tool", Content: "wrong", ToolCallID: "call_2", Name: "shell"},
+		{Role: "tool", Content: "right", ToolCallID: "call_1", Name: "shell"},
+		{Role: "assistant", Content: "done"},
+	})
+
+	if len(sanitized) != 3 {
+		t.Fatalf("sanitized len = %d, want 3", len(sanitized))
+	}
+	if sanitized[1].Role != "tool" || sanitized[1].ToolCallID != "call_1" {
+		t.Fatalf("sanitized tool = %#v, want call_1", sanitized[1])
+	}
+	if len(removed) != 1 || removed[0].ToolCallID != "call_2" {
+		t.Fatalf("removed = %#v, want mismatched call_2 tool", removed)
+	}
+}
+
+// TestSanitizeMessagesReturnsTruncatedTail verifies incomplete rounds return the truncated messages.
+func TestSanitizeMessagesReturnsTruncatedTail(t *testing.T) {
+	sanitized, removed := SanitizeMessages([]Message{
+		{Role: "user", Content: "start"},
+		{Role: "assistant", ToolCalls: []interface{}{
+			map[string]interface{}{"id": "call_1"},
+			map[string]interface{}{"id": "call_2"},
+		}},
+		{Role: "tool", Content: "only one", ToolCallID: "call_1", Name: "shell"},
+		{Role: "assistant", Content: "should be dropped too"},
+	})
+
+	if len(sanitized) != 1 || sanitized[0].Role != "user" {
+		t.Fatalf("sanitized = %#v, want only initial user message", sanitized)
+	}
+	if len(removed) != 3 {
+		t.Fatalf("removed len = %d, want 3 truncated messages", len(removed))
+	}
+	if removed[0].Role != "assistant" || removed[2].Role != "assistant" {
+		t.Fatalf("removed = %#v, want truncated tail starting at assistant tool round", removed)
+	}
+}
+
+// TestSanitizeMessagesKeepsRuntimeOpenAIToolCalls verifies sanitizer handles
+// the exact in-memory tool_call type persisted by the runtime before JSON reload.
+func TestSanitizeMessagesKeepsRuntimeOpenAIToolCalls(t *testing.T) {
+	sanitized, removed := SanitizeMessages([]Message{
+		{
+			Role: "assistant",
+			ToolCalls: []tools.OpenAIToolCall{
+				{ID: "call_1", Type: "function", Function: tools.OpenAIFunction{Name: "shell", Arguments: `{"command":"pwd"}`}},
+			},
+		},
+		{Role: "tool", Content: "exit_code: 0\nstdout:\n/mnt/work\n", ToolCallID: "call_1", Name: "shell"},
+		{Role: "assistant", Content: "done"},
+	})
+
+	if len(removed) != 0 {
+		t.Fatalf("removed = %#v, want none", removed)
+	}
+	if len(sanitized) != 3 {
+		t.Fatalf("sanitized len = %d, want 3", len(sanitized))
+	}
+	if sanitized[1].Role != "tool" || sanitized[1].ToolCallID != "call_1" {
+		t.Fatalf("sanitized tool = %#v, want matching tool result kept", sanitized[1])
 	}
 }

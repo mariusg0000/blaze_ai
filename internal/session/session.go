@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"blazeai/internal/platform"
+	"blazeai/internal/tools"
 )
 
 // ErrNoCleanSession is returned when -c is used but no cleanly closed session exists.
@@ -39,8 +40,9 @@ const sessionJSONName = "session.json"
 // WHAT:  One message in the conversation history.
 // WHY:   session.json stores the complete message array for prompt rebuilding and resume.
 // PARAMS: Role — sender role; Content — message text; Reasoning — reasoning text (kept intact on disk);
-//         ToolCalls — optional tool call array; ToolCallID — optional tool result reference ID;
-//         Name — optional tool name for results.
+//
+//	ToolCalls — optional tool call array; ToolCallID — optional tool result reference ID;
+//	Name — optional tool name for results.
 type Message struct {
 	Role       string      `json:"role"`
 	Content    interface{} `json:"content,omitempty"`
@@ -55,7 +57,8 @@ type Message struct {
 // WHAT:  The on-disk representation of a session.
 // WHY:   Tracks the message array and clean-close status for persistence and resume.
 // PARAMS: Messages — full conversation array; ClosedCleanly — true only when closed via /exit;
-//         Folder — absolute path to the session folder.
+//
+//	Folder — absolute path to the session folder.
 type Session struct {
 	Messages      []Message `json:"messages"`
 	ClosedCleanly bool      `json:"closed_cleanly"`
@@ -196,54 +199,135 @@ func (s *Session) Close() error {
 	return s.save()
 }
 
-// Sanitize removes incomplete tool call rounds from the session history.
-// An incomplete round is an assistant message with tool_calls that lacks matching
-// tool results before the next non-tool message. When found, the session is
-// truncated from that assistant message onward.
+// Sanitize removes invalid tool-call history from the session.
+// Orphan tool messages are dropped. An incomplete assistant tool-call round
+// truncates the history from that assistant message onward.
 //
 // WHAT:  Strips incomplete assistant/tool-call rounds from the session.
 // WHY:   Interrupted sessions can leave assistant messages with tool_calls that have
-//        no corresponding tool results, and later user messages cannot repair that history.
+//
+//	no corresponding tool results, and later user messages cannot repair that history.
+//
 // RETURNS: error if saving the sanitized session fails.
 func (s *Session) Sanitize() error {
-	for i := 0; i < len(s.Messages); i++ {
-		if s.Messages[i].Role != "assistant" {
-			continue
-		}
-
-		expectedResults := assistantToolCallCount(s.Messages[i].ToolCalls)
-		if expectedResults == 0 {
-			continue
-		}
-
-		actualResults := 0
-		j := i + 1
-		for j < len(s.Messages) && s.Messages[j].Role == "tool" {
-			actualResults++
-			j++
-		}
-
-		if actualResults < expectedResults {
-			s.Messages = s.Messages[:i]
-			return nil
-		}
-
-		i = j - 1
-	}
-
+	sanitized, _ := SanitizeMessages(s.Messages)
+	s.Messages = sanitized
 	return nil
 }
 
-// assistantToolCallCount returns the number of tool calls in an assistant message.
-func assistantToolCallCount(tc interface{}) int {
-	if tc == nil {
-		return 0
+// SanitizeMessages validates a message slice and returns the sanitized messages plus any removed ones.
+// Orphan tool messages are removed. If an assistant tool-call round is incomplete,
+// the history is truncated from that assistant message onward and the truncated tail is returned in removed.
+//
+// WHAT:  Sanitizes an arbitrary message slice without mutating session state.
+// WHY:   Runtime and compaction both need the same validity rules for tool-call history.
+// HOW:   Drops orphan tool messages, keeps complete assistant/tool rounds, truncates on incomplete rounds.
+// PARAMS: messages — the message slice to validate.
+// RETURNS: []Message — sanitized messages; []Message — removed or truncated messages in original order.
+func SanitizeMessages(messages []Message) ([]Message, []Message) {
+	sanitized := make([]Message, 0, len(messages))
+	removed := make([]Message, 0)
+
+	for i := 0; i < len(messages); {
+		msg := messages[i]
+
+		if msg.Role == "tool" {
+			removed = append(removed, msg)
+			i++
+			continue
+		}
+
+		expectedIDs := assistantToolCallIDs(msg.ToolCalls)
+		if msg.Role != "assistant" || len(expectedIDs) == 0 {
+			sanitized = append(sanitized, msg)
+			i++
+			continue
+		}
+
+		groupStart := len(sanitized)
+		sanitized = append(sanitized, msg)
+
+		expected := make(map[string]struct{}, len(expectedIDs))
+		for _, id := range expectedIDs {
+			expected[id] = struct{}{}
+		}
+		seen := make(map[string]struct{}, len(expectedIDs))
+
+		j := i + 1
+		for j < len(messages) && messages[j].Role == "tool" {
+			toolMsg := messages[j]
+			if toolMsg.ToolCallID == "" {
+				removed = append(removed, toolMsg)
+				j++
+				continue
+			}
+			if _, ok := expected[toolMsg.ToolCallID]; !ok {
+				removed = append(removed, toolMsg)
+				j++
+				continue
+			}
+			if _, duplicate := seen[toolMsg.ToolCallID]; duplicate {
+				removed = append(removed, toolMsg)
+				j++
+				continue
+			}
+			seen[toolMsg.ToolCallID] = struct{}{}
+			sanitized = append(sanitized, toolMsg)
+			j++
+		}
+
+		if len(seen) != len(expected) {
+			removed = append(removed, messages[i:]...)
+			return sanitized[:groupStart], removed
+		}
+
+		i = j
 	}
+
+	return sanitized, removed
+}
+
+// assistantToolCallIDs extracts tool call IDs from an assistant tool_calls payload.
+func assistantToolCallIDs(tc interface{}) []string {
 	switch v := tc.(type) {
 	case []interface{}:
-		return len(v)
+		ids := make([]string, 0, len(v))
+		for _, item := range v {
+			if id, ok := toolCallID(item); ok {
+				ids = append(ids, id)
+			}
+		}
+		return ids
+	case []map[string]interface{}:
+		ids := make([]string, 0, len(v))
+		for _, item := range v {
+			if id, ok := item["id"].(string); ok && id != "" {
+				ids = append(ids, id)
+			}
+		}
+		return ids
+	case []tools.OpenAIToolCall:
+		ids := make([]string, 0, len(v))
+		for _, item := range v {
+			if item.ID != "" {
+				ids = append(ids, item.ID)
+			}
+		}
+		return ids
+	default:
+		return nil
 	}
-	return 0
+}
+
+// toolCallID extracts an ID from one tool_calls element.
+func toolCallID(item interface{}) (string, bool) {
+	switch v := item.(type) {
+	case map[string]interface{}:
+		id, ok := v["id"].(string)
+		return id, ok && id != ""
+	default:
+		return "", false
+	}
 }
 
 // LastClean finds the most recently modified cleanly closed session.

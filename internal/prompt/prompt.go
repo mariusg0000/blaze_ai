@@ -6,7 +6,9 @@
 package prompt
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -33,22 +35,22 @@ var variablePattern = regexp.MustCompile(`\{([A-Z_][A-Z0-9_]*)\}`)
 //
 // WHAT:  Holds configuration for prompt building and assembles prompts on every LLM call.
 // WHY:   The prompt is rebuilt fresh from disk every time per spec — nothing is reused.
-// PARAMS: PromptsDir — path to the project's prompts directory (sysprompt.md, sysprompt.<os>.md);
+// PARAMS: PromptsFS — filesystem containing sysprompt.md and sysprompt.<os>.md;
 //
-//	BuiltinSkillsDir — path to the project's builtin skills directory;
+//	BuiltinSkillsFS — filesystem containing builtin skill .md files;
 //	WorkDir — current work folder for AGENTS.md resolution;
 //	OS — the detected operating system for selecting the OS-specific prompt;
 //	OSInfo — human-readable OS description injected as {OS_INFO};
 //	HelperSetup — user UX preferences for host helper installation prompts;
 //	HelperLookup — binary lookup function for helper detection (injectable for tests).
 type Builder struct {
-	PromptsDir       string
-	BuiltinSkillsDir string
-	WorkDir          string
-	OS               platform.OS
-	OSInfo           string
-	HelperSetup      config.HelperSetup
-	HelperLookup     helpers.LookupFunc
+	PromptsFS       fs.FS
+	BuiltinSkillsFS fs.FS
+	WorkDir         string
+	OS              platform.OS
+	OSInfo          string
+	HelperSetup     config.HelperSetup
+	HelperLookup    helpers.LookupFunc
 }
 
 // injectVariables replaces known variable placeholders in text with resolved values.
@@ -79,11 +81,29 @@ func (b *Builder) injectVariables(text string) (string, error) {
 	}), nil
 }
 
-// readFileOptional reads a file and returns its content. If the file does not exist,
+// readFileRequiredFS reads a file from an fs.FS and returns its content.
+// If the file does not exist, returns the given error.
+//
+// WHAT:  Reads a file from a filesystem, treating missing files as a hard error.
+// WHY:   Universal and OS system prompts are required per spec and read from embedded FS.
+// PARAMS: fsys — the filesystem; name — the file name; missingErr — error if absent.
+// RETURNS: string — file content; error if missing or unreadable.
+func readFileRequiredFS(fsys fs.FS, name string, missingErr error) (string, error) {
+	data, err := fs.ReadFile(fsys, name)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", missingErr
+		}
+		return "", fmt.Errorf("cannot read %s: %w", name, err)
+	}
+	return string(data), nil
+}
+
+// readFileOptional reads a file from disk. If the file does not exist,
 // returns an empty string and no error. Other read errors are returned.
 //
-// WHAT:  Reads a file, treating missing files as empty (optional source).
-// WHY:   AGENTS.md, memory.md, and skills are optional sources per spec.
+// WHAT:  Reads a file from disk, treating missing files as empty (optional source).
+// WHY:   AGENTS.md is an optional source on disk, not in the embedded FS.
 // PARAMS: path — the file to read.
 // RETURNS: string — file content or empty if missing; error on read failure (not missing).
 func readFileOptional(path string) (string, error) {
@@ -91,24 +111,6 @@ func readFileOptional(path string) (string, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
-		}
-		return "", fmt.Errorf("cannot read %s: %w", path, err)
-	}
-	return string(data), nil
-}
-
-// readFileRequired reads a file and returns its content. If the file does not exist,
-// returns a specific error. Other read errors are wrapped.
-//
-// WHAT:  Reads a file, treating missing files as a hard error (required source).
-// WHY:   Universal and OS system prompts are required per spec.
-// PARAMS: path — the file to read; missingErr — the error to return if file is absent.
-// RETURNS: string — file content; error if missing or unreadable.
-func readFileRequired(path string, missingErr error) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", missingErr
 		}
 		return "", fmt.Errorf("cannot read %s: %w", path, err)
 	}
@@ -124,7 +126,7 @@ func readFileRequired(path string, missingErr error) (string, error) {
 // PARAMS: active — the in-memory active skills list for this session.
 // RETURNS: string — assembled skills section; error if discovery fails.
 func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, error) {
-	discovered, err := skills.Discover(b.BuiltinSkillsDir)
+	discovered, err := skills.DiscoverFromFS(b.BuiltinSkillsFS)
 	if err != nil {
 		return "", fmt.Errorf("skills discovery: %w", err)
 	}
@@ -171,7 +173,7 @@ func (b *Builder) BuildRuntimePart(active *skills.ActiveList) (string, error) {
 	var parts []string
 
 	// 1. Universal system prompt (required).
-	universal, err := readFileRequired(filepath.Join(b.PromptsDir, "sysprompt.md"), ErrUniversalPromptMissing)
+	universal, err := readFileRequiredFS(b.PromptsFS, "sysprompt.md", ErrUniversalPromptMissing)
 	if err != nil {
 		return "", err
 	}
@@ -183,7 +185,7 @@ func (b *Builder) BuildRuntimePart(active *skills.ActiveList) (string, error) {
 
 	// 2. OS-specific system prompt (required).
 	osPromptName := fmt.Sprintf("sysprompt.%s.md", b.OS)
-	osPrompt, err := readFileRequired(filepath.Join(b.PromptsDir, osPromptName), ErrOSPromptMissing)
+	osPrompt, err := readFileRequiredFS(b.PromptsFS, osPromptName, ErrOSPromptMissing)
 	if err != nil {
 		return "", err
 	}

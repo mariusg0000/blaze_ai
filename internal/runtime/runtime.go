@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,11 +78,12 @@ type Agent struct {
 // WHY:   The main entrypoint calls this to assemble the agent before starting the REPL.
 // PARAMS: cfg — loaded config; sess — session (new or resumed); os — detected platform;
 //
-//	builtinSkillsDir — path to builtin skills; promptsDir — path to prompt files;
+//	builtinSkillsFS — filesystem with builtin skill .md files;
+//	promptsFS — filesystem with sysprompt.md and sysprompt.<os>.md;
 //	workDir — initial work folder; handler — transport implementation.
 //
 // RETURNS: *Agent — ready to run; error if provider client cannot be created.
-func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtinSkillsDir, promptsDir, workDir string, handler Handler) (*Agent, error) {
+func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtinSkillsFS, promptsFS fs.FS, workDir string, handler Handler) (*Agent, error) {
 	modelID := cfg.LastModel
 	if modelID == "" {
 		modelID = cfg.Roles.Default
@@ -99,12 +101,12 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 	active := skills.NewActiveList()
 
 	builder := &prompt.Builder{
-		PromptsDir:       promptsDir,
-		BuiltinSkillsDir: builtinSkillsDir,
-		WorkDir:          workDir,
-		OS:               os,
-		OSInfo:           platform.OSInfo(),
-		HelperSetup:      cfg.HelperSetup,
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: builtinSkillsFS,
+		WorkDir:         workDir,
+		OS:              os,
+		OSInfo:          platform.OSInfo(),
+		HelperSetup:     cfg.HelperSetup,
 	}
 
 	return &Agent{

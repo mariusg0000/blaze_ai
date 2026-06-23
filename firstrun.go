@@ -247,39 +247,6 @@ func assignOptionalRoles(out io.Writer, reader *bufio.Reader, models []string, p
 	return nil
 }
 
-// resolveBuiltinPaths resolves the prompts and builtin skills directories.
-// In development, these are relative to the executable or project root.
-// In production, they would be embedded or installed alongside the binary.
-//
-// WHAT:  Finds the prompts and skills directories for the prompt builder.
-// WHY:   The prompt builder needs the path to builtin prompt and skill files.
-// RETURNS: promptsDir, skillsDir — absolute or relative paths to the directories.
-func resolveBuiltinPaths() (promptsDir, skillsDir string) {
-	// Try relative to executable first, then relative to current directory.
-	exe, err := os.Executable()
-	if err == nil {
-		exeDir := exe
-		if idx := strings.LastIndex(exeDir, string(os.PathSeparator)); idx >= 0 {
-			exeDir = exeDir[:idx]
-		}
-		pd := exeDir + string(os.PathSeparator) + "prompts"
-		sd := exeDir + string(os.PathSeparator) + "skills"
-		if isDir(pd) && isDir(sd) {
-			return pd, sd
-		}
-	}
-	return "prompts", "skills"
-}
-
-// isDir checks if a path exists and is a directory.
-func isDir(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return info.IsDir()
-}
-
 // runFirstRun triggers first-run setup with the detected platform OS.
 // Wrapper that uses os.Stdout and os.Stdin for I/O.
 func runFirstRun() (*config.Config, error) {

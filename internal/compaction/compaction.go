@@ -89,11 +89,10 @@ func (m *Manager) estimateTokens(msg session.Message, willStripReasoning bool) i
 
 // findCutPoint walks messages from newest to oldest, summing estimated tokens,
 // and returns the index where the retained tail reaches minTokens.
-// Ensures tool boundary safety: no split between a tool call and its result.
 // Stripped reasoning parts count as 0 tokens per spec 05.
 //
 // WHAT:  Finds the prune boundary that retains approximately minTokens of recent messages.
-// WHY:   Pruning must retain enough recent context while respecting tool call/result boundaries.
+// WHY:   Pruning must retain enough recent context; tool validity is enforced by the sanitizer.
 // PARAMS: messages — the full message array; minTokens — target retained tokens.
 // RETURNS: int — cut point index (messages before this index are pruned).
 func (m *Manager) findCutPoint(messages []session.Message, minTokens int) int {
@@ -113,21 +112,6 @@ func (m *Manager) findCutPoint(messages []session.Message, minTokens int) int {
 		}
 		accumulated += tokens
 		cutIndex = i
-	}
-
-	// Tool boundary safety: if the message at cutIndex-1 is an assistant message with tool calls,
-	// and the message at cutIndex is a tool result, we need to include the assistant message too
-	// to avoid orphaning the tool call from its result.
-	if cutIndex > 0 && cutIndex < len(messages) {
-		prevMsg := messages[cutIndex-1]
-		curMsg := messages[cutIndex]
-		if prevMsg.Role == "assistant" && prevMsg.ToolCalls != nil && curMsg.Role == "tool" {
-			cutIndex = cutIndex - 1
-		}
-		// Also check if the message before the cut is a tool result without its assistant call.
-		if cutIndex > 0 && messages[cutIndex-1].Role == "tool" && curMsg.Role == "assistant" && curMsg.ToolCalls != nil {
-			cutIndex = cutIndex - 1
-		}
 	}
 
 	return cutIndex
@@ -218,6 +202,9 @@ func (m *Manager) Compact(sess *session.Session, usage *provider.Usage) (bool, e
 
 	pruned := sess.Messages[:cutIndex]
 	retained := sess.Messages[cutIndex:]
+	cleanRetained, removed := session.SanitizeMessages(retained)
+	pruned = append(pruned, removed...)
+	retained = cleanRetained
 
 	// Attempt summarization.
 	summary, err := m.summarize(sess.Folder, pruned)

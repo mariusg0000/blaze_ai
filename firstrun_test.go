@@ -204,17 +204,6 @@ func TestKnownProvidersCount(t *testing.T) {
 	}
 }
 
-// TestResolveBuiltinPaths verifies path resolution doesn't return empty.
-func TestResolveBuiltinPaths(t *testing.T) {
-	promptsDir, skillsDir := resolveBuiltinPaths()
-	if promptsDir == "" {
-		t.Error("promptsDir is empty")
-	}
-	if skillsDir == "" {
-		t.Error("skillsDir is empty")
-	}
-}
-
 // TestPlatformOS verifies OS detection works.
 func TestPlatformOS(t *testing.T) {
 	osType, err := platformOS()

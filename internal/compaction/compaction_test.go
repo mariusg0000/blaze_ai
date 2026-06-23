@@ -3,6 +3,7 @@ package compaction
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -99,21 +100,69 @@ func TestFindCutPoint(t *testing.T) {
 	}
 }
 
-// TestFindCutPointToolBoundary verifies tool call/result pairs are not split.
-func TestFindCutPointToolBoundary(t *testing.T) {
+// TestFindCutPointStrictTokens verifies cut point selection is token-based only.
+func TestFindCutPointStrictTokens(t *testing.T) {
 	m, server := setupManager(t, func(w http.ResponseWriter, r *http.Request) {})
 	defer server.Close()
 
 	msgs := []session.Message{
 		{Role: "user", Content: "do something"},
 		{Role: "assistant", Content: "ok", ToolCalls: []map[string]interface{}{{"id": "call_1", "function": map[string]string{"name": "shell"}}}},
-		{Role: "tool", Content: "result", ToolCallID: "call_1", Name: "shell"},
+		{Role: "tool", Content: strings.Repeat("result ", 20), ToolCallID: "call_1", Name: "shell"},
 		{Role: "assistant", Content: "done"},
 	}
 	cut := m.findCutPoint(msgs, 10)
-	// The cut should not be at index 2 (between tool call and tool result).
-	if cut == 2 {
-		t.Error("cut at index 2 splits tool call from result")
+	if cut <= 0 || cut >= len(msgs) {
+		t.Errorf("cut = %d, want within message range", cut)
+	}
+}
+
+// TestCompactSanitizesRetainedTail verifies orphan tool messages caused by a raw token cut
+// are removed from the retained tail and summarized with the pruned segment.
+func TestCompactSanitizesRetainedTail(t *testing.T) {
+	var requestBody string
+	m, server := setupManager(t, func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		requestBody = string(data)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"Summary of conversation."}}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "data: [DONE]")
+		fmt.Fprintln(w)
+	})
+	defer server.Close()
+
+	msgs := []session.Message{
+		{Role: "user", Content: strings.Repeat("older ", 40)},
+		{Role: "assistant", Content: "", ToolCalls: []interface{}{
+			map[string]interface{}{"id": "call_1"},
+			map[string]interface{}{"id": "call_2"},
+		}},
+		{Role: "tool", Content: strings.Repeat("tool-one ", 20), ToolCallID: "call_1", Name: "shell"},
+		{Role: "tool", Content: strings.Repeat("tool-two ", 20), ToolCallID: "call_2", Name: "shell"},
+		{Role: "assistant", Content: strings.Repeat("follow-up ", 20)},
+	}
+	sess := makeSession(t, msgs)
+
+	compacted, err := m.Compact(sess, &provider.Usage{PromptTokens: 150})
+	if err != nil {
+		t.Fatalf("Compact() error: %v", err)
+	}
+	if !compacted {
+		t.Fatal("Compact() = false, want true")
+	}
+	if !strings.Contains(requestBody, "tool-two") {
+		t.Fatal("summarizer request did not include orphan tool result moved from retained tail")
+	}
+	for i, msg := range sess.Messages {
+		if i == 0 {
+			continue
+		}
+		if msg.Role == "tool" {
+			t.Fatal("retained session still contains orphan tool message after compaction")
+		}
 	}
 }
 
