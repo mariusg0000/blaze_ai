@@ -159,7 +159,7 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, error) 
 }
 
 // BuildRuntimePart assembles the runtime prompt part from all disk sources.
-// Order: universal sysprompt → OS sysprompt → AGENTS.md → memory.md → skills section.
+// Order: universal sysprompt → OS sysprompt → host helpers → AGENTS.md → memory.md → skills section.
 // Variable injection is applied to every source. Required sources error if missing.
 //
 // WHAT:  Builds the runtime part of the prompt from disk sources.
@@ -193,7 +193,22 @@ func (b *Builder) BuildRuntimePart(active *skills.ActiveList) (string, error) {
 	}
 	parts = append(parts, osPrompt)
 
-	// 3. AGENTS.md from work folder (optional).
+	// 3. Host helpers (optional).
+	lookup := b.HelperLookup
+	if lookup == nil {
+		lookup = helpers.DefaultLookup
+	}
+	helperStatuses := helpers.Detect(lookup)
+	helperSection := helpers.BuildPromptSection(helperStatuses, b.WorkDir, b.HelperSetup)
+	if helperSection != "" {
+		helperSection, err = b.injectVariables(helperSection)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, helperSection)
+	}
+
+	// 4. AGENTS.md from work folder (optional).
 	agents, err := readFileOptional(filepath.Join(b.WorkDir, "AGENTS.md"))
 	if err != nil {
 		return "", err
@@ -206,7 +221,7 @@ func (b *Builder) BuildRuntimePart(active *skills.ActiveList) (string, error) {
 		parts = append(parts, "## Project Rules (AGENTS.md)\n\nThe following rules are loaded from the AGENTS.md file in the current working directory. Follow them for all work in this project.\n\n"+agents)
 	}
 
-	// 4. Memory (optional).
+	// 5. Memory (optional).
 	mem, err := memory.Read()
 	if err != nil {
 		return "", err
@@ -222,21 +237,6 @@ func (b *Builder) BuildRuntimePart(active *skills.ActiveList) (string, error) {
 			return "", err
 		}
 		parts = append(parts, memHeader+mem)
-	}
-
-	// 5. Host helpers (optional).
-	lookup := b.HelperLookup
-	if lookup == nil {
-		lookup = helpers.DefaultLookup
-	}
-	helperStatuses := helpers.Detect(lookup)
-	helperSection := helpers.BuildPromptSection(helperStatuses, b.WorkDir, b.HelperSetup)
-	if helperSection != "" {
-		helperSection, err = b.injectVariables(helperSection)
-		if err != nil {
-			return "", err
-		}
-		parts = append(parts, helperSection)
 	}
 
 	// 6. Skills section (optional).

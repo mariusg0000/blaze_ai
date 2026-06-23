@@ -356,7 +356,7 @@ func TestBuildEmptySession(t *testing.T) {
 	}
 }
 
-// TestBuildRuntimePartOrder verifies source order: universal → OS → AGENTS → memory → skills.
+// TestBuildRuntimePartOrder verifies source order: universal → OS → helpers → AGENTS → skills.
 func TestBuildRuntimePartOrder(t *testing.T) {
 	promptsDir, builtinSkillsDir, workDir := setupTestDirs(t)
 
@@ -365,6 +365,7 @@ func TestBuildRuntimePartOrder(t *testing.T) {
 		BuiltinSkillsDir: builtinSkillsDir,
 		WorkDir:          workDir,
 		OS:               platform.Linux,
+		HelperLookup:     fakeHelperLookup([]string{"rg", "fd", "jq", "git", "curl"}),
 	}
 	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {
@@ -374,16 +375,17 @@ func TestBuildRuntimePartOrder(t *testing.T) {
 	// Check relative positions.
 	universalIdx := strings.Index(result, "Universal System Prompt")
 	osIdx := strings.Index(result, "Linux System Prompt")
+	helpersIdx := strings.Index(result, "Host Environment Helpers")
 	agentsIdx := strings.Index(result, "Project Rules")
 	skillsIdx := strings.Index(result, "Available Skills")
 
-	if universalIdx < 0 || osIdx < 0 || agentsIdx < 0 || skillsIdx < 0 {
-		t.Fatalf("missing sections: universal=%d os=%d agents=%d skills=%d",
-			universalIdx, osIdx, agentsIdx, skillsIdx)
+	if universalIdx < 0 || osIdx < 0 || helpersIdx < 0 || agentsIdx < 0 || skillsIdx < 0 {
+		t.Fatalf("missing sections: universal=%d os=%d helpers=%d agents=%d skills=%d",
+			universalIdx, osIdx, helpersIdx, agentsIdx, skillsIdx)
 	}
-	if !(universalIdx < osIdx && osIdx < agentsIdx && agentsIdx < skillsIdx) {
-		t.Errorf("wrong order: universal=%d os=%d agents=%d skills=%d",
-			universalIdx, osIdx, agentsIdx, skillsIdx)
+	if !(universalIdx < osIdx && osIdx < helpersIdx && helpersIdx < agentsIdx && agentsIdx < skillsIdx) {
+		t.Errorf("wrong order: universal=%d os=%d helpers=%d agents=%d skills=%d",
+			universalIdx, osIdx, helpersIdx, agentsIdx, skillsIdx)
 	}
 }
 
@@ -417,8 +419,8 @@ func TestBuildRuntimePartHelperAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
-	if !strings.Contains(result, "## Available Host Helpers") {
-		t.Error("runtime part missing Available Host Helpers section")
+	if !strings.Contains(result, "## Host Environment Helpers") {
+		t.Error("runtime part missing Host Environment Helpers section")
 	}
 	if !strings.Contains(result, "rg") || !strings.Contains(result, "jq") {
 		t.Error("runtime part missing available helper names")
@@ -441,8 +443,8 @@ func TestBuildRuntimePartHelperMissingNotDismissed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
-	if !strings.Contains(result, "## Optional Host Helpers") {
-		t.Error("runtime part missing Optional Host Helpers section")
+	if !strings.Contains(result, "## Optional Host Environment Helpers") {
+		t.Error("runtime part missing Optional Host Environment Helpers section")
 	}
 	if !strings.Contains(result, "rg") {
 		t.Error("runtime part missing missing rg in optional section")
@@ -465,8 +467,8 @@ func TestBuildRuntimePartHelperMissingDismissed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
-	if strings.Contains(result, "Optional Host Helpers") {
-		t.Error("runtime part should not contain Optional Host Helpers when dismissed=true")
+	if strings.Contains(result, "Optional Host Environment Helpers") {
+		t.Error("runtime part should not contain Optional Host Environment Helpers when dismissed=true")
 	}
 }
 
@@ -488,9 +490,9 @@ func TestBuildRuntimePartHelperDeclined(t *testing.T) {
 	}
 	// Only check the optional section for declined helpers; full prompt may contain
 	// unrelated system data from the host memory.md file.
-	optIdx := strings.Index(result, "## Optional Host Helpers")
+	optIdx := strings.Index(result, "## Optional Host Environment Helpers")
 	if optIdx < 0 {
-		t.Fatal("expected Optional Host Helpers section")
+		t.Fatal("expected Optional Host Environment Helpers section")
 	}
 	nextSectionIdx := strings.Index(result[optIdx+1:], "\n## ")
 	if nextSectionIdx < 0 {
@@ -505,7 +507,7 @@ func TestBuildRuntimePartHelperDeclined(t *testing.T) {
 	}
 }
 
-// TestBuildRuntimePartHelperOrder verifies helper section is after memory, before skills.
+// TestBuildRuntimePartHelperOrder verifies helper section is after OS prompt, before AGENTS.md.
 func TestBuildRuntimePartHelperOrder(t *testing.T) {
 	promptsDir, builtinSkillsDir, workDir := setupTestDirs(t)
 
@@ -525,17 +527,16 @@ func TestBuildRuntimePartHelperOrder(t *testing.T) {
 	universalIdx := strings.Index(result, "Universal System Prompt")
 	osIdx := strings.Index(result, "Linux System Prompt")
 	agentsIdx := strings.Index(result, "Project Rules")
-	helpersIdx := strings.Index(result, "Available Host Helpers")
+	helpersIdx := strings.Index(result, "Host Environment Helpers")
 	skillsIdx := strings.Index(result, "Available Skills")
 
 	if universalIdx < 0 || osIdx < 0 || helpersIdx < 0 || skillsIdx < 0 {
 		t.Fatalf("missing sections: universal=%d os=%d helpers=%d skills=%d",
 			universalIdx, osIdx, helpersIdx, skillsIdx)
 	}
-	// Check: universal < OS < AGENTS < memory? Actually memory header is empty, so check helpers < skills.
-	if !(osIdx < agentsIdx && agentsIdx < helpersIdx && helpersIdx < skillsIdx) {
-		t.Errorf("wrong order: os=%d agents=%d helpers=%d skills=%d (expected: OS < AGENTS < helpers < skills)",
-			osIdx, agentsIdx, helpersIdx, skillsIdx)
+	if !(osIdx < helpersIdx && helpersIdx < agentsIdx && agentsIdx < skillsIdx) {
+		t.Errorf("wrong order: os=%d helpers=%d agents=%d skills=%d (expected: OS < helpers < AGENTS < skills)",
+			osIdx, helpersIdx, agentsIdx, skillsIdx)
 	}
 }
 

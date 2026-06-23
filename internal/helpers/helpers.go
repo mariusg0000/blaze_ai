@@ -239,7 +239,7 @@ func BuildPromptSection(statuses []Status, workDir string, setup config.HelperSe
 	var sb strings.Builder
 
 	if len(available) > 0 {
-		sb.WriteString("## Available Host Helpers\n\n")
+		sb.WriteString("## Host Environment Helpers\n\n")
 		sb.WriteString("The following cross-platform host utilities are available:\n")
 		for _, s := range available {
 			sb.WriteString(fmt.Sprintf("- **%s**: %s\n", s.Name, s.Description))
@@ -251,7 +251,7 @@ func BuildPromptSection(statuses []Status, workDir string, setup config.HelperSe
 		if len(available) > 0 {
 			sb.WriteString("---\n\n")
 		}
-		sb.WriteString("## Optional Host Helpers\n\n")
+		sb.WriteString("## Optional Host Environment Helpers\n\n")
 		sb.WriteString("Some useful cross-platform host utilities are missing:\n")
 		for _, s := range missingCore {
 			sb.WriteString(fmt.Sprintf("- **%s**: %s\n", s.Name, s.Description))

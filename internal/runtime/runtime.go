@@ -8,9 +8,11 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"blazeai/internal/compaction"
@@ -165,6 +167,14 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 
 		// Strip reasoning parts from payload (keep newest N, global count).
 		messages = a.Compactor.StripReasoningFromPayload(messages)
+
+		// Write full built prompt to session folder for debugging.
+		promptPath := filepath.Join(a.Session.Folder, "prompt.json")
+		data, err := json.MarshalIndent(messages, "", "  ")
+		if err == nil {
+			raw := strings.ReplaceAll(string(data), "\\n", "\n")
+			_ = os.WriteFile(promptPath, []byte(raw), 0644)
+		}
 
 		// Stream LLM response.
 		toolDefs := tools.AllToOpenAI(a.Tools)

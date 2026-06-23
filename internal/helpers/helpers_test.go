@@ -56,14 +56,14 @@ func TestDetectNoneAvailable(t *testing.T) {
 func TestBuildPromptSectionAvailableCore(t *testing.T) {
 	statuses := Detect(fakeLookup([]string{"rg", "fd", "jq", "git", "curl"}))
 	section := BuildPromptSection(statuses, "/tmp", config.HelperSetup{})
-	if !strings.Contains(section, "## Available Host Helpers") {
-		t.Error("expected Available Host Helpers section")
+	if !strings.Contains(section, "## Host Environment Helpers") {
+		t.Error("expected Host Environment Helpers section")
 	}
 	if !strings.Contains(section, "rg") || !strings.Contains(section, "jq") {
 		t.Error("expected rg and jq in available section")
 	}
-	if strings.Contains(section, "Optional Host Helpers") {
-		t.Error("unexpected Optional Host Helpers when core helpers are available")
+	if strings.Contains(section, "Optional Host Environment Helpers") {
+		t.Error("unexpected Optional Host Environment Helpers when core helpers are available")
 	}
 }
 
@@ -71,8 +71,8 @@ func TestBuildPromptSectionAvailableCore(t *testing.T) {
 func TestBuildPromptSectionMissingCoreNotDismissed(t *testing.T) {
 	statuses := Detect(fakeLookup([]string{"git", "curl"}))
 	section := BuildPromptSection(statuses, "/tmp", config.HelperSetup{})
-	if !strings.Contains(section, "Optional Host Helpers") {
-		t.Error("expected Optional Host Helpers section when core helpers are missing")
+	if !strings.Contains(section, "Optional Host Environment Helpers") {
+		t.Error("expected Optional Host Environment Helpers section when core helpers are missing")
 	}
 	if !strings.Contains(section, "rg") {
 		t.Error("expected rg in optional section")
@@ -83,11 +83,11 @@ func TestBuildPromptSectionMissingCoreNotDismissed(t *testing.T) {
 func TestBuildPromptSectionMissingCoreDismissed(t *testing.T) {
 	statuses := Detect(fakeLookup([]string{"git", "curl"}))
 	section := BuildPromptSection(statuses, "/tmp", config.HelperSetup{Dismissed: true})
-	if strings.Contains(section, "Optional Host Helpers") {
-		t.Error("unexpected Optional Host Helpers when dismissed=true")
+	if strings.Contains(section, "Optional Host Environment Helpers") {
+		t.Error("unexpected Optional Host Environment Helpers when dismissed=true")
 	}
-	if !strings.Contains(section, "Available Host Helpers") {
-		t.Error("expected Available Host Helpers for git and curl")
+	if !strings.Contains(section, "Host Environment Helpers") {
+		t.Error("expected Host Environment Helpers for git and curl")
 	}
 }
 
