@@ -58,15 +58,41 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-// TestInjectVariablesAPP_HOME verifies that {APP_HOME} is replaced.
-func TestInjectVariablesAPP_HOME(t *testing.T) {
-	b := &Builder{}
-	home, _ := platform.AppHome()
-	result, err := b.injectVariables("Path: {APP_HOME}/scripts")
+// TestInjectVariablesWorkDir verifies that {WORK_DIR} is replaced.
+func TestInjectVariablesWorkDir(t *testing.T) {
+	b := &Builder{WorkDir: "/some/path"}
+	result, err := b.injectVariables("Work dir: {WORK_DIR}")
 	if err != nil {
 		t.Fatalf("injectVariables() error: %v", err)
 	}
-	expected := "Path: " + home + "/scripts"
+	expected := "Work dir: /some/path"
+	if result != expected {
+		t.Errorf("injectVariables() = %q, want %q", result, expected)
+	}
+}
+
+// TestInjectVariablesOSInfo verifies that {OS_INFO} is replaced.
+func TestInjectVariablesOSInfo(t *testing.T) {
+	b := &Builder{OSInfo: "Ubuntu 24.04 LTS"}
+	result, err := b.injectVariables("OS: {OS_INFO}")
+	if err != nil {
+		t.Fatalf("injectVariables() error: %v", err)
+	}
+	expected := "OS: Ubuntu 24.04 LTS"
+	if result != expected {
+		t.Errorf("injectVariables() = %q, want %q", result, expected)
+	}
+}
+
+// TestInjectVariablesAll verifies all four variables in one call.
+func TestInjectVariablesAll(t *testing.T) {
+	home, _ := platform.AppHome()
+	b := &Builder{WorkDir: "/tmp", OSInfo: "Linux"}
+	result, err := b.injectVariables("{APP_HOME} {WORK_DIR} {OS_INFO}")
+	if err != nil {
+		t.Fatalf("injectVariables() error: %v", err)
+	}
+	expected := home + " /tmp Linux"
 	if result != expected {
 		t.Errorf("injectVariables() = %q, want %q", result, expected)
 	}

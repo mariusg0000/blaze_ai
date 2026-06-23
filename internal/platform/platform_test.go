@@ -136,3 +136,26 @@ func TestBootstrapIdempotent(t *testing.T) {
 		t.Fatalf("second Bootstrap() failed: %v", err)
 	}
 }
+
+// TestOSInfo verifies that OSInfo returns a non-empty string matching the current OS.
+func TestOSInfo(t *testing.T) {
+	info := OSInfo()
+	if info == "" {
+		t.Fatal("OSInfo() returned empty string")
+	}
+	lower := strings.ToLower(info)
+	switch runtime.GOOS {
+	case "linux":
+		if !strings.Contains(lower, "linux") && !strings.Contains(lower, "ubuntu") {
+			t.Errorf("OSInfo() = %q, expected to contain 'linux' or 'ubuntu'", info)
+		}
+	case "darwin":
+		if !strings.Contains(lower, "mac") && !strings.Contains(lower, "darwin") {
+			t.Errorf("OSInfo() = %q, expected to contain 'mac' or 'darwin'", info)
+		}
+	case "windows":
+		if !strings.Contains(lower, "windows") {
+			t.Errorf("OSInfo() = %q, expected to contain 'windows'", info)
+		}
+	}
+}

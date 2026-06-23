@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // OS represents a supported operating system identifier.
@@ -141,4 +142,81 @@ func Bootstrap() error {
 		}
 	}
 	return nil
+}
+
+// OSInfo returns a human-readable OS description (name and version when available).
+//
+// WHAT:  Produces a concise OS identifier for prompt injection.
+// WHY:   The LLM needs to know the exact OS environment for correct shell commands.
+// HOW:   Linux: reads /etc/os-release for PRETTY_NAME; macOS: uses sw_vers; Windows: uses ver.
+//
+//	Falls back to runtime.GOOS if detection fails.
+//
+// RETURNS: string — human-readable OS description.
+func OSInfo() string {
+	switch runtime.GOOS {
+	case "linux":
+		return linuxOSInfo()
+	case "darwin":
+		return darwinOSInfo()
+	case "windows":
+		return windowsOSInfo()
+	default:
+		return runtime.GOOS
+	}
+}
+
+// linuxOSInfo returns the OS name from /etc/os-release,
+// falling back to bare "Linux" on any error.
+func linuxOSInfo() string {
+	data, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return "Linux"
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "PRETTY_NAME=") {
+			val := strings.TrimPrefix(line, "PRETTY_NAME=")
+			val = strings.Trim(val, `"`)
+			if val != "" {
+				return val
+			}
+		}
+	}
+	return "Linux"
+}
+
+// darwinOSInfo returns the macOS name and version via sw_vers,
+// falling back to "macOS" on any error.
+func darwinOSInfo() string {
+	cmd := exec.Command("sw_vers", "-productName")
+	out, err := cmd.Output()
+	name := ""
+	if err == nil {
+		name = strings.TrimSpace(string(out))
+	}
+	cmd = exec.Command("sw_vers", "-productVersion")
+	out, err = cmd.Output()
+	ver := ""
+	if err == nil {
+		ver = " " + strings.TrimSpace(string(out))
+	}
+	if name != "" {
+		return name + ver
+	}
+	return "macOS"
+}
+
+// windowsOSInfo returns the Windows version via cmd /c ver,
+// falling back to "Windows" on any error.
+func windowsOSInfo() string {
+	cmd := exec.Command("cmd", "/c", "ver")
+	out, err := cmd.Output()
+	if err != nil {
+		return "Windows"
+	}
+	ver := strings.TrimSpace(string(out))
+	if ver != "" {
+		return ver
+	}
+	return "Windows"
 }

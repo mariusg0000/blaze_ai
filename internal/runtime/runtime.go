@@ -101,6 +101,7 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 		BuiltinSkillsDir: builtinSkillsDir,
 		WorkDir:          workDir,
 		OS:               os,
+		OSInfo:           platform.OSInfo(),
 		HelperSetup:      cfg.HelperSetup,
 	}
 

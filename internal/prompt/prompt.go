@@ -38,6 +38,7 @@ var variablePattern = regexp.MustCompile(`\{([A-Z_][A-Z0-9_]*)\}`)
 //	BuiltinSkillsDir — path to the project's builtin skills directory;
 //	WorkDir — current work folder for AGENTS.md resolution;
 //	OS — the detected operating system for selecting the OS-specific prompt;
+//	OSInfo — human-readable OS description injected as {OS_INFO};
 //	HelperSetup — user UX preferences for host helper installation prompts;
 //	HelperLookup — binary lookup function for helper detection (injectable for tests).
 type Builder struct {
@@ -45,6 +46,7 @@ type Builder struct {
 	BuiltinSkillsDir string
 	WorkDir          string
 	OS               platform.OS
+	OSInfo           string
 	HelperSetup      config.HelperSetup
 	HelperLookup     helpers.LookupFunc
 }
@@ -67,6 +69,10 @@ func (b *Builder) injectVariables(text string) (string, error) {
 		switch name {
 		case "APP_HOME":
 			return home
+		case "WORK_DIR":
+			return b.WorkDir
+		case "OS_INFO":
+			return b.OSInfo
 		default:
 			return match
 		}
