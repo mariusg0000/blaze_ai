@@ -1,6 +1,6 @@
 // prompt.go — prompt assembly from disk sources on every LLM call.
 // Rebuilds the runtime prompt part in spec order: universal sysprompt, OS sysprompt,
-// AGENTS.md, memory.md, skills section. Replaces {VARIABLE_NAME} placeholders at build time.
+// host helpers, memory.md, skills section, AGENTS.md. Replaces {VARIABLE_NAME} placeholders at build time.
 // The conversation part (session message history) is appended after the runtime part.
 // Layer: prompt construction. Dependencies: internal/skills, internal/memory, internal/platform.
 package prompt
@@ -181,7 +181,7 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, error) 
 }
 
 // BuildRuntimePart assembles the runtime prompt part from all disk sources.
-// Order: universal sysprompt → OS sysprompt → host helpers → AGENTS.md → memory.md → skills section.
+// Order: universal sysprompt → OS sysprompt → host helpers → memory.md → skills section → AGENTS.md.
 // Variable injection is applied to every source. Required sources error if missing.
 //
 // WHAT:  Builds the runtime part of the prompt from disk sources.
@@ -230,20 +230,7 @@ func (b *Builder) BuildRuntimePart(active *skills.ActiveList) (string, error) {
 		parts = append(parts, helperSection)
 	}
 
-	// 4. AGENTS.md from work folder (optional).
-	agents, err := readFileOptional(filepath.Join(b.WorkDir, "AGENTS.md"))
-	if err != nil {
-		return "", err
-	}
-	if agents != "" {
-		agents, err = b.injectVariables(agents)
-		if err != nil {
-			return "", err
-		}
-		parts = append(parts, "## Project Rules (AGENTS.md)\n\nThe following rules are loaded from the AGENTS.md file in the current working directory. Follow them for all work in this project.\n\n"+agents)
-	}
-
-	// 5. Memory (optional).
+	// 4. Memory (optional).
 	mem, err := memory.Read()
 	if err != nil {
 		return "", err
@@ -268,6 +255,19 @@ func (b *Builder) BuildRuntimePart(active *skills.ActiveList) (string, error) {
 	}
 	if skillsSection != "" {
 		parts = append(parts, skillsSection)
+	}
+
+	// 7. AGENTS.md from work folder (optional).
+	agents, err := readFileOptional(filepath.Join(b.WorkDir, "AGENTS.md"))
+	if err != nil {
+		return "", err
+	}
+	if agents != "" {
+		agents, err = b.injectVariables(agents)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, "## Project Rules (AGENTS.md)\n\nThe following rules are loaded from the AGENTS.md file in the current working directory. Follow them for all work in this project.\n\n"+agents)
 	}
 
 	return strings.Join(parts, "\n\n---\n\n"), nil

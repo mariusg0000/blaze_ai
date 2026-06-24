@@ -398,7 +398,7 @@ func TestBuildEmptySession(t *testing.T) {
 	}
 }
 
-// TestBuildRuntimePartOrder verifies source order: universal → OS → helpers → AGENTS → skills.
+// TestBuildRuntimePartOrder verifies source order: universal → OS → helpers → memory → skills → AGENTS.
 func TestBuildRuntimePartOrder(t *testing.T) {
 	promptsFS, builtinSkillsFS, workDir := setupTestDirs(t)
 
@@ -418,16 +418,16 @@ func TestBuildRuntimePartOrder(t *testing.T) {
 	universalIdx := strings.Index(result, "Universal System Prompt")
 	osIdx := strings.Index(result, "Linux System Prompt")
 	helpersIdx := strings.Index(result, "Host Environment Helpers")
-	agentsIdx := strings.Index(result, "Project Rules")
 	skillsIdx := strings.Index(result, "Available Skills")
+	agentsIdx := strings.Index(result, "Project Rules")
 
 	if universalIdx < 0 || osIdx < 0 || helpersIdx < 0 || agentsIdx < 0 || skillsIdx < 0 {
-		t.Fatalf("missing sections: universal=%d os=%d helpers=%d agents=%d skills=%d",
-			universalIdx, osIdx, helpersIdx, agentsIdx, skillsIdx)
+		t.Fatalf("missing sections: universal=%d os=%d helpers=%d skills=%d agents=%d",
+			universalIdx, osIdx, helpersIdx, skillsIdx, agentsIdx)
 	}
-	if !(universalIdx < osIdx && osIdx < helpersIdx && helpersIdx < agentsIdx && agentsIdx < skillsIdx) {
-		t.Errorf("wrong order: universal=%d os=%d helpers=%d agents=%d skills=%d",
-			universalIdx, osIdx, helpersIdx, agentsIdx, skillsIdx)
+	if !(universalIdx < osIdx && osIdx < helpersIdx && helpersIdx < skillsIdx && skillsIdx < agentsIdx) {
+		t.Errorf("wrong order: universal=%d os=%d helpers=%d skills=%d agents=%d",
+			universalIdx, osIdx, helpersIdx, skillsIdx, agentsIdx)
 	}
 }
 
@@ -549,7 +549,7 @@ func TestBuildRuntimePartHelperDeclined(t *testing.T) {
 	}
 }
 
-// TestBuildRuntimePartHelperOrder verifies helper section is after OS prompt, before AGENTS.md.
+// TestBuildRuntimePartHelperOrder verifies helper section is after OS prompt, before skills and AGENTS.md.
 func TestBuildRuntimePartHelperOrder(t *testing.T) {
 	promptsFS, builtinSkillsFS, workDir := setupTestDirs(t)
 
@@ -568,17 +568,17 @@ func TestBuildRuntimePartHelperOrder(t *testing.T) {
 
 	universalIdx := strings.Index(result, "Universal System Prompt")
 	osIdx := strings.Index(result, "Linux System Prompt")
-	agentsIdx := strings.Index(result, "Project Rules")
 	helpersIdx := strings.Index(result, "Host Environment Helpers")
 	skillsIdx := strings.Index(result, "Available Skills")
+	agentsIdx := strings.Index(result, "Project Rules")
 
 	if universalIdx < 0 || osIdx < 0 || helpersIdx < 0 || skillsIdx < 0 {
 		t.Fatalf("missing sections: universal=%d os=%d helpers=%d skills=%d",
 			universalIdx, osIdx, helpersIdx, skillsIdx)
 	}
-	if !(osIdx < helpersIdx && helpersIdx < agentsIdx && agentsIdx < skillsIdx) {
-		t.Errorf("wrong order: os=%d helpers=%d agents=%d skills=%d (expected: OS < helpers < AGENTS < skills)",
-			osIdx, helpersIdx, agentsIdx, skillsIdx)
+	if !(osIdx < helpersIdx && helpersIdx < skillsIdx && skillsIdx < agentsIdx) {
+		t.Errorf("wrong order: os=%d helpers=%d skills=%d agents=%d (expected: OS < helpers < skills < AGENTS)",
+			osIdx, helpersIdx, skillsIdx, agentsIdx)
 	}
 }
 
