@@ -101,15 +101,15 @@ func firstRun(out io.Writer, reader *bufio.Reader) (*config.Config, error) {
 
 	cfg.LastModel = modelID
 
-	// Step 7: pre-create default work mode
-	cfg.Modes = []config.Mode{
-		{Name: "default", Model: modelID},
-	}
-	cfg.LastMode = "default"
-
-	// Save config
+	// Save config (without modes — modes go to separate file)
 	if err := cfg.Save(); err != nil {
 		return nil, fmt.Errorf("cannot save config: %w", err)
+	}
+
+	// Save default work mode to modes.json
+	modes := config.DefaultMode(modelID)
+	if err := modes.Save(); err != nil {
+		return nil, fmt.Errorf("cannot save modes: %w", err)
 	}
 
 	fmt.Fprintln(out)

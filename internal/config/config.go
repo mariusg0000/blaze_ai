@@ -116,8 +116,7 @@ type HelperSetup struct {
 // PARAMS: Providers — endpoint definitions; FavoriteModels — model list; Roles — role assignments;
 //
 //	Compaction — thresholds; StripReasoning — payload settings; LastModel — persisted selection;
-//	HelperSetup — UX preferences for optional host helper installation prompts;
-//	Modes — work mode definitions; LastMode — persisted active mode name.
+//	HelperSetup — UX preferences for optional host helper installation prompts.
 type Config struct {
 	Providers      []Provider     `json:"providers"`
 	FavoriteModels []string       `json:"favorite_models"`
@@ -126,8 +125,6 @@ type Config struct {
 	StripReasoning StripReasoning `json:"stripReasoning"`
 	LastModel      string         `json:"last_model,omitempty"`
 	HelperSetup    HelperSetup    `json:"helperSetup,omitempty"`
-	Modes          []Mode         `json:"modes,omitempty"`
-	LastMode       string         `json:"last_mode,omitempty"`
 }
 
 // DefaultCompaction returns the pre-filled compaction thresholds from spec 05.
@@ -291,48 +288,6 @@ func (c *Config) Save() error {
 	return c.SaveTo(path)
 }
 
-// ReloadModesFromDisk re-reads modes and last_mode from config.json on disk.
-//
-// WHAT:  Hot-reloads the modes list from the persisted config file.
-// WHY:   When the skill creates/edits modes, the runtime needs to pick them up without restart.
-// HOW:   Reads config.json, parses it raw, updates Modes and LastMode fields on the Config.
-// RETURNS: error if the file exists but cannot be parsed or modes are invalid.
-//
-// If the config file does not exist, returns nil (no reload, keep in-memory state).
-func (c *Config) ReloadModesFromDisk() error {
-	path, err := configPath()
-	if err != nil {
-		return nil // Can't resolve path, skip reload.
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil // Config file doesn't exist yet, skip reload.
-		}
-		return fmt.Errorf("cannot read config for mode reload: %w", err)
-	}
-	var raw struct {
-		Modes    []Mode `json:"modes,omitempty"`
-		LastMode string `json:"last_mode,omitempty"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return fmt.Errorf("cannot parse config for mode reload: %w", err)
-	}
-	// Validate the reloaded modes.
-	providerNames := providerNameSet(c.Providers)
-	if err := validateModes(raw.Modes, providerNames); err != nil {
-		return fmt.Errorf("reloaded modes invalid: %w", err)
-	}
-	if raw.LastMode != "" {
-		if err := validateLastMode(raw.LastMode, raw.Modes); err != nil {
-			return fmt.Errorf("reloaded last_mode invalid: %w", err)
-		}
-	}
-	c.Modes = raw.Modes
-	c.LastMode = raw.LastMode
-	return nil
-}
-
 // SaveTo writes the config to an explicit path with indentation.
 //
 // WHAT:  Same as Save but for an explicit file path.
@@ -401,14 +356,6 @@ func (c *Config) Validate() error {
 		}
 		if err := validateModelProvider(model, providerNames); err != nil {
 			return fmt.Errorf("favorite model %q: %w", model, err)
-		}
-	}
-	if err := validateModes(c.Modes, providerNames); err != nil {
-		return err
-	}
-	if c.LastMode != "" {
-		if err := validateLastMode(c.LastMode, c.Modes); err != nil {
-			return err
 		}
 	}
 	return nil

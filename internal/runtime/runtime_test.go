@@ -438,6 +438,8 @@ func TestNewAgentBadModel(t *testing.T) {
 
 // TestNewAgentWithMode verifies CurrentMode initialization from LastMode.
 func TestNewAgentWithMode(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer server.Close()
 
@@ -449,11 +451,18 @@ func TestNewAgentWithMode(t *testing.T) {
 		FavoriteModels: []string{"test/model-a", "test/model-b"},
 		Compaction:     config.DefaultCompaction(),
 		StripReasoning: config.DefaultStripReasoning(),
+	}
+
+	// Write modes to modes.json so NewAgent picks them up.
+	modes := &config.ModesConfig{
 		Modes: []config.Mode{
 			{Name: "default", Model: "test/model-a"},
 			{Name: "planning", Model: "test/model-b", Directive: "read-only"},
 		},
 		LastMode: "planning",
+	}
+	if err := modes.Save(); err != nil {
+		t.Fatalf("Save() modes failed: %v", err)
 	}
 
 	dir := t.TempDir()
@@ -479,6 +488,8 @@ func TestNewAgentWithMode(t *testing.T) {
 
 // TestNewAgentWithModeFallbackToFirstMode verifies fallback when LastMode is empty.
 func TestNewAgentWithModeFallbackToFirstMode(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer server.Close()
 
@@ -490,9 +501,15 @@ func TestNewAgentWithModeFallbackToFirstMode(t *testing.T) {
 		FavoriteModels: []string{"test/model-a"},
 		Compaction:     config.DefaultCompaction(),
 		StripReasoning: config.DefaultStripReasoning(),
+	}
+
+	modes := &config.ModesConfig{
 		Modes: []config.Mode{
 			{Name: "default", Model: "test/model-a"},
 		},
+	}
+	if err := modes.Save(); err != nil {
+		t.Fatalf("Save() modes failed: %v", err)
 	}
 
 	dir := t.TempDir()
@@ -518,13 +535,13 @@ func TestSetMode(t *testing.T) {
 	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
 	defer server.Close()
 
-	agent.Config.Modes = []config.Mode{
+	agent.Modes.Modes = []config.Mode{
 		{Name: "default", Model: "test/test-model"},
 		{Name: "planning", Model: "test/test-model", Directive: "read-only"},
 	}
-	agent.Config.LastMode = "default"
-	agent.CurrentMode = &agent.Config.Modes[0]
-	agent.Config.Save()
+	agent.Modes.LastMode = "default"
+	agent.CurrentMode = &agent.Modes.Modes[0]
+	agent.Modes.Save()
 
 	err := agent.SetMode("planning")
 	if err != nil {
@@ -533,8 +550,8 @@ func TestSetMode(t *testing.T) {
 	if agent.CurrentMode.Name != "planning" {
 		t.Errorf("CurrentMode.Name = %q, want 'planning'", agent.CurrentMode.Name)
 	}
-	if agent.Config.LastMode != "planning" {
-		t.Errorf("LastMode = %q, want 'planning'", agent.Config.LastMode)
+	if agent.Modes.LastMode != "planning" {
+		t.Errorf("LastMode = %q, want 'planning'", agent.Modes.LastMode)
 	}
 }
 
@@ -543,7 +560,7 @@ func TestSetModeNotFound(t *testing.T) {
 	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
 	defer server.Close()
 
-	agent.Config.Modes = []config.Mode{
+	agent.Modes.Modes = []config.Mode{
 		{Name: "default", Model: "test/test-model"},
 	}
 
@@ -558,14 +575,14 @@ func TestNextMode(t *testing.T) {
 	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
 	defer server.Close()
 
-	agent.Config.Modes = []config.Mode{
+	agent.Modes.Modes = []config.Mode{
 		{Name: "default", Model: "test/test-model"},
 		{Name: "planning", Model: "test/test-model", Directive: "plan"},
 		{Name: "quick", Model: "test/test-model", Directive: "fast"},
 	}
-	agent.Config.LastMode = "default"
-	agent.CurrentMode = &agent.Config.Modes[0]
-	agent.Config.Save()
+	agent.Modes.LastMode = "default"
+	agent.CurrentMode = &agent.Modes.Modes[0]
+	agent.Modes.Save()
 
 	// Cycle: default -> planning
 	mode, err := agent.NextMode()
@@ -603,10 +620,10 @@ func TestSetModelUpdatesMode(t *testing.T) {
 	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
 	defer server.Close()
 
-	agent.Config.Modes = []config.Mode{
+	agent.Modes.Modes = []config.Mode{
 		{Name: "default", Model: "test/test-model"},
 	}
-	agent.CurrentMode = &agent.Config.Modes[0]
+	agent.CurrentMode = &agent.Modes.Modes[0]
 
 	err := agent.SetModel("test/test-model")
 	if err != nil {
@@ -682,14 +699,14 @@ func TestNewAgentAutoCreatesDefaultMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
-	if len(agent.Config.Modes) != 1 {
-		t.Fatalf("Modes = %d, want 1 (auto-created)", len(agent.Config.Modes))
+	if len(agent.Modes.Modes) != 1 {
+		t.Fatalf("Modes = %d, want 1 (auto-created)", len(agent.Modes.Modes))
 	}
-	if agent.Config.Modes[0].Name != "default" {
-		t.Errorf("Modes[0].Name = %q, want 'default'", agent.Config.Modes[0].Name)
+	if agent.Modes.Modes[0].Name != "default" {
+		t.Errorf("Modes[0].Name = %q, want 'default'", agent.Modes.Modes[0].Name)
 	}
-	if agent.Config.LastMode != "default" {
-		t.Errorf("LastMode = %q, want 'default'", agent.Config.LastMode)
+	if agent.Modes.LastMode != "default" {
+		t.Errorf("LastMode = %q, want 'default'", agent.Modes.LastMode)
 	}
 	if agent.CurrentMode == nil {
 		t.Fatal("CurrentMode is nil, want auto-created default mode")
@@ -705,12 +722,12 @@ func TestNextModeHotReloads(t *testing.T) {
 	defer server.Close()
 
 	// Set up modes on disk with one mode.
-	agent.Config.Modes = []config.Mode{
+	agent.Modes.Modes = []config.Mode{
 		{Name: "default", Model: "test/test-model"},
 	}
-	agent.Config.LastMode = "default"
-	agent.Config.Save()
-	agent.CurrentMode = &agent.Config.Modes[0]
+	agent.Modes.LastMode = "default"
+	agent.Modes.Save()
+	agent.CurrentMode = &agent.Modes.Modes[0]
 
 	// Verify initial cycling works.
 	mode, err := agent.NextMode()
@@ -722,10 +739,10 @@ func TestNextModeHotReloads(t *testing.T) {
 	}
 
 	// Now add a second mode to disk (simulating skill editing).
-	agent.Config.Modes = append(agent.Config.Modes, config.Mode{
+	agent.Modes.Modes = append(agent.Modes.Modes, config.Mode{
 		Name: "planning", Model: "test/test-model", Directive: "plan",
 	})
-	agent.Config.Save()
+	agent.Modes.Save()
 
 	// Reload and cycle — should now include the new mode.
 	if err := agent.ReloadModes(); err != nil {

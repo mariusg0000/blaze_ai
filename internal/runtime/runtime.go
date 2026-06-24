@@ -59,6 +59,7 @@ type Handler interface {
 //	ModelID — current provider/model_name; WorkDir — current work folder; OS — detected platform.
 type Agent struct {
 	Config    *config.Config
+	Modes     *config.ModesConfig
 	Session   *session.Session
 	Active    *skills.ActiveList
 	Memories  *memories.ActiveList
@@ -92,30 +93,35 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 		modelID = cfg.Roles.Default
 	}
 
-	// Auto-create default mode if no modes exist.
-	if len(cfg.Modes) == 0 {
-		cfg.Modes = []config.Mode{
-			{Name: "default", Model: modelID},
-		}
-		cfg.LastMode = "default"
-		// Best-effort save: ignore error if config is read-only.
-		_ = cfg.Save()
+	// Try migration first: extract modes from config.json if they exist there.
+	_ = config.MigrateFromConfig()
+
+	// Load modes from modes.json with fallback to default.
+	modes, err := config.LoadModes(modelID)
+	if err != nil {
+		return nil, fmt.Errorf("cannot load modes: %w", err)
+	}
+
+	// Auto-create default mode if no modes exist after load/migration.
+	if len(modes.Modes) == 0 {
+		modes = config.DefaultMode(modelID)
+		_ = modes.Save()
 	}
 
 	// Resolve active mode: mode model takes priority over LastModel.
 	var currentMode *config.Mode
-	if cfg.LastMode != "" {
-		for i := range cfg.Modes {
-			if cfg.Modes[i].Name == cfg.LastMode {
-				currentMode = &cfg.Modes[i]
+	if modes.LastMode != "" {
+		for i := range modes.Modes {
+			if modes.Modes[i].Name == modes.LastMode {
+				currentMode = &modes.Modes[i]
 				break
 			}
 		}
 	}
 	if currentMode != nil {
 		modelID = currentMode.Model
-	} else if len(cfg.Modes) > 0 {
-		currentMode = &cfg.Modes[0]
+	} else if len(modes.Modes) > 0 {
+		currentMode = &modes.Modes[0]
 		modelID = currentMode.Model
 	}
 
@@ -146,6 +152,7 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 
 	agent := &Agent{
 		Config:      cfg,
+		Modes:       modes,
 		Session:     sess,
 		Active:      active,
 		Memories:    memoriesList,
@@ -420,9 +427,9 @@ func (a *Agent) SetModel(modelID string) error {
 	a.Provider = client
 	a.ModelID = modelID
 	a.Config.LastModel = modelID
-	// If a mode is active, update the mode's model so it persists with the mode.
 	if a.CurrentMode != nil {
 		a.CurrentMode.Model = modelID
+		_ = a.Modes.Save()
 	}
 	if err := a.Config.Save(); err != nil {
 		return fmt.Errorf("cannot persist model selection: %w", err)
@@ -448,14 +455,13 @@ func (a *Agent) SetWorkDir(dir string) error {
 	return nil
 }
 
-// ReloadModes re-reads modes from config.json on disk to pick up hot changes.
+// ReloadModes re-reads modes from modes.json on disk to pick up hot changes.
 //
-// WHAT:  Hot-reloads the modes list from the persisted config file.
-// WHY:   When the skill creates/edits modes at runtime, the in-memory config is stale.
-// HOW:   Delegates to Config.ReloadModesFromDisk() which re-reads and validates.
+// WHAT:  Hot-reloads the modes list from the persisted modes file.
+// WHY:   When the skill creates/edits modes at runtime, the in-memory modes are stale.
 // RETURNS: error if the file cannot be read or modes are invalid.
 func (a *Agent) ReloadModes() error {
-	return a.Config.ReloadModesFromDisk()
+	return a.Modes.Reload()
 }
 
 // ListProviderModels fetches the list of available model IDs from a configured provider.
@@ -483,13 +489,12 @@ func (a *Agent) ListProviderModels(providerName string) ([]string, error) {
 // PARAMS: name — the mode name to activate.
 // RETURNS: error if mode not found or model invalid.
 func (a *Agent) SetMode(name string) error {
-	// Hot-reload modes from disk to pick up changes made by the skill.
 	if err := a.ReloadModes(); err != nil {
 		return fmt.Errorf("cannot reload modes: %w", err)
 	}
-	for i := range a.Config.Modes {
-		if a.Config.Modes[i].Name == name {
-			mode := &a.Config.Modes[i]
+	for i := range a.Modes.Modes {
+		if a.Modes.Modes[i].Name == name {
+			mode := &a.Modes.Modes[i]
 			client, err := provider.NewClient(a.Config, mode.Model)
 			if err != nil {
 				return fmt.Errorf("cannot create provider client for mode %q: %w", name, err)
@@ -497,9 +502,9 @@ func (a *Agent) SetMode(name string) error {
 			a.Provider = client
 			a.ModelID = mode.Model
 			a.CurrentMode = mode
-			a.Config.LastMode = name
+			a.Modes.LastMode = name
 			a.Config.LastModel = mode.Model
-			if err := a.Config.Save(); err != nil {
+			if err := a.Modes.Save(); err != nil {
 				return fmt.Errorf("cannot persist mode switch: %w", err)
 			}
 			return nil
@@ -515,33 +520,30 @@ func (a *Agent) SetMode(name string) error {
 // HOW:   Hot-reloads modes from disk first, then advances cyclically.
 // RETURNS: *config.Mode — the next mode; error if no modes are configured.
 func (a *Agent) NextMode() (*config.Mode, error) {
-	// Hot-reload modes from disk to pick up changes made by the skill.
 	if err := a.ReloadModes(); err != nil {
 		return nil, fmt.Errorf("cannot reload modes: %w", err)
 	}
-	if len(a.Config.Modes) == 0 {
+	if len(a.Modes.Modes) == 0 {
 		return nil, fmt.Errorf("no modes configured")
 	}
 	if a.CurrentMode == nil {
-		mode := &a.Config.Modes[0]
+		mode := &a.Modes.Modes[0]
 		if err := a.SetMode(mode.Name); err != nil {
 			return nil, err
 		}
 		return a.CurrentMode, nil
 	}
-	// Find current index and advance cyclically.
-	for i := range a.Config.Modes {
-		if a.Config.Modes[i].Name == a.CurrentMode.Name {
-			nextIdx := (i + 1) % len(a.Config.Modes)
-			next := &a.Config.Modes[nextIdx]
+	for i := range a.Modes.Modes {
+		if a.Modes.Modes[i].Name == a.CurrentMode.Name {
+			nextIdx := (i + 1) % len(a.Modes.Modes)
+			next := &a.Modes.Modes[nextIdx]
 			if err := a.SetMode(next.Name); err != nil {
 				return nil, err
 			}
 			return a.CurrentMode, nil
 		}
 	}
-	// Current mode not in list (corrupted state) — reset to first.
-	mode := &a.Config.Modes[0]
+	mode := &a.Modes.Modes[0]
 	if err := a.SetMode(mode.Name); err != nil {
 		return nil, err
 	}

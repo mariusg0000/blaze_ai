@@ -691,11 +691,13 @@ func TestRunAgentTurnInputInterrupt(t *testing.T) {
 // TestPromptLabelWithMode verifies prompt label includes mode name when mode is active.
 func TestPromptLabelWithMode(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
-	c.Agent.Config.Modes = []config.Mode{
-		{Name: "default", Model: "test/test-model"},
-		{Name: "planning", Model: "test/test-model"},
+	c.Agent.Modes = &config.ModesConfig{
+		Modes: []config.Mode{
+			{Name: "default", Model: "test/test-model"},
+			{Name: "planning", Model: "test/test-model"},
+		},
 	}
-	c.Agent.CurrentMode = &c.Agent.Config.Modes[1]
+	c.Agent.CurrentMode = &c.Agent.Modes.Modes[1]
 	label := c.promptLabel()
 	if !strings.Contains(out.String(), "") {
 		// promptLabel returns a string, doesn't write to out
