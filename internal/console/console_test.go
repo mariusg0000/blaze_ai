@@ -363,6 +363,7 @@ func TestOnToolResultGenericError(t *testing.T) {
 func TestOnToolRoundTripAfterContent(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnContent("hello")
+	c.OnUsage(11186)
 	c.OnToolCall("shell", "inspect package.json scripts")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nok\n")
 	c.closeToolGroup()
@@ -373,15 +374,15 @@ func TestOnToolRoundTripAfterContent(t *testing.T) {
 	if !strings.Contains(output, "[>>> shell] inspect package.json scripts\n[<<< shell] ok: ok") {
 		t.Errorf("tool response formatting unexpected: %q", output)
 	}
-	// Group should close with a trailing separator after the last response.
-	if !strings.Contains(output, "[<<< shell] ok: ok\n------------------------------------------------------------") {
-		t.Errorf("tool group not closed with separator: %q", output)
+	if !strings.Contains(output, "[<<< shell] ok: ok\nctx 11k") {
+		t.Errorf("tool group not closed with ctx separator: %q", output)
 	}
 }
 
 // TestToolGroupConsecutive verifies multiple consecutive tools share one group.
 func TestToolGroupConsecutive(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
+	c.OnUsage(11186)
 	c.OnToolCall("shell", "list root")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\na\n")
 	c.OnToolCall("shell", "inspect config")
@@ -391,8 +392,8 @@ func TestToolGroupConsecutive(t *testing.T) {
 	if strings.Count(output, "tools ------------------------------------------------------") != 1 {
 		t.Errorf("expected one tools header, got %q", output)
 	}
-	if strings.Count(output, "------------------------------------------------------------") != 1 {
-		t.Errorf("expected one closing divider, got %d: %q", strings.Count(output, "------------------------------------------------------------"), output)
+	if strings.Count(output, "ctx 11k") != 1 {
+		t.Errorf("expected one ctx separator, got %d: %q", strings.Count(output, "ctx 11k"), output)
 	}
 	if !strings.Contains(output, "[>>> shell] list root\n[<<< shell] ok: a") {
 		t.Errorf("first tool call missing: %q", output)
@@ -405,6 +406,7 @@ func TestToolGroupConsecutive(t *testing.T) {
 // TestToolGroupInterruptedByContent verifies content between tools closes and reopens the group.
 func TestToolGroupInterruptedByContent(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
+	c.OnUsage(11186)
 	c.OnToolCall("shell", "list root")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\na\n")
 	c.OnContent("continuing")
@@ -415,8 +417,8 @@ func TestToolGroupInterruptedByContent(t *testing.T) {
 	if strings.Count(output, "tools ------------------------------------------------------") != 2 {
 		t.Errorf("expected 2 tools headers, got %d: %q", strings.Count(output, "tools ------------------------------------------------------"), output)
 	}
-	if strings.Count(output, "------------------------------------------------------------") != 2 {
-		t.Errorf("expected 2 closing dividers, got %d: %q", strings.Count(output, "------------------------------------------------------------"), output)
+	if strings.Count(output, "ctx 11k") != 2 {
+		t.Errorf("expected 2 ctx separators, got %d: %q", strings.Count(output, "ctx 11k"), output)
 	}
 	if !strings.Contains(output, "continuing") {
 		t.Errorf("intermediate content missing: %q", output)

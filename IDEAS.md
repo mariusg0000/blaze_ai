@@ -57,3 +57,20 @@ Full knowledge block injected into the prompt when active.
 - Context Orchestrator
 - Prelude Model
 - Gatekeeper
+
+---
+
+## 3. Task-Focused Summarization
+
+**Goal:** Replace fixed pruning + summarization with task-aware summarization that keeps only the last active task in focus.
+
+**Idea:**
+- When context compaction happens, identify the last task that is still active.
+- Summarize only the work that has finished.
+- Keep the active task itself uncompressed and in view.
+- Treat completed tasks as closed history, not as always-on background context.
+
+**Why it may help:**
+- Reduces noise from unrelated completed work.
+- Keeps the current task sharper in the prompt.
+- Matches the way users usually think: one active task, older tasks summarized behind it.

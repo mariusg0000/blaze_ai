@@ -129,7 +129,7 @@ func (c *Console) closeToolGroup() {
 	if !c.inToolGroup {
 		return
 	}
-	c.divider("", colorGreen, false)
+	c.ctxSeparator(colorGreen)
 	c.inToolGroup = false
 }
 
@@ -203,10 +203,18 @@ func (c *Console) divider(label, labelColor string, boldLabel bool) {
 //
 // WHAT:  Prints a separator with context size after the response.
 func (c *Console) responseSeparator() {
+	c.ctxSeparator(colorPurple)
+}
+
+// ctxSeparator prints the prompt-token separator using the requested color.
+//
+// WHAT:  Renders the same context-size label for tool-group and end-of-turn separators.
+// PARAMS: color — ANSI color to use for the separator label and line.
+func (c *Console) ctxSeparator(color string) {
 	if c.lastPromptTokens <= 0 {
 		return
 	}
-	c.divider("ctx "+formatCompactInt(c.lastPromptTokens), colorPurple, false)
+	c.divider("ctx "+formatCompactInt(c.lastPromptTokens), color, false)
 }
 
 // formatCompactInt returns a shorter human-readable token count such as 12.3k.
