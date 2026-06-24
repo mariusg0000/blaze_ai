@@ -6,6 +6,7 @@
 package console
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"blazeai/internal/config"
 	"blazeai/internal/runtime"
 )
 
@@ -1026,7 +1028,13 @@ func (c *Console) handleCommand(input string) (bool, bool, error) {
 		return true, true, nil
 	case "/model":
 		if arg == "" {
-			c.listModels()
+			if c.IsTTY {
+				if err := c.interactiveSelectModel(); err != nil {
+					fmt.Fprintln(c.Out, c.color(colorRed, err.Error()))
+				}
+			} else {
+				c.listModels()
+			}
 			return true, false, nil
 		}
 		if err := c.Agent.SetModel(arg); err != nil {
@@ -1072,4 +1080,114 @@ func (c *Console) listModels() {
 		}
 		fmt.Fprintf(c.Out, "%s%s\n", marker, m)
 	}
+}
+
+// interactiveSelectModel runs the interactive provider→model selection flow.
+//
+// WHAT:  Prompts user to select a provider, fetches its models, then selects one.
+// WHY:   /model without args on TTY should let the user pick from live provider data.
+// HOW:   Two-step numbered selection: providers → models from endpoint, then SetModel.
+// RETURNS: error if cancelled or any step fails.
+func (c *Console) interactiveSelectModel() error {
+	providers := c.Agent.Config.Providers
+	if len(providers) == 0 {
+		return fmt.Errorf("no providers configured")
+	}
+
+	// Step 1: select provider.
+	var selectedProvider config.Provider
+	if len(providers) == 1 {
+		selectedProvider = providers[0]
+		fmt.Fprintf(c.Out, "\nProvider: %s (%s)\n", selectedProvider.Name, selectedProvider.Endpoint)
+	} else {
+		fmt.Fprintln(c.Out)
+		fmt.Fprintln(c.Out, c.bold("Select provider:"))
+		for i, p := range providers {
+			marker := "  "
+			fmt.Fprintf(c.Out, "%s%2d. %s (%s)\n", marker, i+1, p.Name, p.Endpoint)
+		}
+		fmt.Fprint(c.Out, "> ")
+
+		num, err := c.readInteractiveNumber(1, len(providers))
+		if err != nil {
+			return err
+		}
+		selectedProvider = providers[num-1]
+	}
+
+	// Step 2: fetch models from the provider endpoint.
+	fmt.Fprintln(c.Out)
+	fmt.Fprintf(c.Out, "Fetching models from %s...\n", selectedProvider.Name)
+	models, err := c.Agent.ListProviderModels(selectedProvider.Name)
+	if err != nil {
+		return fmt.Errorf("cannot list models: %w", err)
+	}
+	if len(models) == 0 {
+		return fmt.Errorf("provider %s returned no models", selectedProvider.Name)
+	}
+
+	// Step 3: select model.
+	fmt.Fprintln(c.Out, c.bold("Select model:"))
+	padding := paddingWidth(len(models))
+	for i, m := range models {
+		marker := "  "
+		if selectedProvider.Name+"/"+m == c.Agent.ModelID {
+			marker = "> "
+		}
+		fmt.Fprintf(c.Out, "%s%*d. %s\n", marker, padding, i+1, m)
+	}
+	fmt.Fprint(c.Out, "> ")
+
+	num, err := c.readInteractiveNumber(1, len(models))
+	if err != nil {
+		return err
+	}
+	modelID := selectedProvider.Name + "/" + models[num-1]
+
+	// Step 4: set the model.
+	if err := c.Agent.SetModel(modelID); err != nil {
+		return err
+	}
+	fmt.Fprintf(c.Out, "Model set to: %s\n", modelID)
+	return nil
+}
+
+// readInteractiveNumber reads a line from stdin and parses it as a number in [min, max].
+//
+// WHAT:  Prompts for and validates a numeric input within a range.
+// RETURNS: int — the chosen number; error if input is empty/invalid/out of range.
+func (c *Console) readInteractiveNumber(min, max int) (int, error) {
+	line, err := c.readInteractiveLine()
+	if err != nil {
+		return 0, fmt.Errorf("cancelled")
+	}
+	num, convErr := strconv.Atoi(line)
+	if convErr != nil || num < min || num > max {
+		return 0, fmt.Errorf("invalid selection: enter %d-%d", min, max)
+	}
+	return num, nil
+}
+
+// readInteractiveLine reads a single trimmed line from stdin in cooked mode.
+//
+// WHAT:  Reads one line from os.Stdin (works between raw-mode ReadEvent calls).
+// RETURNS: string — trimmed input; error if read fails or EOF.
+func (c *Console) readInteractiveLine() (string, error) {
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return "", err
+		}
+		return "", io.EOF
+	}
+	return strings.TrimSpace(scanner.Text()), nil
+}
+
+// paddingWidth returns the number of digits needed for the largest index.
+func paddingWidth(count int) int {
+	w := 1
+	for n := count; n >= 10; n /= 10 {
+		w++
+	}
+	return w
 }

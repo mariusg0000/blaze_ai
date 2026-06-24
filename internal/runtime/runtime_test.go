@@ -416,6 +416,8 @@ func TestNewAgent(t *testing.T) {
 
 // TestNewAgentBadModel verifies error when model ID is invalid.
 func TestNewAgentBadModel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer server.Close()
 
@@ -522,6 +524,7 @@ func TestSetMode(t *testing.T) {
 	}
 	agent.Config.LastMode = "default"
 	agent.CurrentMode = &agent.Config.Modes[0]
+	agent.Config.Save()
 
 	err := agent.SetMode("planning")
 	if err != nil {
@@ -562,6 +565,7 @@ func TestNextMode(t *testing.T) {
 	}
 	agent.Config.LastMode = "default"
 	agent.CurrentMode = &agent.Config.Modes[0]
+	agent.Config.Save()
 
 	// Cycle: default -> planning
 	mode, err := agent.NextMode()
@@ -591,16 +595,8 @@ func TestNextMode(t *testing.T) {
 	}
 }
 
-// TestNextModeEmpty verifies error when no modes are configured.
-func TestNextModeEmpty(t *testing.T) {
-	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
-	defer server.Close()
-
-	_, err := agent.NextMode()
-	if err == nil {
-		t.Fatal("NextMode() expected error for empty modes, got nil")
-	}
-}
+// TestNextMode verifies cyclic mode switching.
+// (TestNextModeEmpty removed: NewAgent auto-creates default mode, so empty modes is unreachable.)
 
 // TestSetModelUpdatesMode verifies that SetModel updates CurrentMode.Model.
 func TestSetModelUpdatesMode(t *testing.T) {
@@ -654,5 +650,131 @@ func TestInjectDirectiveEmpty(t *testing.T) {
 	result := injectDirective([]session.Message{}, "directive")
 	if len(result) != 0 {
 		t.Errorf("injectDirective on empty returned %d messages", len(result))
+	}
+}
+
+// TestNewAgentAutoCreatesDefaultMode verifies that NewAgent creates a default mode when modes are empty.
+func TestNewAgentAutoCreatesDefaultMode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+
+	// Set HOME so cfg.Save() writes to a temp dir.
+	t.Setenv("HOME", t.TempDir())
+
+	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
+		},
+		Roles:          config.Roles{Default: "test/test-model"},
+		FavoriteModels: []string{"test/test-model"},
+		Compaction:     config.DefaultCompaction(),
+		StripReasoning: config.DefaultStripReasoning(),
+		// No Modes — should be auto-created.
+	}
+
+	dir := t.TempDir()
+	sess, _ := session.CreateInDir(dir)
+	promptsDir := filepath.Join(dir, "prompts")
+	os.MkdirAll(promptsDir, 0755)
+	writePromptFixtures(t, promptsDir)
+
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(filepath.Join(dir, "skills")), os.DirFS(promptsDir), dir, &mockHandler{})
+	if err != nil {
+		t.Fatalf("NewAgent() error: %v", err)
+	}
+	if len(agent.Config.Modes) != 1 {
+		t.Fatalf("Modes = %d, want 1 (auto-created)", len(agent.Config.Modes))
+	}
+	if agent.Config.Modes[0].Name != "default" {
+		t.Errorf("Modes[0].Name = %q, want 'default'", agent.Config.Modes[0].Name)
+	}
+	if agent.Config.LastMode != "default" {
+		t.Errorf("LastMode = %q, want 'default'", agent.Config.LastMode)
+	}
+	if agent.CurrentMode == nil {
+		t.Fatal("CurrentMode is nil, want auto-created default mode")
+	}
+}
+
+// TestNextModeHotReloads verifies that NextMode picks up new modes from disk.
+func TestNextModeHotReloads(t *testing.T) {
+	// Set HOME so config reload reads from our temp dir.
+	t.Setenv("HOME", t.TempDir())
+
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	// Set up modes on disk with one mode.
+	agent.Config.Modes = []config.Mode{
+		{Name: "default", Model: "test/test-model"},
+	}
+	agent.Config.LastMode = "default"
+	agent.Config.Save()
+	agent.CurrentMode = &agent.Config.Modes[0]
+
+	// Verify initial cycling works.
+	mode, err := agent.NextMode()
+	if err != nil {
+		t.Fatalf("NextMode() error: %v", err)
+	}
+	if mode.Name != "default" {
+		t.Errorf("NextMode() = %q, want 'default' (only one mode)", mode.Name)
+	}
+
+	// Now add a second mode to disk (simulating skill editing).
+	agent.Config.Modes = append(agent.Config.Modes, config.Mode{
+		Name: "planning", Model: "test/test-model", Directive: "plan",
+	})
+	agent.Config.Save()
+
+	// Reload and cycle — should now include the new mode.
+	if err := agent.ReloadModes(); err != nil {
+		t.Fatalf("ReloadModes() error: %v", err)
+	}
+	mode, err = agent.NextMode()
+	if err != nil {
+		t.Fatalf("NextMode() after reload error: %v", err)
+	}
+	if mode.Name != "planning" {
+		t.Errorf("NextMode() after reload = %q, want 'planning'", mode.Name)
+	}
+}
+
+// TestListProviderModels verifies that ListProviderModels calls the provider endpoint and returns models.
+func TestListProviderModels(t *testing.T) {
+	modelsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" && r.Method == "GET" {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintln(w, `{"data":[{"id":"model-a"},{"id":"model-b"},{"id":"model-c"}]}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer modelsServer.Close()
+
+	agent, _, _ := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	agent.Config.Providers = []config.Provider{
+		{Name: "test", Endpoint: modelsServer.URL, APIKey: "sk-test"},
+	}
+
+	models, err := agent.ListProviderModels("test")
+	if err != nil {
+		t.Fatalf("ListProviderModels() error: %v", err)
+	}
+	if len(models) != 3 {
+		t.Fatalf("ListProviderModels() returned %d models, want 3", len(models))
+	}
+	if models[0] != "model-a" || models[1] != "model-b" || models[2] != "model-c" {
+		t.Errorf("ListProviderModels() = %v, want [model-a model-b model-c]", models)
+	}
+}
+
+// TestListProviderModelsNotFound verifies error for unknown provider.
+func TestListProviderModelsNotFound(t *testing.T) {
+	agent, _, _ := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+
+	_, err := agent.ListProviderModels("nonexistent")
+	if err == nil {
+		t.Fatal("ListProviderModels() expected error for unknown provider")
 	}
 }

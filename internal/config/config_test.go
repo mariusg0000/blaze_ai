@@ -500,3 +500,81 @@ func TestLoadFromWithoutModes(t *testing.T) {
 		t.Errorf("LastMode = %q, want empty for old config", loaded.LastMode)
 	}
 }
+
+// TestReloadModesFromDisk verifies hot-reload of modes from config.json.
+func TestReloadModesFromDisk(t *testing.T) {
+	// Set HOME so configPath() resolves to our temp dir.
+	t.Setenv("HOME", t.TempDir())
+
+	cfg := validConfig()
+	cfg.Modes = []Mode{
+		{Name: "default", Model: "openrouter/deepseek-v4-flash"},
+	}
+	cfg.LastMode = "default"
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save() failed: %v", err)
+	}
+
+	// Load and verify initial state.
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if len(loaded.Modes) != 1 {
+		t.Fatalf("Modes = %d, want 1", len(loaded.Modes))
+	}
+
+	// Write a new config with an extra mode (simulating skill editing).
+	cfg.Modes = append(cfg.Modes, Mode{Name: "planning", Model: "openrouter/gpt-4o", Directive: "plan"})
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save() with extra mode failed: %v", err)
+	}
+
+	// Reload and verify the new mode appears.
+	if err := loaded.ReloadModesFromDisk(); err != nil {
+		t.Fatalf("ReloadModesFromDisk() failed: %v", err)
+	}
+	if len(loaded.Modes) != 2 {
+		t.Fatalf("after reload: Modes = %d, want 2", len(loaded.Modes))
+	}
+	if loaded.Modes[1].Name != "planning" {
+		t.Errorf("after reload: Modes[1].Name = %q, want 'planning'", loaded.Modes[1].Name)
+	}
+}
+
+// TestReloadModesFromDiskInvalid verifies that invalid modes on disk are rejected.
+func TestReloadModesFromDiskInvalid(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cfg := validConfig()
+	cfg.Modes = []Mode{
+		{Name: "default", Model: "openrouter/deepseek-v4-flash"},
+	}
+	cfg.LastMode = "default"
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save() failed: %v", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	// Write config with duplicate mode names (invalid).
+	cfg.Modes = []Mode{
+		{Name: "default", Model: "openrouter/deepseek-v4-flash"},
+		{Name: "default", Model: "openrouter/gpt-4o"},
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save() with invalid modes failed: %v", err)
+	}
+
+	// Reload should fail.
+	if err := loaded.ReloadModesFromDisk(); err == nil {
+		t.Fatal("ReloadModesFromDisk() expected error for invalid modes, got nil")
+	}
+	// In-memory should remain unchanged.
+	if len(loaded.Modes) != 1 {
+		t.Errorf("after failed reload: Modes = %d, want 1 (unchanged)", len(loaded.Modes))
+	}
+}

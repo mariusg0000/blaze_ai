@@ -92,6 +92,16 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 		modelID = cfg.Roles.Default
 	}
 
+	// Auto-create default mode if no modes exist.
+	if len(cfg.Modes) == 0 {
+		cfg.Modes = []config.Mode{
+			{Name: "default", Model: modelID},
+		}
+		cfg.LastMode = "default"
+		// Best-effort save: ignore error if config is read-only.
+		_ = cfg.Save()
+	}
+
 	// Resolve active mode: mode model takes priority over LastModel.
 	var currentMode *config.Mode
 	if cfg.LastMode != "" {
@@ -438,6 +448,33 @@ func (a *Agent) SetWorkDir(dir string) error {
 	return nil
 }
 
+// ReloadModes re-reads modes from config.json on disk to pick up hot changes.
+//
+// WHAT:  Hot-reloads the modes list from the persisted config file.
+// WHY:   When the skill creates/edits modes at runtime, the in-memory config is stale.
+// HOW:   Delegates to Config.ReloadModesFromDisk() which re-reads and validates.
+// RETURNS: error if the file cannot be read or modes are invalid.
+func (a *Agent) ReloadModes() error {
+	return a.Config.ReloadModesFromDisk()
+}
+
+// ListProviderModels fetches the list of available model IDs from a configured provider.
+//
+// WHAT:  Creates a raw client for the named provider and calls its /models endpoint.
+// WHY:   Interactive /model command needs to show available models for user selection.
+// HOW:   Finds the provider in config, calls provider.NewClientRaw + ListModels.
+// PARAMS: providerName — the name of a configured provider.
+// RETURNS: []string — sorted model IDs; error if provider not found or fetch fails.
+func (a *Agent) ListProviderModels(providerName string) ([]string, error) {
+	for _, p := range a.Config.Providers {
+		if p.Name == providerName {
+			client := provider.NewClientRaw(p.Endpoint, p.APIKey)
+			return client.ListModels()
+		}
+	}
+	return nil, fmt.Errorf("provider not found: %s", providerName)
+}
+
 // SetMode switches the active work mode by name.
 // Updates the model, recreates the provider client, and persists LastMode to config.
 //
@@ -446,6 +483,10 @@ func (a *Agent) SetWorkDir(dir string) error {
 // PARAMS: name — the mode name to activate.
 // RETURNS: error if mode not found or model invalid.
 func (a *Agent) SetMode(name string) error {
+	// Hot-reload modes from disk to pick up changes made by the skill.
+	if err := a.ReloadModes(); err != nil {
+		return fmt.Errorf("cannot reload modes: %w", err)
+	}
 	for i := range a.Config.Modes {
 		if a.Config.Modes[i].Name == name {
 			mode := &a.Config.Modes[i]
@@ -471,8 +512,13 @@ func (a *Agent) SetMode(name string) error {
 //
 // WHAT:  Cycles to the next work mode.
 // WHY:   Tab key calls this to switch to the next mode.
+// HOW:   Hot-reloads modes from disk first, then advances cyclically.
 // RETURNS: *config.Mode — the next mode; error if no modes are configured.
 func (a *Agent) NextMode() (*config.Mode, error) {
+	// Hot-reload modes from disk to pick up changes made by the skill.
+	if err := a.ReloadModes(); err != nil {
+		return nil, fmt.Errorf("cannot reload modes: %w", err)
+	}
 	if len(a.Config.Modes) == 0 {
 		return nil, fmt.Errorf("no modes configured")
 	}

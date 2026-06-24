@@ -1,5 +1,5 @@
 [DESCRIPTION]
-Load when the user wants to configure BlazeAI models or providers. Use for `config.json`, API keys, favorite models, and role assignments.
+Load when the user wants to configure BlazeAI models, providers, API keys, favorite models, role assignments, or work modes. Use for any config.json changes including creating, editing, or deleting modes.
 
 [DETAILS]
 # Customize Me
@@ -54,8 +54,9 @@ Load when the user wants to configure BlazeAI models or providers. Use for `conf
 ## How To Edit
 1. Read the current config with the `shell` tool.
 2. Modify the JSON with the `shell` tool (use replace_block or direct file editing).
-3. The runtime reads config fresh; changes take effect at the next session start.
-4. The `/model` command can change the current model at runtime without editing the file.
+3. **Mode changes are hot-reloaded**: new/edited modes are available immediately via Tab cycling. No restart needed.
+4. Provider and role changes require a session restart.
+5. The `/model` command changes the current model (NOT the mode). `/model` does NOT accept mode names; it only accepts `provider/model_name`.
 
 ## Work Modes (config.json)
 Modes are part of the runtime config at {APP_HOME}/config/config.json. Each mode
@@ -90,8 +91,8 @@ sent to the LLM (volatile — not stored in session history).
 - Create a new mode: append an entry to `modes` and persist config. Validate with the rules above.
 - Edit a mode's directive or model: find by `name`, update, persist.
 - Delete a mode: remove from `modes`. If it was `last_mode`, set `last_mode` to the first remaining mode. Never delete the last remaining mode.
-- Switch active mode at runtime: use the `shell`-independent mechanism the runtime exposes — but at config level, set `last_mode` and save.
+- Switch active mode at runtime: the user presses Tab to cycle modes. Newly created modes are hot-reloaded and appear in the cycle immediately. Do NOT suggest `/model modename` — that command does not switch modes.
 - After any edit, validate config integrity (unique names, valid models, provider references).
 
 ### Directive behavior
-The directive is appended to the last message of the payload sent to the LLM on every LLM call while the mode is active. It is not stored in session.json. Use it to constrain agent behavior for the current task (e.g. read-only, quick/cheap, verbose, etc.). Keep directives short and imperative.
+The directive is appended to the last message of the payload sent to the LLM on every LLM call while the mode is active. It is not stored in session.json. Use it to constrain agent behavior for the current task (e.g. read-only, quick/cheap, verbose, etc.). Keep directives short and imperative. Always write directives in English, even when the user communicates in another language — the directive is injected into the LLM prompt and must be understood by the model.
