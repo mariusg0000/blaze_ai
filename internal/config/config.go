@@ -30,6 +30,15 @@ var ErrProviderNotFound = errors.New("model references a provider that does not 
 // ErrDuplicateProvider is returned when two providers share the same name.
 var ErrDuplicateProvider = errors.New("duplicate provider name")
 
+// ErrDuplicateModeName is returned when two modes share the same name.
+var ErrDuplicateModeName = errors.New("duplicate mode name")
+
+// ErrModeModelInvalid is returned when a mode's model identifier is malformed or references a missing provider.
+var ErrModeModelInvalid = errors.New("mode model invalid")
+
+// ErrLastModeNotFound is returned when last_mode references a mode that does not exist.
+var ErrLastModeNotFound = errors.New("last_mode references a non-existent mode")
+
 // Provider defines a single OpenAI-compatible endpoint.
 //
 // WHAT:  Represents one API provider with credentials.
@@ -50,6 +59,19 @@ type Roles struct {
 	Default       string `json:"default"`
 	Vision        string `json:"vision,omitempty"`
 	Summarization string `json:"summarization,omitempty"`
+}
+
+// Mode defines one work mode: a name, its assigned model, and an optional directive.
+//
+// WHAT:  Represents a named work mode with model binding and behavioral directive.
+// WHY:   Modes let the user switch between different operational styles (planning, quick, etc.)
+// and automatically assign the right model and directive for each context.
+// PARAMS: Name — unique mode identifier; Model — provider/model_name for this mode;
+// Directive — optional text injected into the last LLM message (volatile, not persisted in session).
+type Mode struct {
+	Name      string `json:"name"`
+	Model     string `json:"model"`
+	Directive string `json:"directive,omitempty"`
 }
 
 // Compaction holds context compaction thresholds.
@@ -94,7 +116,8 @@ type HelperSetup struct {
 // PARAMS: Providers — endpoint definitions; FavoriteModels — model list; Roles — role assignments;
 //
 //	Compaction — thresholds; StripReasoning — payload settings; LastModel — persisted selection;
-//	HelperSetup — UX preferences for optional host helper installation prompts.
+//	HelperSetup — UX preferences for optional host helper installation prompts;
+//	Modes — work mode definitions; LastMode — persisted active mode name.
 type Config struct {
 	Providers      []Provider     `json:"providers"`
 	FavoriteModels []string       `json:"favorite_models"`
@@ -103,6 +126,8 @@ type Config struct {
 	StripReasoning StripReasoning `json:"stripReasoning"`
 	LastModel      string         `json:"last_model,omitempty"`
 	HelperSetup    HelperSetup    `json:"helperSetup,omitempty"`
+	Modes          []Mode         `json:"modes,omitempty"`
+	LastMode       string         `json:"last_mode,omitempty"`
 }
 
 // DefaultCompaction returns the pre-filled compaction thresholds from spec 05.
@@ -336,6 +361,14 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("favorite model %q: %w", model, err)
 		}
 	}
+	if err := validateModes(c.Modes, providerNames); err != nil {
+		return err
+	}
+	if c.LastMode != "" {
+		if err := validateLastMode(c.LastMode, c.Modes); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -438,4 +471,45 @@ func SplitModelID(modelID string) (provider, model string) {
 		return modelID, ""
 	}
 	return modelID[:idx], modelID[idx+1:]
+}
+
+// validateModes checks the modes list for integrity: unique names, valid models.
+//
+// WHAT:  Verifies all modes have unique names and valid model identifiers.
+// WHY:   Duplicate names cause ambiguity; invalid models cause runtime failures.
+// PARAMS: modes — the mode list to check; providerNames — existing provider names.
+// RETURNS: error if any mode is invalid.
+func validateModes(modes []Mode, providerNames map[string]bool) error {
+	seen := make(map[string]bool, len(modes))
+	for _, m := range modes {
+		if m.Name == "" {
+			return fmt.Errorf("mode name is empty")
+		}
+		if seen[m.Name] {
+			return fmt.Errorf("%w: %s", ErrDuplicateModeName, m.Name)
+		}
+		seen[m.Name] = true
+		if err := validateModelFormat(m.Model); err != nil {
+			return fmt.Errorf("mode %q: %w: %s", m.Name, ErrModeModelInvalid, m.Model)
+		}
+		if err := validateModelProvider(m.Model, providerNames); err != nil {
+			return fmt.Errorf("mode %q: %w: %s", m.Name, ErrModeModelInvalid, m.Model)
+		}
+	}
+	return nil
+}
+
+// validateLastMode checks that last_mode references an existing mode name.
+//
+// WHAT:  Verifies last_mode is a valid reference to a mode.
+// WHY:   A dangling last_mode reference is a config corruption that must stop the runtime.
+// PARAMS: lastMode — the persisted mode name; modes — the mode list.
+// RETURNS: error if the mode name is not found.
+func validateLastMode(lastMode string, modes []Mode) error {
+	for _, m := range modes {
+		if m.Name == lastMode {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %s", ErrLastModeNotFound, lastMode)
 }

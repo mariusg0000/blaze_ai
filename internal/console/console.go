@@ -64,8 +64,9 @@ type Console struct {
 
 // inputEvent carries one console input line or a terminal read error.
 type inputEvent struct {
-	line string
-	err  error
+	line  string
+	err   error
+	event string // "", "mode_switch"
 }
 
 // NewConsole creates a Console with TTY auto-detection.
@@ -713,7 +714,12 @@ func splitTableRow(line string) []string {
 // WHAT:  Builds the [USER/(provider/model)] > label.
 // RETURNS: string — the formatted prompt label.
 func (c *Console) promptLabel() string {
-	label := fmt.Sprintf("[USER/%s] > ", c.Agent.ModelID)
+	model := c.Agent.ModelID
+	if c.Agent.CurrentMode != nil {
+		label := fmt.Sprintf("[USER/%s|%s] > ", model, c.Agent.CurrentMode.Name)
+		return c.color(colorBlue, c.bold(label))
+	}
+	label := fmt.Sprintf("[USER/%s] > ", model)
 	return c.color(colorBlue, c.bold(label))
 }
 
@@ -723,8 +729,124 @@ func (c *Console) promptLabel() string {
 // WHAT:  The main REPL loop.
 // WHY:   This is the entrypoint for the console transport.
 // HOW:   Loops reading input, dispatches slash commands or sends input to the agent.
+// On TTY: uses raw-mode input for Tab detection (mode cycling).
+// On non-TTY: uses buffered input with a background goroutine.
 // RETURNS: error if a fatal error occurs.
 func (c *Console) Run() error {
+	if c.IsTTY {
+		return c.runTTY()
+	}
+	return c.runNonTTY()
+}
+
+// runTTY runs the REPL loop with raw-mode input for Tab detection.
+// No background goroutine — input is read directly at the prompt.
+// During streaming, abort is via SIGINT only (no queued input).
+//
+// WHAT:  TTY-specific REPL with raw-mode Tab detection.
+// WHY:   Tab key requires raw terminal mode to detect.
+func (c *Console) runTTY() error {
+	for {
+		fmt.Fprint(c.Out, c.promptLabel())
+		line, event, err := c.Reader.ReadEvent()
+		if err == io.EOF {
+			fmt.Fprintln(c.Out)
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("input error: %w", err)
+		}
+
+		// Handle mode switch event.
+		if event == "mode_switch" {
+			if _, switchErr := c.Agent.NextMode(); switchErr != nil {
+				fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("mode switch error: %v", switchErr)))
+			} else {
+				fmt.Fprintln(c.Out)
+				fmt.Fprintf(c.Out, "[mode: %s | %s]\n", c.Agent.CurrentMode.Name, c.Agent.ModelID)
+			}
+			continue
+		}
+
+		input := strings.TrimSpace(line)
+		if input == "" {
+			continue
+		}
+
+		// Handle slash commands.
+		if strings.HasPrefix(input, "/") {
+			handled, exit, cmdErr := c.handleCommand(input)
+			if cmdErr != nil {
+				fmt.Fprintln(c.Out, c.color(colorRed, cmdErr.Error()))
+				continue
+			}
+			if exit {
+				return nil
+			}
+			if handled {
+				continue
+			}
+		}
+
+		fmt.Fprintln(c.Out)
+
+		// Start spinner and reset content state before LLM call.
+		c.contentStarted = false
+		c.contentBuffer = ""
+		c.inCodeBlock = false
+		c.inToolGroup = false
+		c.needContentLabel = true
+		c.lastPromptTokens = 0
+		c.lineOpen = false
+		c.Spinner.Start()
+
+		interrupts := make(chan os.Signal, 1)
+		signal.Notify(interrupts, os.Interrupt)
+
+		// Run agent turn without input events (abort via SIGINT only).
+		turnErr := c.runAgentTurnTTY(input, interrupts)
+		if turnErr != nil && !errors.Is(turnErr, runtime.ErrTurnAborted) {
+			c.Spinner.Stop()
+			fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("error: %v", turnErr)))
+			c.lineOpen = false
+		}
+		signal.Stop(interrupts)
+		c.flushPendingContent()
+		fmt.Fprintln(c.Out)
+		c.lineOpen = false
+		c.closeToolGroup()
+		c.responseSeparator()
+	}
+}
+
+// runAgentTurnTTY executes one agent turn with SIGINT-only abort (no input events).
+//
+// WHAT:  Simplified turn execution for TTY mode.
+// WHY:   TTY mode reads input directly at the prompt; no goroutine for queued input.
+func (c *Console) runAgentTurnTTY(input string, interrupts <-chan os.Signal) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- c.Agent.RunTurn(ctx, input)
+	}()
+
+	for {
+		select {
+		case err := <-errCh:
+			c.turnAborting.Store(false)
+			return err
+		case <-interrupts:
+			c.turnAborting.Store(true)
+			cancel()
+		}
+	}
+}
+
+// runNonTTY runs the REPL loop with buffered input (existing goroutine approach).
+// No Tab detection — modes are fixed from config's LastMode.
+func (c *Console) runNonTTY() error {
 	inputs := c.startInputReader()
 	pending := ""
 	promptShown := false

@@ -68,9 +68,10 @@ type Agent struct {
 	Handler   Handler
 	Compactor *compaction.Manager
 
-	ModelID string
-	WorkDir string
-	OS      platform.OS
+	ModelID     string
+	CurrentMode *config.Mode
+	WorkDir     string
+	OS          platform.OS
 }
 
 // NewAgent creates an Agent from a loaded config, session, and detected OS.
@@ -89,6 +90,23 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 	modelID := cfg.LastModel
 	if modelID == "" {
 		modelID = cfg.Roles.Default
+	}
+
+	// Resolve active mode: mode model takes priority over LastModel.
+	var currentMode *config.Mode
+	if cfg.LastMode != "" {
+		for i := range cfg.Modes {
+			if cfg.Modes[i].Name == cfg.LastMode {
+				currentMode = &cfg.Modes[i]
+				break
+			}
+		}
+	}
+	if currentMode != nil {
+		modelID = currentMode.Model
+	} else if len(cfg.Modes) > 0 {
+		currentMode = &cfg.Modes[0]
+		modelID = currentMode.Model
 	}
 
 	client, err := provider.NewClient(cfg, modelID)
@@ -117,18 +135,19 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 	}
 
 	agent := &Agent{
-		Config:    cfg,
-		Session:   sess,
-		Active:    active,
-		Memories:  memoriesList,
-		Builder:   builder,
-		Tools:     registry,
-		Provider:  client,
-		Handler:   handler,
-		Compactor: compaction.NewManager(cfg, client),
-		ModelID:   modelID,
-		WorkDir:   workDir,
-		OS:        os,
+		Config:      cfg,
+		Session:     sess,
+		Active:      active,
+		Memories:    memoriesList,
+		Builder:     builder,
+		Tools:       registry,
+		Provider:    client,
+		Handler:     handler,
+		Compactor:   compaction.NewManager(cfg, client),
+		ModelID:     modelID,
+		CurrentMode: currentMode,
+		WorkDir:     workDir,
+		OS:          os,
 	}
 
 	registry.Register(tools.NewTaskWriteTool(func() string { return agent.WorkDir }))
@@ -189,6 +208,11 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		if err == nil {
 			raw := strings.ReplaceAll(string(data), "\\n", "\n")
 			_ = os.WriteFile(promptPath, []byte(raw), 0644)
+		}
+
+		// Inject volatile mode directive into the last message (copy, never mutate session).
+		if a.CurrentMode != nil && strings.TrimSpace(a.CurrentMode.Directive) != "" {
+			messages = injectDirective(messages, a.CurrentMode.Directive)
 		}
 
 		// Stream LLM response.
@@ -307,6 +331,25 @@ func shouldPersistAssistantMessage(msg session.Message) bool {
 	return content != "" || msg.Reasoning != "" || msg.ToolCalls != nil
 }
 
+// injectDirective appends the mode directive to the last message in a copy of the slice.
+// The original messages slice is never mutated — only the returned copy is modified.
+//
+// WHAT:  Appends a volatile mode directive to the last message's content.
+// WHY:   The directive is never persisted in session.json but must reach the LLM.
+// PARAMS: messages — the prompt messages; directive — the mode directive text.
+// RETURNS: []session.Message — a copy with the directive appended to the last element.
+func injectDirective(messages []session.Message, directive string) []session.Message {
+	if len(messages) == 0 {
+		return messages
+	}
+	out := make([]session.Message, len(messages))
+	copy(out, messages)
+	last := &out[len(out)-1]
+	content, _ := last.Content.(string)
+	last.Content = content + "\n\n[MODE DIRECTIVE]\n" + directive
+	return out
+}
+
 // appendAbortMarker records the user's abort as a new user message in session history.
 func (a *Agent) appendAbortMarker() error {
 	if err := a.Session.Append(session.Message{Role: "user", Content: userAbortMessage}); err != nil {
@@ -367,6 +410,10 @@ func (a *Agent) SetModel(modelID string) error {
 	a.Provider = client
 	a.ModelID = modelID
 	a.Config.LastModel = modelID
+	// If a mode is active, update the mode's model so it persists with the mode.
+	if a.CurrentMode != nil {
+		a.CurrentMode.Model = modelID
+	}
 	if err := a.Config.Save(); err != nil {
 		return fmt.Errorf("cannot persist model selection: %w", err)
 	}
@@ -389,6 +436,70 @@ func (a *Agent) SetWorkDir(dir string) error {
 	a.WorkDir = dir
 	a.Builder.WorkDir = dir
 	return nil
+}
+
+// SetMode switches the active work mode by name.
+// Updates the model, recreates the provider client, and persists LastMode to config.
+//
+// WHAT:  Changes the active work mode at runtime.
+// WHY:   Tab cycling and /mode commands call this to switch modes.
+// PARAMS: name — the mode name to activate.
+// RETURNS: error if mode not found or model invalid.
+func (a *Agent) SetMode(name string) error {
+	for i := range a.Config.Modes {
+		if a.Config.Modes[i].Name == name {
+			mode := &a.Config.Modes[i]
+			client, err := provider.NewClient(a.Config, mode.Model)
+			if err != nil {
+				return fmt.Errorf("cannot create provider client for mode %q: %w", name, err)
+			}
+			a.Provider = client
+			a.ModelID = mode.Model
+			a.CurrentMode = mode
+			a.Config.LastMode = name
+			a.Config.LastModel = mode.Model
+			if err := a.Config.Save(); err != nil {
+				return fmt.Errorf("cannot persist mode switch: %w", err)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("mode not found: %s", name)
+}
+
+// NextMode returns the next mode in the config list cyclically.
+//
+// WHAT:  Cycles to the next work mode.
+// WHY:   Tab key calls this to switch to the next mode.
+// RETURNS: *config.Mode — the next mode; error if no modes are configured.
+func (a *Agent) NextMode() (*config.Mode, error) {
+	if len(a.Config.Modes) == 0 {
+		return nil, fmt.Errorf("no modes configured")
+	}
+	if a.CurrentMode == nil {
+		mode := &a.Config.Modes[0]
+		if err := a.SetMode(mode.Name); err != nil {
+			return nil, err
+		}
+		return a.CurrentMode, nil
+	}
+	// Find current index and advance cyclically.
+	for i := range a.Config.Modes {
+		if a.Config.Modes[i].Name == a.CurrentMode.Name {
+			nextIdx := (i + 1) % len(a.Config.Modes)
+			next := &a.Config.Modes[nextIdx]
+			if err := a.SetMode(next.Name); err != nil {
+				return nil, err
+			}
+			return a.CurrentMode, nil
+		}
+	}
+	// Current mode not in list (corrupted state) — reset to first.
+	mode := &a.Config.Modes[0]
+	if err := a.SetMode(mode.Name); err != nil {
+		return nil, err
+	}
+	return a.CurrentMode, nil
 }
 
 // CloseSession marks the session as cleanly closed.

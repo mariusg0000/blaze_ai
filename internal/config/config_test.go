@@ -22,6 +22,10 @@ func validConfig() *Config {
 		},
 		Compaction:     DefaultCompaction(),
 		StripReasoning: DefaultStripReasoning(),
+		Modes: []Mode{
+			{Name: "default", Model: "openrouter/deepseek-v4-flash"},
+		},
+		LastMode: "default",
 	}
 }
 
@@ -390,5 +394,109 @@ func TestSaveLoadHelperSetup(t *testing.T) {
 	}
 	if len(loaded.HelperSetup.Declined) != 2 {
 		t.Errorf("HelperSetup.Declined = %v, want [rg fd]", loaded.HelperSetup.Declined)
+	}
+}
+
+// TestValidateDuplicateModeName verifies that two modes with the same name fail.
+func TestValidateDuplicateModeName(t *testing.T) {
+	cfg := validConfig()
+	cfg.Modes = append(cfg.Modes, Mode{Name: "default", Model: "openrouter/gpt-4o"})
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() expected error for duplicate mode name, got nil")
+	}
+}
+
+// TestValidateModeModelBadFormat verifies that a mode with bad model format fails.
+func TestValidateModeModelBadFormat(t *testing.T) {
+	cfg := validConfig()
+	cfg.Modes = []Mode{{Name: "test", Model: "no-slash"}}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() expected error for bad mode model format, got nil")
+	}
+}
+
+// TestValidateModeModelUnknownProvider verifies that a mode referencing missing provider fails.
+func TestValidateModeModelUnknownProvider(t *testing.T) {
+	cfg := validConfig()
+	cfg.Modes = []Mode{{Name: "test", Model: "ghost/model-x"}}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() expected error for missing provider in mode, got nil")
+	}
+}
+
+// TestValidateLastModeNotFound verifies that last_mode referencing missing mode fails.
+func TestValidateLastModeNotFound(t *testing.T) {
+	cfg := validConfig()
+	cfg.LastMode = "nonexistent"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() expected error for non-existent last_mode, got nil")
+	}
+}
+
+// TestSaveLoadModesRoundTrip verifies that modes are preserved across save/load.
+func TestSaveLoadModesRoundTrip(t *testing.T) {
+	cfg := validConfig()
+	cfg.Modes = []Mode{
+		{Name: "default", Model: "openrouter/deepseek-v4-flash"},
+		{Name: "planning", Model: "openrouter/gpt-4o", Directive: "read-only mode"},
+	}
+	cfg.LastMode = "planning"
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config", "config.json")
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo() failed: %v", err)
+	}
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom() after SaveTo() failed: %v", err)
+	}
+	if len(loaded.Modes) != 2 {
+		t.Fatalf("Modes count = %d, want 2", len(loaded.Modes))
+	}
+	if loaded.Modes[1].Name != "planning" {
+		t.Errorf("Modes[1].Name = %q, want 'planning'", loaded.Modes[1].Name)
+	}
+	if loaded.Modes[1].Directive != "read-only mode" {
+		t.Errorf("Modes[1].Directive = %q, want 'read-only mode'", loaded.Modes[1].Directive)
+	}
+	if loaded.LastMode != "planning" {
+		t.Errorf("LastMode = %q, want 'planning'", loaded.LastMode)
+	}
+}
+
+// TestLoadFromWithoutModes verifies backward-compatibility:
+// configs without modes field load successfully with zero-value.
+func TestLoadFromWithoutModes(t *testing.T) {
+	raw := struct {
+		Providers      []Provider     `json:"providers"`
+		FavoriteModels []string       `json:"favorite_models"`
+		Roles          Roles          `json:"roles"`
+		Compaction     Compaction     `json:"compaction"`
+		StripReasoning StripReasoning `json:"stripReasoning"`
+	}{
+		Providers: []Provider{
+			{Name: "test", Endpoint: "https://example.com/v1", APIKey: "sk-test"},
+		},
+		FavoriteModels: []string{"test/model"},
+		Roles: Roles{
+			Default: "test/model",
+		},
+		Compaction:     DefaultCompaction(),
+		StripReasoning: DefaultStripReasoning(),
+	}
+	path := writeConfigToTemp(t, raw)
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom() without modes failed: %v", err)
+	}
+	if len(loaded.Modes) != 0 {
+		t.Errorf("Modes = %d, want 0 for old config", len(loaded.Modes))
+	}
+	if loaded.LastMode != "" {
+		t.Errorf("LastMode = %q, want empty for old config", loaded.LastMode)
 	}
 }

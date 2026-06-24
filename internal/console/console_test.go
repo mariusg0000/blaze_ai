@@ -687,3 +687,60 @@ func TestRunAgentTurnInputInterrupt(t *testing.T) {
 		t.Fatal("turnAborting should be reset after interrupted turn")
 	}
 }
+
+// TestPromptLabelWithMode verifies prompt label includes mode name when mode is active.
+func TestPromptLabelWithMode(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.Agent.Config.Modes = []config.Mode{
+		{Name: "default", Model: "test/test-model"},
+		{Name: "planning", Model: "test/test-model"},
+	}
+	c.Agent.CurrentMode = &c.Agent.Config.Modes[1]
+	label := c.promptLabel()
+	if !strings.Contains(out.String(), "") {
+		// promptLabel returns a string, doesn't write to out
+	}
+	if !strings.Contains(label, "planning") {
+		t.Errorf("promptLabel() = %q, want contains 'planning'", label)
+	}
+	if !strings.Contains(label, "test/test-model") {
+		t.Errorf("promptLabel() = %q, want contains model", label)
+	}
+}
+
+// TestPromptLabelWithoutMode verifies prompt label has no mode when no mode is active.
+func TestPromptLabelWithoutMode(t *testing.T) {
+	c, _ := newConsole(mockAgent(t))
+	c.Agent.CurrentMode = nil
+	label := c.promptLabel()
+	if strings.Contains(label, "|") {
+		t.Errorf("promptLabel() = %q, should not contain '|' when no mode", label)
+	}
+	if !strings.Contains(label, "test/test-model") {
+		t.Errorf("promptLabel() = %q, want contains model", label)
+	}
+}
+
+// TestReadEventNonTTY verifies ReadEvent on non-TTY delegates to ReadLine.
+func TestReadEventNonTTY(t *testing.T) {
+	r := NewReader(strings.NewReader("hello\n"), false)
+	line, event, err := r.ReadEvent()
+	if err != nil {
+		t.Fatalf("ReadEvent() error: %v", err)
+	}
+	if line != "hello" {
+		t.Errorf("ReadEvent() line = %q, want 'hello'", line)
+	}
+	if event != "" {
+		t.Errorf("ReadEvent() event = %q, want ''", event)
+	}
+}
+
+// TestReadEventNonTTYEOF verifies ReadEvent on non-TTY returns EOF.
+func TestReadEventNonTTYEOF(t *testing.T) {
+	r := NewReader(strings.NewReader(""), false)
+	_, _, err := r.ReadEvent()
+	if err == nil {
+		t.Error("ReadEvent() expected EOF, got nil")
+	}
+}

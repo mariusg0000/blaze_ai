@@ -433,3 +433,226 @@ func TestNewAgentBadModel(t *testing.T) {
 		t.Fatal("NewAgent() expected error for missing provider, got nil")
 	}
 }
+
+// TestNewAgentWithMode verifies CurrentMode initialization from LastMode.
+func TestNewAgentWithMode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
+		},
+		Roles:          config.Roles{Default: "test/model-a"},
+		FavoriteModels: []string{"test/model-a", "test/model-b"},
+		Compaction:     config.DefaultCompaction(),
+		StripReasoning: config.DefaultStripReasoning(),
+		Modes: []config.Mode{
+			{Name: "default", Model: "test/model-a"},
+			{Name: "planning", Model: "test/model-b", Directive: "read-only"},
+		},
+		LastMode: "planning",
+	}
+
+	dir := t.TempDir()
+	sess, _ := session.CreateInDir(dir)
+	promptsDir := filepath.Join(dir, "prompts")
+	os.MkdirAll(promptsDir, 0755)
+	writePromptFixtures(t, promptsDir)
+
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(filepath.Join(dir, "skills")), os.DirFS(promptsDir), dir, &mockHandler{})
+	if err != nil {
+		t.Fatalf("NewAgent() error: %v", err)
+	}
+	if agent.CurrentMode == nil {
+		t.Fatal("CurrentMode is nil")
+	}
+	if agent.CurrentMode.Name != "planning" {
+		t.Errorf("CurrentMode.Name = %q, want 'planning'", agent.CurrentMode.Name)
+	}
+	if agent.ModelID != "test/model-b" {
+		t.Errorf("ModelID = %q, want 'test/model-b'", agent.ModelID)
+	}
+}
+
+// TestNewAgentWithModeFallbackToFirstMode verifies fallback when LastMode is empty.
+func TestNewAgentWithModeFallbackToFirstMode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
+		},
+		Roles:          config.Roles{Default: "test/model-a"},
+		FavoriteModels: []string{"test/model-a"},
+		Compaction:     config.DefaultCompaction(),
+		StripReasoning: config.DefaultStripReasoning(),
+		Modes: []config.Mode{
+			{Name: "default", Model: "test/model-a"},
+		},
+	}
+
+	dir := t.TempDir()
+	sess, _ := session.CreateInDir(dir)
+	promptsDir := filepath.Join(dir, "prompts")
+	os.MkdirAll(promptsDir, 0755)
+	writePromptFixtures(t, promptsDir)
+
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(filepath.Join(dir, "skills")), os.DirFS(promptsDir), dir, &mockHandler{})
+	if err != nil {
+		t.Fatalf("NewAgent() error: %v", err)
+	}
+	if agent.CurrentMode == nil {
+		t.Fatal("CurrentMode is nil, want first mode")
+	}
+	if agent.CurrentMode.Name != "default" {
+		t.Errorf("CurrentMode.Name = %q, want 'default'", agent.CurrentMode.Name)
+	}
+}
+
+// TestSetMode verifies mode switching and provider recreation.
+func TestSetMode(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	agent.Config.Modes = []config.Mode{
+		{Name: "default", Model: "test/test-model"},
+		{Name: "planning", Model: "test/test-model", Directive: "read-only"},
+	}
+	agent.Config.LastMode = "default"
+	agent.CurrentMode = &agent.Config.Modes[0]
+
+	err := agent.SetMode("planning")
+	if err != nil {
+		t.Fatalf("SetMode() error: %v", err)
+	}
+	if agent.CurrentMode.Name != "planning" {
+		t.Errorf("CurrentMode.Name = %q, want 'planning'", agent.CurrentMode.Name)
+	}
+	if agent.Config.LastMode != "planning" {
+		t.Errorf("LastMode = %q, want 'planning'", agent.Config.LastMode)
+	}
+}
+
+// TestSetModeNotFound verifies error for non-existent mode.
+func TestSetModeNotFound(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	agent.Config.Modes = []config.Mode{
+		{Name: "default", Model: "test/test-model"},
+	}
+
+	err := agent.SetMode("nonexistent")
+	if err == nil {
+		t.Fatal("SetMode() expected error for non-existent mode, got nil")
+	}
+}
+
+// TestNextMode verifies cyclic mode switching.
+func TestNextMode(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	agent.Config.Modes = []config.Mode{
+		{Name: "default", Model: "test/test-model"},
+		{Name: "planning", Model: "test/test-model", Directive: "plan"},
+		{Name: "quick", Model: "test/test-model", Directive: "fast"},
+	}
+	agent.Config.LastMode = "default"
+	agent.CurrentMode = &agent.Config.Modes[0]
+
+	// Cycle: default -> planning
+	mode, err := agent.NextMode()
+	if err != nil {
+		t.Fatalf("NextMode() error: %v", err)
+	}
+	if mode.Name != "planning" {
+		t.Errorf("NextMode() = %q, want 'planning'", mode.Name)
+	}
+
+	// Cycle: planning -> quick
+	mode, err = agent.NextMode()
+	if err != nil {
+		t.Fatalf("NextMode() error: %v", err)
+	}
+	if mode.Name != "quick" {
+		t.Errorf("NextMode() = %q, want 'quick'", mode.Name)
+	}
+
+	// Cycle: quick -> default (wrap around)
+	mode, err = agent.NextMode()
+	if err != nil {
+		t.Fatalf("NextMode() error: %v", err)
+	}
+	if mode.Name != "default" {
+		t.Errorf("NextMode() = %q, want 'default'", mode.Name)
+	}
+}
+
+// TestNextModeEmpty verifies error when no modes are configured.
+func TestNextModeEmpty(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	_, err := agent.NextMode()
+	if err == nil {
+		t.Fatal("NextMode() expected error for empty modes, got nil")
+	}
+}
+
+// TestSetModelUpdatesMode verifies that SetModel updates CurrentMode.Model.
+func TestSetModelUpdatesMode(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	agent.Config.Modes = []config.Mode{
+		{Name: "default", Model: "test/test-model"},
+	}
+	agent.CurrentMode = &agent.Config.Modes[0]
+
+	err := agent.SetModel("test/test-model")
+	if err != nil {
+		t.Fatalf("SetModel() error: %v", err)
+	}
+	if agent.CurrentMode.Model != "test/test-model" {
+		t.Errorf("CurrentMode.Model = %q, want 'test/test-model'", agent.CurrentMode.Model)
+	}
+}
+
+// TestInjectDirective verifies directive injection appends to last message in copy.
+func TestInjectDirective(t *testing.T) {
+	original := []session.Message{
+		{Role: "system", Content: "sys"},
+		{Role: "user", Content: "hello"},
+	}
+	result := injectDirective(original, "be quick")
+
+	// Original must not be mutated.
+	if original[1].Content != "hello" {
+		t.Errorf("original[1].Content mutated: %v", original[1].Content)
+	}
+	// Result last message must have directive.
+	last, ok := result[1].Content.(string)
+	if !ok {
+		t.Fatal("result[1].Content is not string")
+	}
+	if !strings.Contains(last, "[MODE DIRECTIVE]") {
+		t.Error("result[1].Content missing [MODE DIRECTIVE]")
+	}
+	if !strings.Contains(last, "be quick") {
+		t.Error("result[1].Content missing directive text")
+	}
+	if !strings.Contains(last, "hello") {
+		t.Error("result[1].Content missing original content")
+	}
+}
+
+// TestInjectDirectiveEmpty verifies empty messages returns empty.
+func TestInjectDirectiveEmpty(t *testing.T) {
+	result := injectDirective([]session.Message{}, "directive")
+	if len(result) != 0 {
+		t.Errorf("injectDirective on empty returned %d messages", len(result))
+	}
+}

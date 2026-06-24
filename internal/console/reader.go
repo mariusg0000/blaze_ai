@@ -1,14 +1,18 @@
 // reader.go — input reader for the console REPL.
 // Handles single-line and multiline paste input. On TTY, waits for an empty line
 // to signal end of pasted multiline content. On non-TTY, reads line by line.
-// Layer: transport (console). Dependencies: none.
+// On TTY, supports raw-mode reading with Tab detection for mode cycling.
+// Layer: transport (console). Dependencies: golang.org/x/term.
 package console
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"os"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 // isTerminal checks if a file is a terminal (character device).
@@ -94,4 +98,61 @@ func (r *Reader) ReadMultiline() (string, error) {
 		return "", err
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+// ReadEvent reads one input event from the console.
+// On TTY: enters raw mode to detect Tab (mode switch), Enter (submit), Ctrl-D (EOF),
+// and Backspace (delete). Returns the line, an event type, and error.
+// On non-TTY: delegates to ReadLine with no events.
+//
+// WHAT:  Reads input with special key detection on TTY.
+// WHY:   Tab key cycles work modes; raw mode is required to detect it.
+// RETURNS: string — input line; string — event type ("", "mode_switch"); error — read error or EOF.
+func (r *Reader) ReadEvent() (string, string, error) {
+	if !r.isTTY {
+		line, err := r.ReadLine()
+		return line, "", err
+	}
+
+	fd := int(os.Stdin.Fd())
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		line, err := r.ReadLine()
+		return line, "", err
+	}
+	defer term.Restore(fd, oldState)
+
+	var buf []byte
+	for {
+		b := make([]byte, 1)
+		n, readErr := os.Stdin.Read(b)
+		if readErr != nil {
+			return "", "", readErr
+		}
+		if n == 0 {
+			continue
+		}
+
+		switch b[0] {
+		case 0x09: // Tab
+			return "", "mode_switch", nil
+		case 0x0a, 0x0d: // Enter
+			fmt.Fprint(os.Stdout, "\r\n")
+			return string(buf), "", nil
+		case 0x04: // Ctrl-D
+			if len(buf) == 0 {
+				return "", "", io.EOF
+			}
+		case 0x7f, 0x08: // Backspace
+			if len(buf) > 0 {
+				buf = buf[:len(buf)-1]
+				fmt.Fprint(os.Stdout, "\b \b")
+			}
+		default:
+			if b[0] >= 0x20 { // Printable
+				buf = append(buf, b[0])
+				fmt.Fprint(os.Stdout, string(b[0]))
+			}
+		}
+	}
 }
