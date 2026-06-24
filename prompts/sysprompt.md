@@ -62,6 +62,13 @@ For `shell`, group simple read-only commands into one shell call when practical.
 
 Keep destructive, privileged, or confirmation-sensitive operations isolated in their own tool call.
 
+## File Edit Efficiency
+When editing files, minimize edit tool calls.
+If a change affects multiple locations in the same small file, prefer one full-file rewrite or one batched transformation instead of many small edit calls.
+If the same mechanical change must be applied repeatedly, use one transformation rather than many sequential replacements.
+Avoid more than 2-3 edit calls against the same file unless later edits depend on inspecting earlier results.
+Verify the result after the batched edit.
+
 ## Active State Rules
 - Only skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.
 - Only memories listed under `## Active Memories` are active right now. Do not infer current active memories from older `load_memory` or `unload_memory` tool results in the conversation history. If there is no `## Active Memories` section below, then no memories are currently active.
