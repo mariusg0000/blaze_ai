@@ -58,6 +58,33 @@ Load when the user wants to configure BlazeAI models, providers, API keys, favor
 4. Provider and role changes require a session restart.
 5. The `/model` command changes the current model (NOT the mode). `/model` does NOT accept mode names; it only accepts `provider/model_name`.
 
+## Fetching Models from Providers
+
+When the user asks to browse models (e.g. "show deepseek models"), follow this process.
+
+### Algorithm
+1. Check if a helper script already exists at `{APP_HOME}/scripts/fetch_models`. Reuse it if present.
+2. If not, create it on the fly using available shell tools. Python is last resort.
+3. The script reads config.json to find the requested provider's endpoint and API key.
+4. Calls `<endpoint>/models` with the key in the Authorization header.
+5. Parses the JSON response (`data[].id`), filters by the search string (case-insensitive).
+6. Outputs one `provider/model_id` per line.
+
+### Creation guidelines
+- Write the script to `{APP_HOME}/scripts/fetch_models` with OS-appropriate extension (.sh, .ps1, .py).
+- Accept two arguments: `<provider_name>` and `[filter]`.
+- API keys must be read from disk — never hardcoded in the script.
+- Make it executable (`chmod +x` on Unix).
+
+### Usage
+Call per provider: `fetch_models <provider_name> <filter>`.
+
+### Presenting results
+1. If user specified a provider: query just that provider.
+2. If not: query providers sequentially until matches are found.
+3. Show results as a numbered list. Ask the user to pick.
+4. Use the selected ID directly — it is already in `provider/model` format.
+
 ## Work Modes (config.json)
 Modes are part of the runtime config at {APP_HOME}/config/config.json. Each mode
 binds a model and an optional directive that is injected into the last message
