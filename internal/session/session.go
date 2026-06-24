@@ -65,19 +65,6 @@ type Session struct {
 	Folder        string    `json:"-"`
 }
 
-// sessionsDir resolves the sessions directory under app home.
-//
-// WHAT:  Returns the absolute path to the sessions directory.
-// WHY:   Session folders are created and found under this path.
-// RETURNS: string — path to app_home/sessions/; error if app home cannot be resolved.
-func sessionsDir() (string, error) {
-	home, err := platform.AppHome()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, "sessions"), nil
-}
-
 // randomName generates a random folder name for a new session.
 // Format: timestamp prefix + random hex suffix for uniqueness and sortability.
 //
@@ -92,13 +79,15 @@ func randomName() string {
 }
 
 // Create makes a new session folder with a random name and writes an empty session.json.
+// Sessions are stored under app_home/projects/<project>/sessions/.
 //
 // WHAT:  Creates a new session on disk with an empty message array.
 // WHY:   Every new conversation starts with a fresh session folder.
-// HOW:   Generates a random name, creates the folder, writes initial session.json.
+// HOW:   Resolves the project sessions dir from workDir, generates a random name, writes initial session.json.
+// PARAMS: workDir — the current working directory used to locate the project folder.
 // RETURNS: *Session — ready-to-use session with empty messages; error if folder creation fails.
-func Create() (*Session, error) {
-	dir, err := sessionsDir()
+func Create(workDir string) (*Session, error) {
+	dir, err := platform.EnsureProjectDir(workDir)
 	if err != nil {
 		return nil, err
 	}
@@ -186,6 +175,17 @@ func (s *Session) Append(msg Message) error {
 // RETURNS: error if saving fails.
 func (s *Session) AppendAll(msgs []Message) error {
 	s.Messages = append(s.Messages, msgs...)
+	return s.save()
+}
+
+// Reset clears the session history and marks it as open.
+//
+// WHAT:  Removes all conversation messages from the session.
+// WHY:   /clear and /new need to restart the current session without changing its folder name.
+// RETURNS: error if persistence fails.
+func (s *Session) Reset() error {
+	s.Messages = []Message{}
+	s.ClosedCleanly = false
 	return s.save()
 }
 
@@ -330,62 +330,20 @@ func toolCallID(item interface{}) (string, bool) {
 	}
 }
 
-// LastClean finds the most recently modified cleanly closed session.
+// LastClean finds the most recently modified cleanly closed session in the current project.
 // Used by -c to resume the last session closed via /exit.
 //
-// WHAT:  Searches sessions/ for the newest session with closed_cleanly=true.
+// WHAT:  Searches project sessions/ for the newest session with closed_cleanly=true.
 // WHY:   -c continues the last cleanly closed session per spec.
-// HOW:   Lists session folders, loads each, filters for closed_cleanly, picks newest by mod time.
+// HOW:   Resolves project sessions dir from workDir, lists folders, loads each, filters for closed_cleanly, picks newest.
+// PARAMS: workDir — the current working directory used to locate the project folder.
 // RETURNS: *Session — the last clean session; ErrNoCleanSession if none exists.
-func LastClean() (*Session, error) {
-	dir, err := sessionsDir()
+func LastClean(workDir string) (*Session, error) {
+	dir, err := platform.EnsureProjectDir(workDir)
 	if err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, ErrNoCleanSession
-		}
-		return nil, fmt.Errorf("cannot list sessions: %w", err)
-	}
-
-	type candidate struct {
-		folder string
-		mtime  time.Time
-	}
-	var candidates []candidate
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		folder := filepath.Join(dir, entry.Name())
-		s, err := Load(folder)
-		if err != nil {
-			continue
-		}
-		if s.ClosedCleanly {
-			info, err := entry.Info()
-			if err != nil {
-				continue
-			}
-			candidates = append(candidates, candidate{
-				folder: folder,
-				mtime:  info.ModTime(),
-			})
-		}
-	}
-
-	if len(candidates) == 0 {
-		return nil, ErrNoCleanSession
-	}
-
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].mtime.After(candidates[j].mtime)
-	})
-
-	return Load(candidates[0].folder)
+	return LastCleanInDir(dir)
 }
 
 // CreateInDir creates a new session in an explicit sessions directory.
@@ -412,15 +370,16 @@ func CreateInDir(dir string) (*Session, error) {
 	return s, nil
 }
 
-// Last finds the most recently modified session regardless of closed_cleanly status.
+// Last finds the most recently modified session in the current project regardless of closed_cleanly status.
 // Used by -r to resume the last interrupted or cleanly closed session.
 //
-// WHAT:  Searches sessions/ for the newest session by modification time.
+// WHAT:  Searches project sessions/ for the newest session by modification time.
 // WHY:   -r resumes the most recent session whether it was cleanly closed or interrupted.
-// HOW:   Lists session folders, sorts by mod time, returns the newest.
+// HOW:   Resolves project sessions dir from workDir, delegates to LastInDir.
+// PARAMS: workDir — the current working directory used to locate the project folder.
 // RETURNS: *Session — the most recent session; ErrNoSessions if none exist.
-func Last() (*Session, error) {
-	dir, err := sessionsDir()
+func Last(workDir string) (*Session, error) {
+	dir, err := platform.EnsureProjectDir(workDir)
 	if err != nil {
 		return nil, err
 	}

@@ -40,7 +40,7 @@ var subfolders = []string{
 	"memories",
 	"scripts",
 	"backups",
-	"sessions",
+	"projects",
 	"memory",
 	"config",
 }
@@ -121,11 +121,62 @@ func AppHome() (string, error) {
 	return filepath.Join(home, appHomeName), nil
 }
 
+// ProjectFolderName sanitizes a working directory path into a safe folder name.
+// Slashes and colons become underscores, the result is lowercase, and leading/trailing underscores are stripped.
+//
+// WHAT:  Converts an OS path to a portable folder name for project-based session storage.
+// WHY:   Each project (working directory) gets its own folder under app_home/projects/.
+// HOW:   Replaces path separators and colons with underscores, lowercases, trims edge underscores.
+// PARAMS: workDir — absolute working directory path.
+// RETURNS: string — sanitized folder name (e.g., "mnt_data_work_ai_projects_blazeai").
+func ProjectFolderName(workDir string) string {
+	name := filepath.ToSlash(workDir)
+	name = strings.ReplaceAll(name, "/", "_")
+	name = strings.ReplaceAll(name, ":", "_")
+	name = strings.ToLower(name)
+	name = strings.Trim(name, "_")
+	return name
+}
+
+// ProjectDir returns the absolute path to the project folder for a given working directory.
+// The project folder is app_home/projects/<sanitized_workdir>/
+//
+// WHAT:  Resolves the project-specific directory under app home.
+// WHY:   Sessions are grouped by project (working directory) per spec.
+// PARAMS: workDir — absolute working directory path.
+// RETURNS: string — absolute path to the project folder; error if app home cannot be resolved.
+func ProjectDir(workDir string) (string, error) {
+	home, err := AppHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "projects", ProjectFolderName(workDir)), nil
+}
+
+// EnsureProjectDir creates the project folder and its sessions subfolder if missing.
+//
+// WHAT:  Ensures the project-specific directory structure exists on disk.
+// WHY:   New sessions need a project folder with a sessions/ subfolder.
+// PARAMS: workDir — absolute working directory path.
+// RETURNS: string — absolute path to the project sessions directory; error if creation fails.
+func EnsureProjectDir(workDir string) (string, error) {
+	projectDir, err := ProjectDir(workDir)
+	if err != nil {
+		return "", err
+	}
+	sessionsDir := filepath.Join(projectDir, "sessions")
+	if err := os.MkdirAll(sessionsDir, 0755); err != nil {
+		return "", fmt.Errorf("cannot create project sessions dir %s: %w", sessionsDir, err)
+	}
+	return sessionsDir, nil
+}
+
 // Bootstrap creates the app home directory and all standard subfolders if missing.
+// Also removes the legacy sessions/ directory if present (migrated to projects/).
 // Does NOT create scripts/venv — that is created lazily when Python is first needed.
 //
 // WHAT:  Ensures app home and standard subfolders exist on disk.
-// WHY:   The runtime needs these directories to store config, sessions, skills, etc.
+// WHY:   The runtime needs these directories to store config, skills, memory, etc.
 // HOW:   Calls os.MkdirAll on app home and each subfolder with 0755 permissions.
 // RETURNS: error if any directory creation fails.
 func Bootstrap() error {
@@ -136,6 +187,13 @@ func Bootstrap() error {
 	if err := os.MkdirAll(home, 0755); err != nil {
 		return fmt.Errorf("cannot create app home %s: %w", home, err)
 	}
+
+	// Remove legacy sessions/ directory (migrated to projects/).
+	legacySessions := filepath.Join(home, "sessions")
+	if _, statErr := os.Stat(legacySessions); statErr == nil {
+		_ = os.RemoveAll(legacySessions)
+	}
+
 	for _, sub := range subfolders {
 		dir := filepath.Join(home, sub)
 		if err := os.MkdirAll(dir, 0755); err != nil {

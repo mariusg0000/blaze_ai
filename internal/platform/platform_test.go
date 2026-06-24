@@ -159,3 +159,59 @@ func TestOSInfo(t *testing.T) {
 		}
 	}
 }
+
+// TestProjectFolderName verifies path sanitization for various OS paths.
+func TestProjectFolderName(t *testing.T) {
+	tests := []struct {
+		name    string
+		workDir string
+		want    string
+	}{
+		{"linux path", "/mnt/DATA/Work/AI/PROJECTS/BlazeAI", "mnt_data_work_ai_projects_blazeai"},
+		{"linux home", "/home/marius/project-y", "home_marius_project-y"},
+		{"linux root", "/tmp", "tmp"},
+		{"simple name", "/home/user/myproject", "home_user_myproject"},
+		{"leading slash stripped", "/home/user", "home_user"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ProjectFolderName(tt.workDir)
+			if got != tt.want {
+				t.Errorf("ProjectFolderName(%q) = %q, want %q", tt.workDir, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestProjectDir verifies the resolved project directory path.
+func ProjectDirTest(t *testing.T) {
+	t.Helper()
+	got, err := ProjectDir("/home/user/project")
+	if err != nil {
+		t.Fatalf("ProjectDir() unexpected error: %v", err)
+	}
+	if !strings.HasSuffix(got, filepath.Join("projects", "home_user_project")) {
+		t.Errorf("ProjectDir() = %q, want path ending with 'projects/home_user_project'", got)
+	}
+}
+
+// TestEnsureProjectDir verifies that the project directory and sessions subfolder are created.
+func TestEnsureProjectDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	sessionsDir, err := EnsureProjectDir("/home/user/testproject")
+	if err != nil {
+		t.Fatalf("EnsureProjectDir() unexpected error: %v", err)
+	}
+	if !strings.HasSuffix(sessionsDir, filepath.Join("home_user_testproject", "sessions")) {
+		t.Errorf("EnsureProjectDir() = %q, want path ending with 'home_user_testproject/sessions'", sessionsDir)
+	}
+	info, err := os.Stat(sessionsDir)
+	if err != nil {
+		t.Fatalf("sessions dir not created: %v", err)
+	}
+	if !info.IsDir() {
+		t.Error("sessions path exists but is not a directory")
+	}
+}

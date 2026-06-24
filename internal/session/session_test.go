@@ -136,6 +136,40 @@ func TestClose(t *testing.T) {
 	}
 }
 
+// TestReset verifies that Reset clears messages and reopens the session.
+func TestReset(t *testing.T) {
+	dir := t.TempDir()
+	s, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() failed: %v", err)
+	}
+	if err := s.Append(Message{Role: "user", Content: "hello"}); err != nil {
+		t.Fatalf("Append() failed: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close() failed: %v", err)
+	}
+	if err := s.Reset(); err != nil {
+		t.Fatalf("Reset() unexpected error: %v", err)
+	}
+	if len(s.Messages) != 0 {
+		t.Errorf("Messages = %d, want 0", len(s.Messages))
+	}
+	if s.ClosedCleanly {
+		t.Error("ClosedCleanly = true after Reset, want false")
+	}
+	loaded, err := Load(s.Folder)
+	if err != nil {
+		t.Fatalf("Load() after Reset failed: %v", err)
+	}
+	if len(loaded.Messages) != 0 {
+		t.Errorf("Loaded Messages = %d, want 0", len(loaded.Messages))
+	}
+	if loaded.ClosedCleanly {
+		t.Error("Loaded ClosedCleanly = true, want false")
+	}
+}
+
 // TestLastCleanInDir verifies finding the last cleanly closed session.
 func TestLastCleanInDir(t *testing.T) {
 	dir := t.TempDir()

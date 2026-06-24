@@ -66,23 +66,29 @@ func run() error {
 		}
 	}
 
+	// Get work directory (needed for project-based session storage).
+	workDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("cannot get working directory: %w", err)
+	}
+
 	// Create or resume session.
 	var sess *session.Session
 	switch {
 	case *continueFlag:
-		sess, err = session.LastClean()
+		sess, err = session.LastClean(workDir)
 		if err != nil {
 			return fmt.Errorf("cannot continue session: %w", err)
 		}
 		fmt.Printf("Resuming session: %s\n", sess.Folder)
 	case *resumeFlag:
-		sess, err = session.Last()
+		sess, err = session.Last(workDir)
 		if err != nil {
 			return fmt.Errorf("cannot resume session: %w", err)
 		}
 		fmt.Printf("Resuming session: %s\n", sess.Folder)
 	default:
-		sess, err = session.Create()
+		sess, err = session.Create(workDir)
 		if err != nil {
 			return fmt.Errorf("cannot create session: %w", err)
 		}
@@ -96,12 +102,6 @@ func run() error {
 	builtinSkillsFS, err := fs.Sub(embeddedBuiltinSkills, "skills")
 	if err != nil {
 		return fmt.Errorf("cannot resolve embedded skills: %w", err)
-	}
-
-	// Get work directory.
-	workDir, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("cannot get working directory: %w", err)
 	}
 
 	// Create agent and console.

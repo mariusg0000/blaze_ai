@@ -45,6 +45,14 @@ type ActiveList struct {
 	names []string
 }
 
+// Clear removes all active skills from the list.
+//
+// WHAT:  Resets the active skill list to empty.
+// WHY:   /clear and similar reset flows need to remove all loaded skills at once.
+func (a *ActiveList) Clear() {
+	a.names = a.names[:0]
+}
+
 // NewActiveList returns an empty ActiveList for a new session.
 //
 // WHAT:  Creates a fresh active skills list.

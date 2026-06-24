@@ -873,6 +873,12 @@ func (c *Console) handleCommand(input string) (bool, bool, error) {
 		}
 		fmt.Fprintf(c.Out, "Work folder: %s\n", arg)
 		return true, false, nil
+	case "/clear", "/new":
+		if err := c.Agent.ResetConversation(); err != nil {
+			return true, false, fmt.Errorf("cannot reset session: %w", err)
+		}
+		fmt.Fprintln(c.Out, "Session cleared.")
+		return true, false, nil
 	default:
 		// Unknown slash command — pass to agent as normal message.
 		return false, false, nil

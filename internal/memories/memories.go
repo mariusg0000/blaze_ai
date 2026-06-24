@@ -42,6 +42,14 @@ type ActiveList struct {
 	names []string
 }
 
+// Clear removes all active memories from the list.
+//
+// WHAT:  Resets the active memory list to empty.
+// WHY:   /clear and similar reset flows need to remove all loaded memories at once.
+func (a *ActiveList) Clear() {
+	a.names = a.names[:0]
+}
+
 // NewActiveList returns an empty ActiveList for a new session.
 //
 // WHAT:  Creates a fresh active memory list.

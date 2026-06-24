@@ -394,6 +394,32 @@ func (a *Agent) CloseSession() error {
 	return a.Session.Close()
 }
 
+// ResetConversation clears the current session history and loaded context.
+//
+// WHAT:  Restarts the current session in place without changing its folder name.
+// WHY:   /clear and /new need a clean prompt state with only the sysprompt and no active skills or memories.
+// RETURNS: error if clearing summaries or persisting the reset session fails.
+func (a *Agent) ResetConversation() error {
+	if a.Compactor != nil {
+		if err := a.Compactor.ClearSummaries(a.Session.Folder); err != nil {
+			return fmt.Errorf("cannot clear summaries: %w", err)
+		}
+	}
+	if err := os.Remove(filepath.Join(a.Session.Folder, "prompt.json")); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("cannot clear prompt debug file: %w", err)
+	}
+	if a.Active != nil {
+		a.Active.Clear()
+	}
+	if a.Memories != nil {
+		a.Memories.Clear()
+	}
+	if err := a.Session.Reset(); err != nil {
+		return fmt.Errorf("cannot reset session: %w", err)
+	}
+	return nil
+}
+
 // CloseSession marks the session as cleanly closed.
 
 // validateModelInConfig checks that a model ID exists in the config's providers and favorite models.

@@ -368,6 +368,16 @@ func summariesDir(sessionFolder string) string {
 	return filepath.Join(sessionFolder, "summaries")
 }
 
+// ClearSummaries deletes all summary files for a session.
+//
+// WHAT:  Removes the session's stored summary chunks.
+// WHY:   /clear and /new must restart the session without carrying prior compaction state.
+// PARAMS: sessionFolder — path to the session folder.
+// RETURNS: error if deletion fails.
+func (m *Manager) ClearSummaries(sessionFolder string) error {
+	return os.RemoveAll(summariesDir(sessionFolder))
+}
+
 // saveSummary writes a new summary chunk to the session's summaries folder.
 // File names are zero-padded sequential numbers.
 //

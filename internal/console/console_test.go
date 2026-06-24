@@ -544,6 +544,59 @@ func TestHandleCommandCdNoArg(t *testing.T) {
 	}
 }
 
+// TestHandleCommandClear verifies /clear and /new reset session state in place.
+func TestHandleCommandClear(t *testing.T) {
+	for _, cmd := range []string{"/clear", "/new"} {
+		t.Run(strings.TrimPrefix(cmd, "/"), func(t *testing.T) {
+			c, out := newConsole(mockAgent(t))
+			c.Agent.Active.Load("music_player")
+			c.Agent.Memories.Load("music-library")
+			if err := c.Agent.Session.Append(session.Message{Role: "user", Content: "old context"}); err != nil {
+				t.Fatalf("Append() failed: %v", err)
+			}
+			summaryDir := filepath.Join(c.Agent.Session.Folder, "summaries")
+			if err := os.MkdirAll(summaryDir, 0755); err != nil {
+				t.Fatalf("MkdirAll() failed: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(summaryDir, "000001.md"), []byte("summary"), 0644); err != nil {
+				t.Fatalf("WriteFile() failed: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(c.Agent.Session.Folder, "prompt.json"), []byte("debug"), 0644); err != nil {
+				t.Fatalf("prompt write failed: %v", err)
+			}
+
+			handled, exit, err := c.handleCommand(cmd)
+			if err != nil {
+				t.Fatalf("%s error: %v", cmd, err)
+			}
+			if !handled || exit {
+				t.Errorf("handled=%v exit=%v, want true/false", handled, exit)
+			}
+			if len(c.Agent.Session.Messages) != 0 {
+				t.Errorf("session has %d messages, want 0", len(c.Agent.Session.Messages))
+			}
+			if c.Agent.Session.ClosedCleanly {
+				t.Error("session should remain open after clear")
+			}
+			if len(c.Agent.Active.List()) != 0 {
+				t.Errorf("active skills = %v, want empty", c.Agent.Active.List())
+			}
+			if len(c.Agent.Memories.List()) != 0 {
+				t.Errorf("active memories = %v, want empty", c.Agent.Memories.List())
+			}
+			if _, err := os.Stat(summaryDir); !os.IsNotExist(err) {
+				t.Errorf("summaries dir still exists: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(c.Agent.Session.Folder, "prompt.json")); !os.IsNotExist(err) {
+				t.Errorf("prompt.json still exists: %v", err)
+			}
+			if !strings.Contains(out.String(), "Session cleared.") {
+				t.Errorf("output missing confirmation: %q", out.String())
+			}
+		})
+	}
+}
+
 // TestHandleCommandUnknown verifies unknown slash commands are not handled.
 func TestHandleCommandUnknown(t *testing.T) {
 	c, _ := newConsole(mockAgent(t))
