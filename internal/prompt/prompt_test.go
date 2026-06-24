@@ -36,12 +36,7 @@ func setupTestDirs(t *testing.T) (promptsFS, builtinSkillsFS fs.FS, workDir stri
 	}
 
 	// Universal prompt with {APP_HOME} variable.
-	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"),
-		"# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n## Tool Discipline\n- Keep relevant loaded skills active across follow-up turns on the same topic or task.\n- Unload a skill only when the user clearly changes topic or task, or when the loaded skill would interfere with the next turn.\n")
-
-	// OS prompt.
-	writeFile(t, filepath.Join(promptsDir, "sysprompt.linux.md"),
-		"# Linux System Prompt\n\nScripts at {APP_HOME}/scripts/.\n")
+	writePromptFixtures(t, promptsDir)
 
 	// Builtin skill.
 	writeFile(t, filepath.Join(builtinSkillsDir, "memory-manager.md"),
@@ -76,6 +71,13 @@ func writeFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("cannot write %s: %v", path, err)
 	}
+}
+
+// writePromptFixtures creates the prompt templates required by runtime prompt assembly.
+func writePromptFixtures(t *testing.T, promptsDir string) {
+	t.Helper()
+	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n## Tool Discipline\n- Keep relevant loaded skills active across follow-up turns on the same topic or task.\n- Do not unload a skill immediately after one successful action if the user is likely to continue in the same domain.\n- Unload a skill only when the user clearly changes topic or task, or when the loaded skill would interfere with the next turn.\n\n## Active State Rules\n- Only skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.\n- Only memories listed under `## Active Memories` are active right now. Do not infer current active memories from older `load_memory` or `unload_memory` tool results in the conversation history. If there is no `## Active Memories` section below, then no memories are currently active.\n\n{OS_PROMPT}\n\n{HOST_HELPERS_SECTION}\n\n{SKILLS_SECTION}\n\n{MEMORIES_SECTION}\n\n{AGENTS_SECTION}\n")
+	writeFile(t, filepath.Join(promptsDir, "sysprompt.linux.md"), "# Linux System Prompt\n\nScripts at {APP_HOME}/scripts/.\n")
 }
 
 // TestInjectVariablesWorkDir verifies that {WORK_DIR} is replaced.
@@ -247,7 +249,7 @@ func TestBuildRuntimePartMissingOSPrompt(t *testing.T) {
 	root := t.TempDir()
 	promptsDir := filepath.Join(root, "prompts")
 	os.MkdirAll(promptsDir, 0755)
-	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "universal")
+	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "universal {OS_PROMPT}")
 
 	b := &Builder{
 		PromptsFS:       os.DirFS(promptsDir),
@@ -357,8 +359,7 @@ func TestBuildRuntimePartNoSkills(t *testing.T) {
 	root := t.TempDir()
 	promptsDir := filepath.Join(root, "prompts")
 	os.MkdirAll(promptsDir, 0755)
-	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "universal")
-	writeFile(t, filepath.Join(promptsDir, "sysprompt.linux.md"), "linux")
+	writePromptFixtures(t, promptsDir)
 
 	b := &Builder{
 		PromptsFS:       os.DirFS(promptsDir),

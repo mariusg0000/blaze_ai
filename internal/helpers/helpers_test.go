@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"blazeai/internal/config"
@@ -52,104 +51,101 @@ func TestDetectNoneAvailable(t *testing.T) {
 	}
 }
 
-// TestBuildPromptSectionAvailableCore verifies available core helpers appear.
-func TestBuildPromptSectionAvailableCore(t *testing.T) {
+// TestAvailableCoreHelpers verifies available core helpers appear when detected.
+func TestAvailableCoreHelpers(t *testing.T) {
 	statuses := Detect(fakeLookup([]string{"rg", "fd", "jq", "git", "curl"}))
-	section := BuildPromptSection(statuses, "/tmp", config.HelperSetup{})
-	if !strings.Contains(section, "## Host Environment Helpers") {
-		t.Error("expected Host Environment Helpers section")
+	available := Available(statuses, "/tmp")
+	if len(available) != 5 {
+		t.Fatalf("Available() returned %d helpers, want 5", len(available))
 	}
-	if !strings.Contains(section, "rg") || !strings.Contains(section, "jq") {
-		t.Error("expected rg and jq in available section")
-	}
-	if strings.Contains(section, "Optional Host Environment Helpers") {
-		t.Error("unexpected Optional Host Environment Helpers when core helpers are available")
+	if available[0].Name != "curl" || available[4].Name != "rg" {
+		t.Fatalf("Available() not sorted by name: first=%q last=%q", available[0].Name, available[4].Name)
 	}
 }
 
-// TestBuildPromptSectionMissingCoreNotDismissed verifies missing core helpers appear when not dismissed.
-func TestBuildPromptSectionMissingCoreNotDismissed(t *testing.T) {
+// TestMissingCoreHelpers verifies missing core helpers are returned when unavailable.
+func TestMissingCoreHelpers(t *testing.T) {
 	statuses := Detect(fakeLookup([]string{"git", "curl"}))
-	section := BuildPromptSection(statuses, "/tmp", config.HelperSetup{})
-	if !strings.Contains(section, "Optional Host Environment Helpers") {
-		t.Error("expected Optional Host Environment Helpers section when core helpers are missing")
+	missing := MissingCore(statuses, config.HelperSetup{})
+	if len(missing) == 0 {
+		t.Fatal("MissingCore() returned no helpers, want missing core helpers")
 	}
-	if !strings.Contains(section, "rg") {
-		t.Error("expected rg in optional section")
-	}
-}
-
-// TestBuildPromptSectionMissingCoreDismissed verifies missing core helpers suppressed when dismissed.
-func TestBuildPromptSectionMissingCoreDismissed(t *testing.T) {
-	statuses := Detect(fakeLookup([]string{"git", "curl"}))
-	section := BuildPromptSection(statuses, "/tmp", config.HelperSetup{Dismissed: true})
-	if strings.Contains(section, "Optional Host Environment Helpers") {
-		t.Error("unexpected Optional Host Environment Helpers when dismissed=true")
-	}
-	if !strings.Contains(section, "Host Environment Helpers") {
-		t.Error("expected Host Environment Helpers for git and curl")
+	if missing[0].Name != "fd" || missing[len(missing)-1].Name != "rg" {
+		t.Fatalf("MissingCore() not sorted or incomplete: first=%q last=%q", missing[0].Name, missing[len(missing)-1].Name)
 	}
 }
 
-// TestBuildPromptSectionDeclinedHelper verifies declined helpers do not appear in optional.
-func TestBuildPromptSectionDeclinedHelper(t *testing.T) {
+// TestMissingCoreHelpersDeclined verifies declined helpers are excluded.
+func TestMissingCoreHelpersDeclined(t *testing.T) {
 	statuses := Detect(fakeLookup([]string{"curl"}))
-	section := BuildPromptSection(statuses, "/tmp", config.HelperSetup{
-		Declined: []string{"rg", "fd"},
-	})
-	if strings.Contains(section, "rg") || strings.Contains(section, "fd") {
-		t.Error("expected declined helpers rg and fd to be excluded from optional section")
-	}
-	if strings.Contains(section, "jq") {
-		// jq is not declined, should appear.
-	} else {
-		t.Error("expected non-declined jq to appear in optional section")
+	missing := MissingCore(statuses, config.HelperSetup{Declined: []string{"rg", "fd"}})
+	for _, s := range missing {
+		if s.Name == "rg" || s.Name == "fd" {
+			t.Fatalf("MissingCore() included declined helper %q", s.Name)
+		}
 	}
 }
 
-// TestBuildPromptSectionNoHelpersDismissed verifies empty section when nothing to show.
-func TestBuildPromptSectionNoHelpersDismissed(t *testing.T) {
-	statuses := Detect(fakeLookup(nil))
-	section := BuildPromptSection(statuses, "/tmp", config.HelperSetup{Dismissed: true})
-	if section != "" {
-		t.Errorf("expected empty section, got: %s", section)
+// TestMissingCoreHelpersNoMissing verifies empty result when nothing is missing.
+func TestMissingCoreHelpersNoMissing(t *testing.T) {
+	statuses := Detect(fakeLookup([]string{"rg", "fd", "jq", "git", "curl"}))
+	missing := MissingCore(statuses, config.HelperSetup{})
+	if len(missing) != 0 {
+		t.Fatalf("MissingCore() returned %d helpers, want 0", len(missing))
 	}
 }
 
-// TestBuildPromptSectionContextualGo verifies contextual go appears only with go.mod.
-func TestBuildPromptSectionContextualGo(t *testing.T) {
+// TestAvailableHelpersContextualGo verifies contextual go appears only with go.mod.
+func TestAvailableHelpersContextualGo(t *testing.T) {
 	dir := t.TempDir()
 	statuses := Detect(fakeLookup([]string{"rg", "go"}))
 
-	section := BuildPromptSection(statuses, dir, config.HelperSetup{})
-	if strings.Contains(section, "go") {
-		t.Error("expected go NOT to appear without go.mod in workdir")
+	available := Available(statuses, dir)
+	for _, s := range available {
+		if s.Name == "go" {
+			t.Fatal("expected go NOT to appear without go.mod in workdir")
+		}
 	}
 
 	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test"), 0644)
-	section = BuildPromptSection(statuses, dir, config.HelperSetup{})
-	if !strings.Contains(section, "go") {
+	available = Available(statuses, dir)
+	found := false
+	for _, s := range available {
+		if s.Name == "go" {
+			found = true
+		}
+	}
+	if !found {
 		t.Error("expected go to appear with go.mod in workdir")
 	}
 }
 
-// TestBuildPromptSectionContextualNode verifies contextual node appears only with package.json.
-func TestBuildPromptSectionContextualNode(t *testing.T) {
+// TestAvailableHelpersContextualNode verifies contextual node appears only with package.json.
+func TestAvailableHelpersContextualNode(t *testing.T) {
 	dir := t.TempDir()
 	statuses := Detect(fakeLookup([]string{"rg", "node", "npm"}))
 
-	section := BuildPromptSection(statuses, dir, config.HelperSetup{})
-	if strings.Contains(section, "node") {
-		t.Error("expected node NOT to appear without package.json")
+	available := Available(statuses, dir)
+	for _, s := range available {
+		if s.Name == "node" || s.Name == "npm" {
+			t.Fatal("expected node/npm NOT to appear without package.json")
+		}
 	}
 
 	os.WriteFile(filepath.Join(dir, "package.json"), []byte("{}"), 0644)
-	section = BuildPromptSection(statuses, dir, config.HelperSetup{})
-	if !strings.Contains(section, "node") {
-		t.Error("expected node to appear with package.json")
+	available = Available(statuses, dir)
+	foundNode := false
+	foundNpm := false
+	for _, s := range available {
+		if s.Name == "node" {
+			foundNode = true
+		}
+		if s.Name == "npm" {
+			foundNpm = true
+		}
 	}
-	if !strings.Contains(section, "npm") {
-		t.Error("expected npm to appear with package.json")
+	if !foundNode || !foundNpm {
+		t.Fatal("expected node and npm to appear with package.json")
 	}
 }
 

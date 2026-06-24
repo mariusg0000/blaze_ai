@@ -64,18 +64,38 @@ type Builder struct {
 // PARAMS: text — the raw text containing placeholders.
 // RETURNS: string — text with known variables replaced; unknown ones preserved.
 func (b *Builder) injectVariables(text string) (string, error) {
-	return b.injectVariablesForSkill(text, "")
+	return b.injectTemplateVariables(text, nil, "")
 }
 
 // injectVariablesForSkill replaces known placeholders in prompt and skill text.
 // {SKILL_DIR} is resolved only when a concrete skill directory is provided.
 func (b *Builder) injectVariablesForSkill(text, skillDir string) (string, error) {
+	return b.injectTemplateVariables(text, nil, skillDir)
+}
+
+// injectTemplateVariables replaces built-in and template-specific placeholders in text.
+// Unknown placeholders are left as-is per spec.
+//
+// WHAT:  Replaces {VARIABLE_NAME} placeholders with concrete values.
+// WHY:   Prompt fragments need both built-in variables and section-specific injected text.
+// HOW:   Regex finds all {NAME} patterns; built-in values are resolved first, then extra values.
+// PARAMS: text — the raw text containing placeholders; extra — section-specific replacements;
+//
+//	skillDir — concrete skill directory for {SKILL_DIR}.
+//
+// RETURNS: string — text with known variables replaced; unknown ones preserved.
+func (b *Builder) injectTemplateVariables(text string, extra map[string]string, skillDir string) (string, error) {
 	home, err := platform.AppHome()
 	if err != nil {
 		return "", err
 	}
 	return variablePattern.ReplaceAllStringFunc(text, func(match string) string {
 		name := match[1 : len(match)-1]
+		if extra != nil {
+			if value, ok := extra[name]; ok {
+				return value
+			}
+		}
 		switch name {
 		case "APP_HOME":
 			return home
@@ -130,42 +150,37 @@ func readFileOptional(path string) (string, error) {
 	return string(data), nil
 }
 
-// buildSkillsSection assembles the skills section from discovered skills and the active list.
-// Returns the available skills block and active skills block, or empty string if no skills exist.
+// buildSkillsSection assembles the skills data from discovered skills and the active list.
+// Returns empty strings for missing pieces.
 //
-// WHAT:  Builds the two-part skills section for the runtime prompt.
-// WHY:   Spec requires available skills ([DESCRIPTION] + file names) then active skills ([DETAILS]).
-// HOW:   Discovers all skills, lists available ones sorted, then injects active ones from the list.
+// WHAT:  Builds the skills data for the runtime prompt.
+// WHY:   Section labels live in sysprompt.md while the content is injected dynamically.
+// HOW:   Discovers all skills and renders available/active text blocks separately.
 // PARAMS: active — the in-memory active skills list for this session.
-// RETURNS: string — assembled skills section; error if discovery fails.
-func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, error) {
+// RETURNS: string, string — available block and active block; error if discovery fails.
+func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string, error) {
 	discovered, err := skills.DiscoverFromFS(b.BuiltinSkillsFS)
 	if err != nil {
-		return "", fmt.Errorf("skills discovery: %w", err)
+		return "", "", fmt.Errorf("skills discovery: %w", err)
 	}
 	if len(discovered) == 0 {
-		return "", nil
+		return "", "", nil
 	}
 
-	var sb strings.Builder
-
-	// Available skills block: [DESCRIPTION] of every discovered skill + file name.
-	sb.WriteString("## Available Skills\n\n")
+	available := make([]string, 0, len(discovered))
 	for _, name := range skills.SortedNames(discovered) {
 		skill := discovered[name]
 		description, err := b.injectVariablesForSkill(skill.Description, skill.Dir)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-		sb.WriteString(fmt.Sprintf("- **%s.md**: %s\n", name, description))
+		available = append(available, fmt.Sprintf("- **%s.md**: %s", name, description))
 	}
-	sb.WriteString("\nOnly skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.\n")
 
-	// Active skills block: [DETAILS] of every active skill.
 	activeNames := active.List()
+	activeDetails := ""
 	if len(activeNames) > 0 {
-		sb.WriteString("\n## Active Skills\n\n")
-		sb.WriteString("The following skills are loaded and active. Use their full details.\n\n")
+		var sb strings.Builder
 		for _, name := range activeNames {
 			skill, ok := discovered[name]
 			if !ok {
@@ -173,51 +188,47 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, error) 
 			}
 			details, err := b.injectVariablesForSkill(skill.Details, skill.Dir)
 			if err != nil {
-				return "", err
+				return "", "", err
 			}
 			sb.WriteString(fmt.Sprintf("### %s.md\n\n%s\n\n", name, details))
 		}
+		activeDetails = strings.TrimSpace(sb.String())
 	}
 
-	return sb.String(), nil
+	return strings.Join(available, "\n"), activeDetails, nil
 }
 
-// buildMemoriesSection assembles the memories section from custom memories and the active list.
-// Returns the available memories block and active memories block, or empty string if none exist.
+// buildMemoriesSection assembles the memories data from custom memories and the active list.
+// Returns empty strings for missing pieces.
 //
-// WHAT:  Builds the two-part memories section for the runtime prompt.
-// WHY:   Memories provide on-demand contextual knowledge separate from skills.
-// HOW:   Discovers all custom memories, lists available ones sorted, then injects active ones from the list.
+// WHAT:  Builds the memories data for the runtime prompt.
+// WHY:   Section labels live in sysprompt.md while the content is injected dynamically.
+// HOW:   Discovers all custom memories and renders available/active text blocks separately.
 // PARAMS: active — the in-memory active memory list for this session.
-// RETURNS: string — assembled memories section; error if discovery fails.
-func (b *Builder) buildMemoriesSection(active *memories.ActiveList) (string, error) {
+// RETURNS: string, string — available block and active block; error if discovery fails.
+func (b *Builder) buildMemoriesSection(active *memories.ActiveList) (string, string, error) {
 	discovered, err := memories.Discover()
 	if err != nil {
-		return "", fmt.Errorf("memories discovery: %w", err)
+		return "", "", fmt.Errorf("memories discovery: %w", err)
 	}
 	if len(discovered) == 0 {
-		return "", nil
+		return "", "", nil
 	}
 
-	var sb strings.Builder
-
-	// Available memories block: [DESCRIPTION] of every discovered memory + file name.
-	sb.WriteString("## Available Memories\n\n")
+	available := make([]string, 0, len(discovered))
 	for _, name := range memories.SortedNames(discovered) {
 		memory := discovered[name]
 		description, err := b.injectVariables(memory.Description)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-		sb.WriteString(fmt.Sprintf("- **%s.md**: %s\n", name, description))
+		available = append(available, fmt.Sprintf("- **%s.md**: %s", name, description))
 	}
-	sb.WriteString("\nOnly memories listed under `## Active Memories` are active right now. Do not infer current active memories from older `load_memory` or `unload_memory` tool results in the conversation history. If there is no `## Active Memories` section below, then no memories are currently active.\n")
 
-	// Active memories block: [DETAILS] of every active memory.
 	activeNames := active.List()
+	activeDetails := ""
 	if len(activeNames) > 0 {
-		sb.WriteString("\n## Active Memories\n\n")
-		sb.WriteString("The following memories are loaded and active. Use their full details.\n\n")
+		var sb strings.Builder
 		for _, name := range activeNames {
 			memory, ok := discovered[name]
 			if !ok {
@@ -225,13 +236,59 @@ func (b *Builder) buildMemoriesSection(active *memories.ActiveList) (string, err
 			}
 			details, err := b.injectVariables(memory.Details)
 			if err != nil {
-				return "", err
+				return "", "", err
 			}
 			sb.WriteString(fmt.Sprintf("### %s.md\n\n%s\n\n", name, details))
 		}
+		activeDetails = strings.TrimSpace(sb.String())
 	}
 
-	return sb.String(), nil
+	return strings.Join(available, "\n"), activeDetails, nil
+}
+
+// buildHostHelpersSection assembles the host helpers data from live detection.
+//
+// WHAT:  Builds the host helper data for the runtime prompt.
+// WHY:   Section labels live in sysprompt.md while the content is injected dynamically.
+// HOW:   Detects live helpers and renders available/optional text blocks separately.
+// PARAMS: statuses — live helper detection results.
+// RETURNS: string, string — available block and optional block; empty strings when nothing is useful to display.
+func (b *Builder) buildHostHelpersSection(statuses []helpers.Status) (string, string, error) {
+	available := helpers.Available(statuses, b.WorkDir)
+	missingCore := helpers.MissingCore(statuses, b.HelperSetup)
+
+	if len(available) == 0 && len(missingCore) == 0 {
+		return "", "", nil
+	}
+	if len(available) == 0 && b.HelperSetup.Dismissed {
+		return "", "", nil
+	}
+
+	optionalSection := ""
+	if len(missingCore) > 0 && !b.HelperSetup.Dismissed {
+		missingLines := make([]string, 0, len(missingCore))
+		for _, s := range missingCore {
+			missingLines = append(missingLines, fmt.Sprintf("- **%s**: %s", s.Name, s.Description))
+		}
+		optionalSection = strings.Join([]string{
+			"Some useful cross-platform host utilities are missing:",
+			strings.Join(missingLines, "\n"),
+			"If one would materially help the current task, explain the benefit and ask the user before installing anything.",
+			"For installation guidance, load the `setup_helpers` skill.",
+		}, "\n\n")
+	}
+	if len(available) == 0 {
+		if optionalSection == "" {
+			return "", "", nil
+		}
+		return "", strings.TrimSpace(optionalSection), nil
+	}
+
+	availableLines := make([]string, 0, len(available))
+	for _, s := range available {
+		availableLines = append(availableLines, fmt.Sprintf("- **%s**: %s", s.Name, s.Description))
+	}
+	return strings.Join(availableLines, "\n"), strings.TrimSpace(optionalSection), nil
 }
 
 // BuildRuntimePart assembles the runtime prompt part from all disk sources.
@@ -244,18 +301,11 @@ func (b *Builder) buildMemoriesSection(active *memories.ActiveList) (string, err
 // PARAMS: activeSkills — active skills list; activeMemories — active memory list.
 // RETURNS: string — assembled runtime part; error if required sources are missing or unreadable.
 func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList, activeMemories *memories.ActiveList) (string, error) {
-	var parts []string
-
 	// 1. Universal system prompt (required).
 	universal, err := readFileRequiredFS(b.PromptsFS, "sysprompt.md", ErrUniversalPromptMissing)
 	if err != nil {
 		return "", err
 	}
-	universal, err = b.injectVariables(universal)
-	if err != nil {
-		return "", err
-	}
-	parts = append(parts, universal)
 
 	// 2. OS-specific system prompt (required).
 	osPromptName := fmt.Sprintf("sysprompt.%s.md", b.OS)
@@ -267,7 +317,6 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList, activeMemori
 	if err != nil {
 		return "", err
 	}
-	parts = append(parts, osPrompt)
 
 	// 3. Host helpers (optional).
 	lookup := b.HelperLookup
@@ -275,31 +324,79 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList, activeMemori
 		lookup = helpers.DefaultLookup
 	}
 	helperStatuses := helpers.Detect(lookup)
-	helperSection := helpers.BuildPromptSection(helperStatuses, b.WorkDir, b.HelperSetup)
-	if helperSection != "" {
-		helperSection, err = b.injectVariables(helperSection)
-		if err != nil {
-			return "", err
+	helperAvailable, helperOptional, err := b.buildHostHelpersSection(helperStatuses)
+	if err != nil {
+		return "", err
+	}
+	helperSection := ""
+	if helperAvailable != "" {
+		helperSection = strings.Join([]string{
+			"## Host Environment Helpers",
+			"",
+			"The following cross-platform host utilities are available:",
+			helperAvailable,
+		}, "\n")
+	}
+	if helperOptional != "" {
+		optionalSection := strings.Join([]string{
+			"## Optional Host Environment Helpers",
+			"",
+			helperOptional,
+		}, "\n")
+		if helperSection != "" {
+			helperSection += "\n\n"
 		}
-		parts = append(parts, helperSection)
+		helperSection += optionalSection
 	}
 
 	// 4. Skills section (optional).
-	skillsSection, err := b.buildSkillsSection(activeSkills)
+	skillsAvailable, skillsActive, err := b.buildSkillsSection(activeSkills)
 	if err != nil {
 		return "", err
 	}
-	if skillsSection != "" {
-		parts = append(parts, skillsSection)
+	skillsSection := ""
+	if skillsAvailable != "" {
+		skillsSection = strings.Join([]string{
+			"## Available Skills",
+			"",
+			skillsAvailable,
+		}, "\n")
+	}
+	if skillsActive != "" {
+		activeSection := strings.Join([]string{
+			"## Active Skills",
+			"",
+			skillsActive,
+		}, "\n")
+		if skillsSection != "" {
+			skillsSection += "\n\n"
+		}
+		skillsSection += activeSection
 	}
 
 	// 5. Memories section (optional).
-	memoriesSection, err := b.buildMemoriesSection(activeMemories)
+	memoriesAvailable, memoriesActive, err := b.buildMemoriesSection(activeMemories)
 	if err != nil {
 		return "", err
 	}
-	if memoriesSection != "" {
-		parts = append(parts, memoriesSection)
+	memoriesSection := ""
+	if memoriesAvailable != "" {
+		memoriesSection = strings.Join([]string{
+			"## Available Memories",
+			"",
+			memoriesAvailable,
+		}, "\n")
+	}
+	if memoriesActive != "" {
+		activeSection := strings.Join([]string{
+			"## Active Memories",
+			"",
+			memoriesActive,
+		}, "\n")
+		if memoriesSection != "" {
+			memoriesSection += "\n\n"
+		}
+		memoriesSection += activeSection
 	}
 
 	// 6. AGENTS.md from work folder (optional).
@@ -307,15 +404,26 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList, activeMemori
 	if err != nil {
 		return "", err
 	}
+	agentsSection := ""
 	if agents != "" {
 		agents, err = b.injectVariables(agents)
 		if err != nil {
 			return "", err
 		}
-		parts = append(parts, "## Project Rules (AGENTS.md)\n\nThe following rules are loaded from the AGENTS.md file in the current working directory. Follow them for all work in this project.\n\n"+agents)
+		agentsSection = strings.Join([]string{
+			"## Project Rules (AGENTS.md)",
+			"",
+			agents,
+		}, "\n")
 	}
 
-	return strings.Join(parts, "\n\n---\n\n"), nil
+	return b.injectTemplateVariables(universal, map[string]string{
+		"OS_PROMPT":            strings.TrimSpace(osPrompt),
+		"HOST_HELPERS_SECTION": strings.TrimSpace(helperSection),
+		"SKILLS_SECTION":       strings.TrimSpace(skillsSection),
+		"MEMORIES_SECTION":     strings.TrimSpace(memoriesSection),
+		"AGENTS_SECTION":       strings.TrimSpace(agentsSection),
+	}, "")
 }
 
 // Build assembles the full prompt: runtime part + conversation part from the session.

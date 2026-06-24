@@ -1,12 +1,10 @@
 package helpers
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"blazeai/internal/config"
 )
@@ -211,64 +209,35 @@ func IsDeclined(name string, declined []string) bool {
 	return false
 }
 
-// BuildPromptSection produces the host helper prompt section.
-// Returns an empty string if there is nothing useful to display.
+// Available returns the relevant helpers that are currently installed.
 //
-// WHAT:  Builds the helper prompt section based on live detection and user preferences.
-// WHY:   Injected into the runtime prompt part on every build.
-// PARAMS: statuses — live helper detection results; workDir — current work folder;
-//
-//	setup — user UX preferences for helper setup prompts.
-//
-// RETURNS: string — the formatted prompt section, or empty if nothing to display.
-func BuildPromptSection(statuses []Status, workDir string, setup config.HelperSetup) string {
-	available := filter(statuses, func(s Status) bool {
-		return s.Available && ProjectRelevant(workDir, s.Helper)
-	})
-	missingCore := filter(statuses, func(s Status) bool {
-		return !s.Available && s.Kind == KindCore && !IsDeclined(s.Name, setup.Declined)
-	})
-
-	if len(available) == 0 && len(missingCore) == 0 {
-		return ""
-	}
-	if len(available) == 0 && setup.Dismissed {
-		return ""
-	}
-
-	var sb strings.Builder
-
-	if len(available) > 0 {
-		sb.WriteString("## Host Environment Helpers\n\n")
-		sb.WriteString("The following cross-platform host utilities are available:\n")
-		for _, s := range available {
-			sb.WriteString(fmt.Sprintf("- **%s**: %s\n", s.Name, s.Description))
-		}
-		sb.WriteString("\n")
-	}
-
-	if len(missingCore) > 0 && !setup.Dismissed {
-		if len(available) > 0 {
-			sb.WriteString("---\n\n")
-		}
-		sb.WriteString("## Optional Host Environment Helpers\n\n")
-		sb.WriteString("Some useful cross-platform host utilities are missing:\n")
-		for _, s := range missingCore {
-			sb.WriteString(fmt.Sprintf("- **%s**: %s\n", s.Name, s.Description))
-		}
-		sb.WriteString("\n")
-		sb.WriteString("If one would materially help the current task, explain the benefit and ask the user before installing anything.\n")
-		sb.WriteString("For installation guidance, load the `setup_helpers` skill.\n")
-	}
-
-	return sb.String()
-}
-
-// filter returns a slice of Status entries matching predicate.
-func filter(statuses []Status, predicate func(Status) bool) []Status {
+// WHAT:  Filters helper statuses down to available helpers relevant to the current project.
+// WHY:   Prompt rendering needs a stable data set, not a formatted section.
+// PARAMS: statuses — live helper detection results; workDir — current work folder.
+// RETURNS: []Status — sorted available helper statuses.
+func Available(statuses []Status, workDir string) []Status {
 	result := make([]Status, 0, len(statuses))
 	for _, s := range statuses {
-		if predicate(s) {
+		if s.Available && ProjectRelevant(workDir, s.Helper) {
+			result = append(result, s)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name < result[j].Name
+	})
+	return result
+}
+
+// MissingCore returns the core helpers that are not installed and were not declined.
+//
+// WHAT:  Filters helper statuses down to missing core helpers that should still be shown.
+// WHY:   Prompt rendering needs to know which helper names to display in the optional block.
+// PARAMS: statuses — live helper detection results; setup — user helper preferences.
+// RETURNS: []Status — sorted missing core helper statuses.
+func MissingCore(statuses []Status, setup config.HelperSetup) []Status {
+	result := make([]Status, 0, len(statuses))
+	for _, s := range statuses {
+		if !s.Available && s.Kind == KindCore && !IsDeclined(s.Name, setup.Declined) {
 			result = append(result, s)
 		}
 	}

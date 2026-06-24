@@ -70,8 +70,7 @@ func setupAgent(t *testing.T, handler http.HandlerFunc) (*Agent, *mockHandler, *
 	// Create minimal prompt files required by the builder.
 	promptsDir := filepath.Join(dir, "prompts")
 	os.MkdirAll(promptsDir, 0755)
-	os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("system"), 0644)
-	os.WriteFile(filepath.Join(promptsDir, "sysprompt.linux.md"), []byte("linux"), 0644)
+	writePromptFixtures(t, promptsDir)
 
 	h := &mockHandler{}
 	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(filepath.Join(dir, "skills")), os.DirFS(promptsDir), dir, h)
@@ -79,6 +78,13 @@ func setupAgent(t *testing.T, handler http.HandlerFunc) (*Agent, *mockHandler, *
 		t.Fatalf("NewAgent() error: %v", err)
 	}
 	return agent, h, server
+}
+
+// writePromptFixtures creates the prompt templates required by runtime prompt assembly.
+func writePromptFixtures(t *testing.T, promptsDir string) {
+	t.Helper()
+	os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n## Tool Discipline\n- Keep relevant loaded skills active across follow-up turns on the same topic or task.\n- Do not unload a skill immediately after one successful action if the user is likely to continue in the same domain.\n- Unload a skill only when the user clearly changes topic or task, or when the loaded skill would interfere with the next turn.\n\n## Active State Rules\n- Only skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.\n- Only memories listed under `## Active Memories` are active right now. Do not infer current active memories from older `load_memory` or `unload_memory` tool results in the conversation history. If there is no `## Active Memories` section below, then no memories are currently active.\n\n{OS_PROMPT}\n\n{HOST_HELPERS_SECTION}\n\n{SKILLS_SECTION}\n\n{MEMORIES_SECTION}\n\n{AGENTS_SECTION}\n"), 0644)
+	os.WriteFile(filepath.Join(promptsDir, "sysprompt.linux.md"), []byte("linux"), 0644)
 }
 
 // TestRunTurnTextResponse verifies a turn with a text-only LLM response.

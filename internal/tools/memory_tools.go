@@ -60,7 +60,7 @@ func (t *LoadMemoryTool) FormatArgs(args json.RawMessage) string {
 
 // Description returns the human-readable description for the LLM.
 func (t *LoadMemoryTool) Description() string {
-	return "Load a memory by name to activate it. The memory's full details will be available in the next prompt."
+	return "Load a memory by name."
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -70,7 +70,7 @@ func (t *LoadMemoryTool) Parameters() json.RawMessage {
 		"properties": {
 			"purpose": {
 				"type": "string",
-				"description": "A concise 1-2 sentence summary of this memory change. State the intent and the memory being activated."
+				"description": "Short summary of the action."
 			},
 			"name": {
 				"type": "string",
@@ -140,7 +140,7 @@ func (t *UnloadMemoryTool) FormatArgs(args json.RawMessage) string {
 
 // Description returns the human-readable description for the LLM.
 func (t *UnloadMemoryTool) Description() string {
-	return "Unload a memory by name to deactivate it for subsequent prompts. Use this when the user clearly changes topic or task, or when the loaded memory would interfere with the next turn. Do not unload a memory immediately after one successful action if the conversation is continuing in the same domain."
+	return "Unload a memory by name."
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -150,11 +150,11 @@ func (t *UnloadMemoryTool) Parameters() json.RawMessage {
 		"properties": {
 			"purpose": {
 				"type": "string",
-				"description": "A concise 1-2 sentence summary of this memory change. State the intent and the memory being deactivated, and use unload only for a clear topic or task shift or when the memory would interfere with the next turn."
+				"description": "Short summary of the action."
 			},
 			"name": {
 				"type": "string",
-				"description": "The memory name to unload from subsequent prompts. Do not use this for reflex cleanup after a single successful action in the same ongoing domain."
+				"description": "The memory name to unload."
 			}
 		},
 		"required": ["purpose", "name"]

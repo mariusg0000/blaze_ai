@@ -151,14 +151,11 @@ func TestUnloadSkillParameters(t *testing.T) {
 	schemaIncludesRequiredPurpose(t, params)
 }
 
-// TestUnloadSkillDescription verifies unload guidance is explicit about topic shifts.
+// TestUnloadSkillDescription verifies unload description stays minimal.
 func TestUnloadSkillDescription(t *testing.T) {
 	tool := NewUnloadSkillTool(skills.NewActiveList())
 	desc := tool.Description()
-	if !strings.Contains(desc, "clearly changes topic or task") {
-		t.Fatalf("Description() = %q, want explicit topic shift guidance", desc)
-	}
-	if !strings.Contains(desc, "Do not unload a skill immediately after one successful action") {
-		t.Fatalf("Description() = %q, want explicit anti-cleanup guidance", desc)
+	if desc != "Unload a skill by name." {
+		t.Fatalf("Description() = %q, want minimal unload description", desc)
 	}
 }
