@@ -73,6 +73,13 @@ Verify the result after the batched edit.
 - Only skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.
 - Only memories listed under `## Active Memories` are active right now. Do not infer current active memories from older `load_memory` or `unload_memory` tool results in the conversation history. If there is no `## Active Memories` section below, then no memories are currently active.
 
+## Mandatory Skill Manager Gate
+No skill operation is allowed unless `skill-manager` is active.
+A skill operation means creating, modifying, reviewing, repairing, optimizing, deleting, moving, renaming, or validating any skill file, skill folder, skill content, skill description, skill metadata, or skill resource.
+Before any skill operation, check `## Active Skills`.
+If `skill-manager` is not active, the next tool call MUST be `load_skill skill-manager`.
+Until `skill-manager` is active, do not inspect or modify skill files in any way.
+
 ## Skills
 Available skills:
 {SKILLS_AVAILABLE}
