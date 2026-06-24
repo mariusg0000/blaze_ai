@@ -16,7 +16,6 @@ import (
 	"blazeai/internal/platform"
 	"blazeai/internal/runtime"
 	"blazeai/internal/session"
-	"blazeai/internal/tools"
 )
 
 func main() {
@@ -117,10 +116,6 @@ func run() error {
 			return fmt.Errorf("cannot rebuild summaries for resume: %w", err)
 		}
 	}
-
-	// Register skill tools that need the active list.
-	agent.Tools.Register(tools.NewLoadSkillTool(agent.Active))
-	agent.Tools.Register(tools.NewUnloadSkillTool(agent.Active))
 
 	cons := console.NewConsole(agent)
 	agent.Handler = cons

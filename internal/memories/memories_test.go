@@ -1,5 +1,5 @@
-// memorybanks_test.go — tests for custom memory-bank parsing, discovery, and active list.
-package memorybanks
+// memories_test.go — tests for custom memory parsing, discovery, and active list.
+package memories
 
 import (
 	"os"
@@ -7,28 +7,28 @@ import (
 	"testing"
 )
 
-// writeMemoryBank writes a memory-bank file to a temp directory.
-func writeMemoryBank(t *testing.T, dir, filename, content string) string {
+// writeMemory writes a memory file to a temp directory.
+func writeMemory(t *testing.T, dir, filename, content string) string {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("cannot create dir %s: %v", dir, err)
 	}
 	path := filepath.Join(dir, filename)
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("cannot write memory-bank %s: %v", path, err)
+		t.Fatalf("cannot write memory %s: %v", path, err)
 	}
 	return path
 }
 
-// TestParseValid verifies that a well-formed memory-bank file parses correctly.
+// TestParseValid verifies that a well-formed memory file parses correctly.
 func TestParseValid(t *testing.T) {
 	content := `[DESCRIPTION]
-A test memory-bank for testing purposes.
+A test memory for testing purposes.
 
 [DETAILS]
-# Test Memory Bank
+# Test Memory
 
-This is the full detail of the test memory-bank.`
+This is the full detail of the test memory.`
 	bank, err := Parse("test", content)
 	if err != nil {
 		t.Fatalf("Parse() unexpected error: %v", err)
@@ -36,8 +36,8 @@ This is the full detail of the test memory-bank.`
 	if bank.Name != "test" {
 		t.Errorf("Name = %q, want 'test'", bank.Name)
 	}
-	if bank.Description != "A test memory-bank for testing purposes." {
-		t.Errorf("Description = %q, want 'A test memory-bank for testing purposes.'", bank.Description)
+	if bank.Description != "A test memory for testing purposes." {
+		t.Errorf("Description = %q, want 'A test memory for testing purposes.'", bank.Description)
 	}
 	if bank.Details == "" {
 		t.Error("Details is empty, want content")
@@ -76,38 +76,38 @@ func TestActiveList(t *testing.T) {
 // TestDiscoverFromDir verifies discovery from a custom directory.
 func TestDiscoverFromDir(t *testing.T) {
 	root := t.TempDir()
-	writeMemoryBank(t, root, "my-network.md", "[DESCRIPTION]\nNetwork inventory.\n\n[DETAILS]\nIPs and roles.")
-	writeMemoryBank(t, root, "project-deploy.md", "[DESCRIPTION]\nDeploy notes.\n\n[DETAILS]\nCI and rollout details.")
+	writeMemory(t, root, "my-network.md", "[DESCRIPTION]\nNetwork inventory.\n\n[DETAILS]\nIPs and roles.")
+	writeMemory(t, root, "project-deploy.md", "[DESCRIPTION]\nDeploy notes.\n\n[DETAILS]\nCI and rollout details.")
 
 	banks, err := DiscoverFromDir(root)
 	if err != nil {
 		t.Fatalf("DiscoverFromDir() unexpected error: %v", err)
 	}
 	if len(banks) != 2 {
-		t.Fatalf("discovered %d memory-banks, want 2", len(banks))
+		t.Fatalf("discovered %d memories, want 2", len(banks))
 	}
 	if banks["my-network"] == nil || banks["project-deploy"] == nil {
-		t.Fatal("expected discovered memory-banks not found")
+		t.Fatal("expected discovered memories not found")
 	}
 }
 
-// TestDiscoverFromDirSkipsInvalid verifies invalid memory-bank files are skipped.
+// TestDiscoverFromDirSkipsInvalid verifies invalid memory files are skipped.
 func TestDiscoverFromDirSkipsInvalid(t *testing.T) {
 	root := t.TempDir()
-	writeMemoryBank(t, root, "valid.md", "[DESCRIPTION]\nValid.\n\n[DETAILS]\nValid details.")
-	writeMemoryBank(t, root, "invalid.md", "no sections here")
+	writeMemory(t, root, "valid.md", "[DESCRIPTION]\nValid.\n\n[DETAILS]\nValid details.")
+	writeMemory(t, root, "invalid.md", "no sections here")
 
 	banks, err := DiscoverFromDir(root)
 	if err != nil {
 		t.Fatalf("DiscoverFromDir() unexpected error: %v", err)
 	}
 	if len(banks) != 1 {
-		t.Fatalf("discovered %d memory-banks, want 1", len(banks))
+		t.Fatalf("discovered %d memories, want 1", len(banks))
 	}
 	if banks["valid"] == nil {
-		t.Fatal("valid memory-bank not found")
+		t.Fatal("valid memory not found")
 	}
 	if banks["invalid"] != nil {
-		t.Fatal("invalid memory-bank should have been skipped")
+		t.Fatal("invalid memory should have been skipped")
 	}
 }

@@ -184,7 +184,7 @@ func (t *UnloadSkillTool) Execute(ctx context.Context, args json.RawMessage) str
 // normalizeSkillName converts the user-facing skill filename to the internal skill key.
 //
 // WHAT:  Strips the optional .md suffix from a skill name.
-// WHY:   Available skills are displayed as filenames like memory.md, while discovery keys use
+// WHY:   Available skills are displayed as filenames like memory-manager.md, while discovery keys use
 //
 //	the basename without extension, like memory.
 //

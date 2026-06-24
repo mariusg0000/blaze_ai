@@ -75,8 +75,8 @@
 ### Skills
 - Format: Markdown with fixed sections `[DESCRIPTION]` and `[DETAILS]`. Invalid without both.
 - Discovery: builtin `skills/` in project distribution + custom `app_home/skills/`. Both read every build.
-- Collision: `create_skill` forbids duplicates. If collision exists, custom wins.
-- Builtin skills: `memory`, `create_skill`, `customize_me`.
+- Collision: `skill-manager` forbids duplicates. If collision exists, custom wins.
+- Builtin skills: `memory-manager`, `skill-manager`, `customize_me`.
 - Active skills: in-memory list of names, starts empty per session, not persisted, not deduced from history.
 - `load_skill` / `unload_skill` only modify the in-memory list.
 

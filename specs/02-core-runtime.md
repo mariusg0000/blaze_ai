@@ -156,14 +156,14 @@
 - The skill file name is the skill identifier.
 
 ### Skill Collision
-- `create_skill` validates and forbids creating a skill with the same name as an existing one.
+- `skill-manager` validates and forbids creating a skill with the same name as an existing one.
 - If despite that a custom skill has the same name as a builtin skill, the custom skill wins.
 - The builtin skill with the same name is ignored when a custom one exists.
 
 ### Builtin Skills
 - At least three builtin skills ship with the product:
   1. `memory`: explains how and where persistent memory is stored and updated.
-  2. `create_skill`: explains how and where to create a new custom skill, including naming, format, and validation rules.
+  2. `skill-manager`: explains how and where to create or modify a custom skill, including naming, format, and validation rules.
   3. `customize_me`: explains how to configure providers, models, and roles in `config.json`, enabling the LLM to assist with auto-configuration.
 
 ## Memory

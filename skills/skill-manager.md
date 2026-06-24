@@ -1,8 +1,8 @@
 [DESCRIPTION]
-Load when the user wants a new skill or a skill update. Use for skill structure, `skill.md` format, folder layout, and `{SKILL_DIR}` resource paths.
+Load when creating or modifying a skill. Use this skill before any skill edit so the file, folder layout, sections, and resource paths stay valid.
 
 [DETAILS]
-# Create Skill
+# Skill Manager
 
 ## Skill Format
 - Every skill main file is Markdown and must be named `skill.md`.

@@ -187,36 +187,36 @@ func TestShellFormatArgsFallbackTruncated(t *testing.T) {
 // TestLoadSkillFormatArgs verifies load_skill prefers purpose for display.
 func TestLoadSkillFormatArgs(t *testing.T) {
 	l := NewLoadSkillTool(nil)
-	result := l.FormatArgs(json.RawMessage(`{"purpose":"Load memory skill for persistence rules","name":"memory.md"}`))
-	if result != "Load memory skill for persistence rules" {
-		t.Errorf("FormatArgs() = %q, want %q", result, "Load memory skill for persistence rules")
+	result := l.FormatArgs(json.RawMessage(`{"purpose":"Load memory manager skill for persistence rules","name":"memory-manager.md"}`))
+	if result != "Load memory manager skill for persistence rules" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "Load memory manager skill for persistence rules")
 	}
 }
 
 // TestLoadSkillFormatArgsFallback verifies load_skill falls back to normalized skill name.
 func TestLoadSkillFormatArgsFallback(t *testing.T) {
 	l := NewLoadSkillTool(nil)
-	result := l.FormatArgs(json.RawMessage(`{"name":"memory.md"}`))
-	if result != "memory" {
-		t.Errorf("FormatArgs() = %q, want %q", result, "memory")
+	result := l.FormatArgs(json.RawMessage(`{"name":"memory-manager.md"}`))
+	if result != "memory-manager" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "memory-manager")
 	}
 }
 
 // TestUnloadSkillFormatArgs verifies unload_skill prefers purpose for display.
 func TestUnloadSkillFormatArgs(t *testing.T) {
 	u := NewUnloadSkillTool(nil)
-	result := u.FormatArgs(json.RawMessage(`{"purpose":"Unload memory skill after finishing persistence update","name":"memory"}`))
-	if result != "Unload memory skill after finishing persistence update" {
-		t.Errorf("FormatArgs() = %q, want %q", result, "Unload memory skill after finishing persistence update")
+	result := u.FormatArgs(json.RawMessage(`{"purpose":"Unload memory manager skill after finishing persistence update","name":"memory-manager"}`))
+	if result != "Unload memory manager skill after finishing persistence update" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "Unload memory manager skill after finishing persistence update")
 	}
 }
 
 // TestUnloadSkillFormatArgsFallback verifies unload_skill falls back to skill name.
 func TestUnloadSkillFormatArgsFallback(t *testing.T) {
 	u := NewUnloadSkillTool(nil)
-	result := u.FormatArgs(json.RawMessage(`{"name":"memory"}`))
-	if result != "memory" {
-		t.Errorf("FormatArgs() = %q, want %q", result, "memory")
+	result := u.FormatArgs(json.RawMessage(`{"name":"memory-manager"}`))
+	if result != "memory-manager" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "memory-manager")
 	}
 }
 

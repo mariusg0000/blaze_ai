@@ -117,21 +117,21 @@ func containsStr(s, sub string) bool {
 // TestActiveListLoad verifies adding skills to the active list.
 func TestActiveListLoad(t *testing.T) {
 	a := NewActiveList()
-	a.Load("memory")
-	a.Load("create_skill")
-	if !a.Has("memory") {
-		t.Error("Has(memory) = false, want true")
+	a.Load("memory-manager")
+	a.Load("skill-manager")
+	if !a.Has("memory-manager") {
+		t.Error("Has(memory-manager) = false, want true")
 	}
-	if !a.Has("create_skill") {
-		t.Error("Has(create_skill) = false, want true")
+	if !a.Has("skill-manager") {
+		t.Error("Has(skill-manager) = false, want true")
 	}
 }
 
 // TestActiveListLoadDuplicate verifies that loading the same skill twice does not duplicate.
 func TestActiveListLoadDuplicate(t *testing.T) {
 	a := NewActiveList()
-	a.Load("memory")
-	a.Load("memory")
+	a.Load("memory-manager")
+	a.Load("memory-manager")
 	if len(a.List()) != 1 {
 		t.Errorf("List() = %d items, want 1", len(a.List()))
 	}
@@ -140,21 +140,21 @@ func TestActiveListLoadDuplicate(t *testing.T) {
 // TestActiveListUnload verifies removing a skill from the active list.
 func TestActiveListUnload(t *testing.T) {
 	a := NewActiveList()
-	a.Load("memory")
-	a.Load("create_skill")
-	a.Unload("memory")
-	if a.Has("memory") {
-		t.Error("Has(memory) = true after Unload, want false")
+	a.Load("memory-manager")
+	a.Load("skill-manager")
+	a.Unload("memory-manager")
+	if a.Has("memory-manager") {
+		t.Error("Has(memory-manager) = true after Unload, want false")
 	}
-	if !a.Has("create_skill") {
-		t.Error("Has(create_skill) = false after Unload(memory), want true")
+	if !a.Has("skill-manager") {
+		t.Error("Has(skill-manager) = false after Unload(memory-manager), want true")
 	}
 }
 
 // TestActiveListUnloadNotPresent verifies that unloading a non-active skill is a no-op.
 func TestActiveListUnloadNotPresent(t *testing.T) {
 	a := NewActiveList()
-	a.Load("memory")
+	a.Load("memory-manager")
 	a.Unload("ghost")
 	if len(a.List()) != 1 {
 		t.Errorf("List() = %d items, want 1", len(a.List()))
@@ -172,13 +172,13 @@ func TestActiveListEmpty(t *testing.T) {
 // TestActiveListListCopy verifies that List returns a copy, not the internal slice.
 func TestActiveListListCopy(t *testing.T) {
 	a := NewActiveList()
-	a.Load("memory")
+	a.Load("memory-manager")
 	l := a.List()
 	l[0] = "modified"
 	if a.Has("modified") {
 		t.Error("modifying List() result affected internal state")
 	}
-	if !a.Has("memory") {
+	if !a.Has("memory-manager") {
 		t.Error("internal state was corrupted by List() modification")
 	}
 }
@@ -188,8 +188,8 @@ func TestDiscoverFromDirs(t *testing.T) {
 	builtin := filepath.Join(t.TempDir(), "builtin")
 	custom := filepath.Join(t.TempDir(), "custom")
 
-	writeSkill(t, builtin, "memory.md", "[DESCRIPTION]\nBuiltin memory.\n\n[DETAILS]\nBuiltin details.")
-	writeSkill(t, builtin, "create_skill.md", "[DESCRIPTION]\nBuiltin create.\n\n[DETAILS]\nBuiltin create details.")
+	writeSkill(t, builtin, "memory-manager.md", "[DESCRIPTION]\nBuiltin memory manager.\n\n[DETAILS]\nBuiltin details.")
+	writeSkill(t, builtin, "skill-manager.md", "[DESCRIPTION]\nBuiltin skill manager.\n\n[DETAILS]\nBuiltin skill manager details.")
 	writeCustomSkill(t, custom, "my_skill", "[DESCRIPTION]\nCustom skill.\n\n[DETAILS]\nCustom details.")
 
 	skills, err := DiscoverFromDirs(builtin, custom)
@@ -199,11 +199,11 @@ func TestDiscoverFromDirs(t *testing.T) {
 	if len(skills) != 3 {
 		t.Fatalf("discovered %d skills, want 3", len(skills))
 	}
-	if skills["memory"] == nil {
-		t.Error("memory skill not found")
+	if skills["memory-manager"] == nil {
+		t.Error("memory-manager skill not found")
 	}
-	if skills["create_skill"] == nil {
-		t.Error("create_skill skill not found")
+	if skills["skill-manager"] == nil {
+		t.Error("skill-manager skill not found")
 	}
 	if skills["my_skill"] == nil {
 		t.Error("my_skill skill not found")
@@ -215,8 +215,8 @@ func TestDiscoverCollisionCustomWins(t *testing.T) {
 	builtin := filepath.Join(t.TempDir(), "builtin")
 	custom := filepath.Join(t.TempDir(), "custom")
 
-	writeSkill(t, builtin, "memory.md", "[DESCRIPTION]\nBuiltin memory.\n\n[DETAILS]\nBuiltin details.")
-	writeCustomSkill(t, custom, "memory", "[DESCRIPTION]\nCustom memory.\n\n[DETAILS]\nCustom details.")
+	writeSkill(t, builtin, "memory-manager.md", "[DESCRIPTION]\nBuiltin memory manager.\n\n[DETAILS]\nBuiltin details.")
+	writeCustomSkill(t, custom, "memory-manager", "[DESCRIPTION]\nCustom memory manager.\n\n[DETAILS]\nCustom details.")
 
 	skills, err := DiscoverFromDirs(builtin, custom)
 	if err != nil {
@@ -225,8 +225,8 @@ func TestDiscoverCollisionCustomWins(t *testing.T) {
 	if len(skills) != 1 {
 		t.Fatalf("discovered %d skills, want 1 (collision resolved)", len(skills))
 	}
-	if skills["memory"].Description != "Custom memory." {
-		t.Errorf("collision: Description = %q, want 'Custom memory.'", skills["memory"].Description)
+	if skills["memory-manager"].Description != "Custom memory manager." {
+		t.Errorf("collision: Description = %q, want 'Custom memory manager.'", skills["memory-manager"].Description)
 	}
 }
 

@@ -14,13 +14,13 @@ import (
 func TestLoadSkillExecute(t *testing.T) {
 	active := skills.NewActiveList()
 	tool := NewLoadSkillTool(active)
-	args := json.RawMessage(`{"name":"memory"}`)
+	args := json.RawMessage(`{"name":"memory-manager"}`)
 	result := tool.Execute(context.Background(), args)
-	if !strings.Contains(result, "skill loaded: memory") {
-		t.Errorf("Execute() = %q, want 'skill loaded: memory'", result)
+	if !strings.Contains(result, "skill loaded: memory-manager") {
+		t.Errorf("Execute() = %q, want 'skill loaded: memory-manager'", result)
 	}
-	if !active.Has("memory") {
-		t.Error("active list does not contain 'memory' after load")
+	if !active.Has("memory-manager") {
+		t.Error("active list does not contain 'memory-manager' after load")
 	}
 }
 
@@ -28,16 +28,16 @@ func TestLoadSkillExecute(t *testing.T) {
 func TestLoadSkillExecuteWithMarkdownSuffix(t *testing.T) {
 	active := skills.NewActiveList()
 	tool := NewLoadSkillTool(active)
-	args := json.RawMessage(`{"name":"memory.md"}`)
+	args := json.RawMessage(`{"name":"memory-manager.md"}`)
 	result := tool.Execute(context.Background(), args)
-	if !strings.Contains(result, "skill loaded: memory") {
-		t.Errorf("Execute() = %q, want 'skill loaded: memory'", result)
+	if !strings.Contains(result, "skill loaded: memory-manager") {
+		t.Errorf("Execute() = %q, want 'skill loaded: memory-manager'", result)
 	}
-	if !active.Has("memory") {
-		t.Error("active list does not contain normalized 'memory' after load")
+	if !active.Has("memory-manager") {
+		t.Error("active list does not contain normalized 'memory-manager' after load")
 	}
-	if active.Has("memory.md") {
-		t.Error("active list should not contain raw 'memory.md' after load")
+	if active.Has("memory-manager.md") {
+		t.Error("active list should not contain raw 'memory-manager.md' after load")
 	}
 }
 
@@ -84,30 +84,30 @@ func TestLoadSkillParameters(t *testing.T) {
 // TestUnloadSkillExecute verifies that a skill is removed from the active list.
 func TestUnloadSkillExecute(t *testing.T) {
 	active := skills.NewActiveList()
-	active.Load("memory")
+	active.Load("memory-manager")
 	tool := NewUnloadSkillTool(active)
-	args := json.RawMessage(`{"name":"memory"}`)
+	args := json.RawMessage(`{"name":"memory-manager"}`)
 	result := tool.Execute(context.Background(), args)
-	if !strings.Contains(result, "skill unloaded: memory") {
-		t.Errorf("Execute() = %q, want 'skill unloaded: memory'", result)
+	if !strings.Contains(result, "skill unloaded: memory-manager") {
+		t.Errorf("Execute() = %q, want 'skill unloaded: memory-manager'", result)
 	}
-	if active.Has("memory") {
-		t.Error("active list still contains 'memory' after unload")
+	if active.Has("memory-manager") {
+		t.Error("active list still contains 'memory-manager' after unload")
 	}
 }
 
 // TestUnloadSkillExecuteWithMarkdownSuffix verifies .md names are normalized on unload.
 func TestUnloadSkillExecuteWithMarkdownSuffix(t *testing.T) {
 	active := skills.NewActiveList()
-	active.Load("memory")
+	active.Load("memory-manager")
 	tool := NewUnloadSkillTool(active)
-	args := json.RawMessage(`{"name":"memory.md"}`)
+	args := json.RawMessage(`{"name":"memory-manager.md"}`)
 	result := tool.Execute(context.Background(), args)
-	if !strings.Contains(result, "skill unloaded: memory") {
-		t.Errorf("Execute() = %q, want 'skill unloaded: memory'", result)
+	if !strings.Contains(result, "skill unloaded: memory-manager") {
+		t.Errorf("Execute() = %q, want 'skill unloaded: memory-manager'", result)
 	}
-	if active.Has("memory") {
-		t.Error("active list still contains normalized 'memory' after unload")
+	if active.Has("memory-manager") {
+		t.Error("active list still contains normalized 'memory-manager' after unload")
 	}
 }
 

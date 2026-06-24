@@ -1,10 +1,10 @@
 // prompt.go — prompt assembly from disk sources on every LLM call.
 // Rebuilds the runtime prompt part in spec order: universal sysprompt, OS sysprompt,
-// host helpers, memory.md, skills section, memory-banks, AGENTS.md.
+// host helpers, skills section, memories, AGENTS.md.
 // Replaces {VARIABLE_NAME} placeholders at build time.
 // The conversation part (session message history) is appended after the runtime part.
-// Layer: prompt construction. Dependencies: internal/skills, internal/memory,
-// internal/memorybanks, internal/platform.
+// Layer: prompt construction. Dependencies: internal/skills, internal/memories,
+// internal/platform.
 package prompt
 
 import (
@@ -18,8 +18,7 @@ import (
 
 	"blazeai/internal/config"
 	"blazeai/internal/helpers"
-	"blazeai/internal/memory"
-	"blazeai/internal/memorybanks"
+	"blazeai/internal/memories"
 	"blazeai/internal/platform"
 	"blazeai/internal/session"
 	"blazeai/internal/skills"
@@ -183,18 +182,18 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, error) 
 	return sb.String(), nil
 }
 
-// buildMemoryBanksSection assembles the memory-bank section from custom memory-banks and the active list.
-// Returns the available memory-banks block and active memory-banks block, or empty string if none exist.
+// buildMemoriesSection assembles the memories section from custom memories and the active list.
+// Returns the available memories block and active memories block, or empty string if none exist.
 //
-// WHAT:  Builds the two-part memory-bank section for the runtime prompt.
-// WHY:   Memory-banks provide on-demand contextual knowledge separate from skills.
-// HOW:   Discovers all custom memory-banks, lists available ones sorted, then injects active ones from the list.
-// PARAMS: active — the in-memory active memory-bank list for this session.
-// RETURNS: string — assembled memory-bank section; error if discovery fails.
-func (b *Builder) buildMemoryBanksSection(active *memorybanks.ActiveList) (string, error) {
-	discovered, err := memorybanks.Discover()
+// WHAT:  Builds the two-part memories section for the runtime prompt.
+// WHY:   Memories provide on-demand contextual knowledge separate from skills.
+// HOW:   Discovers all custom memories, lists available ones sorted, then injects active ones from the list.
+// PARAMS: active — the in-memory active memory list for this session.
+// RETURNS: string — assembled memories section; error if discovery fails.
+func (b *Builder) buildMemoriesSection(active *memories.ActiveList) (string, error) {
+	discovered, err := memories.Discover()
 	if err != nil {
-		return "", fmt.Errorf("memory-banks discovery: %w", err)
+		return "", fmt.Errorf("memories discovery: %w", err)
 	}
 	if len(discovered) == 0 {
 		return "", nil
@@ -202,29 +201,29 @@ func (b *Builder) buildMemoryBanksSection(active *memorybanks.ActiveList) (strin
 
 	var sb strings.Builder
 
-	// Available memory-banks block: [DESCRIPTION] of every discovered memory-bank + file name.
-	sb.WriteString("## Available Memory Banks\n\n")
-	for _, name := range memorybanks.SortedNames(discovered) {
-		bank := discovered[name]
-		description, err := b.injectVariables(bank.Description)
+	// Available memories block: [DESCRIPTION] of every discovered memory + file name.
+	sb.WriteString("## Available Memories\n\n")
+	for _, name := range memories.SortedNames(discovered) {
+		memory := discovered[name]
+		description, err := b.injectVariables(memory.Description)
 		if err != nil {
 			return "", err
 		}
 		sb.WriteString(fmt.Sprintf("- **%s.md**: %s\n", name, description))
 	}
-	sb.WriteString("\nOnly memory-banks listed under `## Active Memory Banks` are active right now. Do not infer current active memory-banks from older `load_memory_bank` or `unload_memory_bank` tool results in the conversation history. If there is no `## Active Memory Banks` section below, then no memory-banks are currently active.\n")
+	sb.WriteString("\nOnly memories listed under `## Active Memories` are active right now. Do not infer current active memories from older `load_memory` or `unload_memory` tool results in the conversation history. If there is no `## Active Memories` section below, then no memories are currently active.\n")
 
-	// Active memory-banks block: [DETAILS] of every active memory-bank.
+	// Active memories block: [DETAILS] of every active memory.
 	activeNames := active.List()
 	if len(activeNames) > 0 {
-		sb.WriteString("\n## Active Memory Banks\n\n")
-		sb.WriteString("The following memory-banks are loaded and active. Use their full details.\n\n")
+		sb.WriteString("\n## Active Memories\n\n")
+		sb.WriteString("The following memories are loaded and active. Use their full details.\n\n")
 		for _, name := range activeNames {
-			bank, ok := discovered[name]
+			memory, ok := discovered[name]
 			if !ok {
 				continue
 			}
-			details, err := b.injectVariables(bank.Details)
+			details, err := b.injectVariables(memory.Details)
 			if err != nil {
 				return "", err
 			}
@@ -236,15 +235,15 @@ func (b *Builder) buildMemoryBanksSection(active *memorybanks.ActiveList) (strin
 }
 
 // BuildRuntimePart assembles the runtime prompt part from all disk sources.
-// Order: universal sysprompt → OS sysprompt → host helpers → memory.md → skills section → memory-banks → AGENTS.md.
+// Order: universal sysprompt → OS sysprompt → host helpers → skills section → memories → AGENTS.md.
 // Variable injection is applied to every source. Required sources error if missing.
 //
 // WHAT:  Builds the runtime part of the prompt from disk sources.
 // WHY:   The runtime part is rebuilt on every LLM call per spec.
 // HOW:   Reads each source in order, injects variables, concatenates with separators.
-// PARAMS: activeSkills — active skills list; activeMemoryBanks — active memory-bank list.
+// PARAMS: activeSkills — active skills list; activeMemories — active memory list.
 // RETURNS: string — assembled runtime part; error if required sources are missing or unreadable.
-func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList, activeMemoryBanks *memorybanks.ActiveList) (string, error) {
+func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList, activeMemories *memories.ActiveList) (string, error) {
 	var parts []string
 
 	// 1. Universal system prompt (required).
@@ -285,25 +284,7 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList, activeMemory
 		parts = append(parts, helperSection)
 	}
 
-	// 4. Memory (optional).
-	mem, err := memory.Read()
-	if err != nil {
-		return "", err
-	}
-	if mem != "" {
-		mem, err = b.injectVariables(mem)
-		if err != nil {
-			return "", err
-		}
-		memHeader := "## Memory (memory.md)\n\nThe following is the content of the persistent memory file {APP_HOME}/memory/memory.md. It is injected automatically on every prompt build. Do not use shell to read memory.\n\n"
-		memHeader, err = b.injectVariables(memHeader)
-		if err != nil {
-			return "", err
-		}
-		parts = append(parts, memHeader+mem)
-	}
-
-	// 6. Skills section (optional).
+	// 4. Skills section (optional).
 	skillsSection, err := b.buildSkillsSection(activeSkills)
 	if err != nil {
 		return "", err
@@ -312,16 +293,16 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList, activeMemory
 		parts = append(parts, skillsSection)
 	}
 
-	// 7. Memory-banks section (optional).
-	memoryBanksSection, err := b.buildMemoryBanksSection(activeMemoryBanks)
+	// 5. Memories section (optional).
+	memoriesSection, err := b.buildMemoriesSection(activeMemories)
 	if err != nil {
 		return "", err
 	}
-	if memoryBanksSection != "" {
-		parts = append(parts, memoryBanksSection)
+	if memoriesSection != "" {
+		parts = append(parts, memoriesSection)
 	}
 
-	// 8. AGENTS.md from work folder (optional).
+	// 6. AGENTS.md from work folder (optional).
 	agents, err := readFileOptional(filepath.Join(b.WorkDir, "AGENTS.md"))
 	if err != nil {
 		return "", err
@@ -344,10 +325,10 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList, activeMemory
 // WHY:   Every LLM call needs the full prompt assembled fresh per spec.
 // HOW:   Builds runtime part as a system message, appends session messages.
 // PARAMS: sess — the current session with message history; activeSkills — active skills list;
-// activeMemoryBanks — active memory-bank list.
+// activeMemories — active memory list.
 // RETURNS: []session.Message — full message array ready for the LLM; error if build fails.
-func (b *Builder) Build(sess *session.Session, activeSkills *skills.ActiveList, activeMemoryBanks *memorybanks.ActiveList) ([]session.Message, error) {
-	runtimePart, err := b.BuildRuntimePart(activeSkills, activeMemoryBanks)
+func (b *Builder) Build(sess *session.Session, activeSkills *skills.ActiveList, activeMemories *memories.ActiveList) ([]session.Message, error) {
+	runtimePart, err := b.BuildRuntimePart(activeSkills, activeMemories)
 	if err != nil {
 		return nil, err
 	}

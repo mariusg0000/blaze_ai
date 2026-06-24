@@ -1,6 +1,6 @@
 // tools.go — native tool interface, registry, and OpenAI tool-calling format definitions.
 // Defines the Tool interface, Registry, and JSON structures for OpenAI-compatible tool calls.
-// Layer: tool execution. Dependencies: internal/skills, internal/memorybanks, internal/platform.
+// Layer: tool execution. Dependencies: internal/skills, internal/memories, internal/platform.
 package tools
 
 import (
@@ -14,8 +14,8 @@ const DefaultTimeout = 60
 
 // Tool defines the contract for a native tool executable by the runtime.
 //
-// WHAT:  Interface for all native tools (shell, load_skill, unload_skill, load_memory_bank,
-// unload_memory_bank, replace_block).
+// WHAT:  Interface for all native tools (shell, load_skill, unload_skill, load_memory,
+// unload_memory, replace_block).
 // WHY:   The runtime executes tools through this uniform interface regardless of implementation.
 type Tool interface {
 	// Name returns the tool's unique identifier.
