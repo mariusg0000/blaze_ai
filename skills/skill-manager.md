@@ -18,10 +18,16 @@ Load when creating or modifying a skill. Use this skill before any skill edit so
   - **Use for**: what the skill provides and what it helps accomplish.
 - Mention concrete keywords, tools, and task types the user is likely to say.
 - Keep it concise: one sentence if possible, at most two.
-- Never include inactive section headers such as `[TRIGGER]` — they are ignored by the runtime.
-- Good: `Load when the user asks for web search or DuckDuckGo news. Use for ddgs text, news, image, and video searches without an API key.`
-- Bad:  `Free web search via DuckDuckGo.` (missing load cue and intent patterns)
-- Bad:  `Configure BlazeAI provider endpoints, API keys, favorite models, and role assignments in config.json.` (missing load cue)
+
+## Required Content
+- A skill MUST describe behavior, instructions, and decision rules for a repeatable task or domain.
+- A skill MUST define when it should be loaded and what it helps accomplish.
+- A skill MUST describe any local resources it depends on, if such resources exist.
+
+## Forbidden Content
+- Do not store persistent project facts, user facts, inventories, credentials, or other long-lived data inside a skill when that data belongs in a memory bank.
+- Do not turn a skill into a data dump, notes file, or changelog.
+- Do not mix stable reference data with procedural instructions unless the data is tiny and inseparable from the procedure.
 
 ## Storage
 - Custom skills are stored in the real on-disk folder `{APP_HOME}/skills/`.
@@ -34,12 +40,12 @@ Load when creating or modifying a skill. Use this skill before any skill edit so
 
 ## Injectable Variables
 - The following variables are injected automatically where supported:
-  - `{APP_HOME}`: the resolved BlazeAI app home path.
-  - `{WORK_DIR}`: the current working directory.
-  - `{OS_INFO}`: the detected operating system description.
-  - `{SKILL_DIR}`: the current custom skill folder when a skill description or details block is injected.
-- Use `{SKILL_DIR}` inside custom skill content when referencing local resources such as scripts or data files.
-- Example: `{SKILL_DIR}/scripts/run.py`
+  - `\{APP_HOME\}`: the resolved BlazeAI app home path.
+  - `\{WORK_DIR\}`: the current working directory.
+  - `\{OS_INFO\}`: the detected operating system description.
+  - `\{SKILL_DIR\}`: the current custom skill folder when a skill description or details block is injected.
+- Use `\{SKILL_DIR\}` inside custom skill content when referencing local resources such as scripts or data files.
+- Example: `\{SKILL_DIR\}/scripts/run.py`
 
 ## Execution Preferences
 - Prefer shell-native scripts first.
@@ -50,8 +56,10 @@ Load when creating or modifying a skill. Use this skill before any skill edit so
 
 ## Collision Rules
 - You cannot create a skill with the same name as an existing one.
-- If a custom skill has the same name as a builtin skill, the custom skill wins.
-- The builtin skill with the same name is ignored when a custom one exists.
+
+## Related Memory Guidance
+- If the skill needs persistent facts, inventories, mappings, preferences, or other reusable data, create or update a related memory bank instead of embedding that data in the skill.
+- Use the skill for behavior and the memory bank for long-lived data.
 
 ## How To Create
 1. Create the folder `{APP_HOME}/skills/<skill-name>/`.

@@ -132,6 +132,20 @@ func TestInjectVariablesUnknownLeftAsIs(t *testing.T) {
 	}
 }
 
+// TestInjectVariablesEscapeBraces verifies that escaped braces remain literal.
+func TestInjectVariablesEscapeBraces(t *testing.T) {
+	b := &Builder{}
+	home, _ := platform.AppHome()
+	result, err := b.injectVariables("Literal: \\{APP_HOME\\}, injected: {APP_HOME}")
+	if err != nil {
+		t.Fatalf("injectVariables() error: %v", err)
+	}
+	expected := "Literal: {APP_HOME}, injected: " + home
+	if result != expected {
+		t.Errorf("injectVariables() = %q, want %q", result, expected)
+	}
+}
+
 // TestInjectVariablesMultiple verifies multiple {APP_HOME} in one text.
 func TestInjectVariablesMultiple(t *testing.T) {
 	b := &Builder{}
@@ -156,6 +170,19 @@ func TestInjectVariablesNoPlaceholders(t *testing.T) {
 	}
 	if result != input {
 		t.Errorf("injectVariables() = %q, want %q", result, input)
+	}
+}
+
+// TestInjectVariablesForSkillEscapeBraces verifies escapes also work in skill text.
+func TestInjectVariablesForSkillEscapeBraces(t *testing.T) {
+	b := &Builder{}
+	result, err := b.injectVariablesForSkill("Use \\{SKILL_DIR\\}/data and {SKILL_DIR}/scripts", "/tmp/project_hub")
+	if err != nil {
+		t.Fatalf("injectVariablesForSkill() error: %v", err)
+	}
+	expected := "Use {SKILL_DIR}/data and /tmp/project_hub/scripts"
+	if result != expected {
+		t.Errorf("injectVariablesForSkill() = %q, want %q", result, expected)
 	}
 }
 

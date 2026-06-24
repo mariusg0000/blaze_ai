@@ -74,11 +74,13 @@ func (b *Builder) injectVariablesForSkill(text, skillDir string) (string, error)
 }
 
 // injectTemplateVariables replaces built-in and template-specific placeholders in text.
-// Unknown placeholders are left as-is per spec.
+// Unknown placeholders are left as-is per spec, and escaped braces (\{, \}) are restored
+// as literal braces after interpolation.
 //
 // WHAT:  Replaces {VARIABLE_NAME} placeholders with concrete values.
 // WHY:   Prompt fragments need both built-in variables and section-specific injected text.
-// HOW:   Regex finds all {NAME} patterns; built-in values are resolved first, then extra values.
+// HOW:   Escaped braces are protected first; then regex finds all {NAME} patterns and resolves
+// built-in values before extra values; protected braces are restored at the end.
 // PARAMS: text — the raw text containing placeholders; extra — section-specific replacements;
 //
 //	skillDir — concrete skill directory for {SKILL_DIR}.
@@ -89,7 +91,12 @@ func (b *Builder) injectTemplateVariables(text string, extra map[string]string, 
 	if err != nil {
 		return "", err
 	}
-	return variablePattern.ReplaceAllStringFunc(text, func(match string) string {
+	const (
+		leftBraceEscape  = "__BLAZEAI_ESC_LBRACE__"
+		rightBraceEscape = "__BLAZEAI_ESC_RBRACE__"
+	)
+	text = strings.NewReplacer(`\{`, leftBraceEscape, `\}`, rightBraceEscape).Replace(text)
+	result := variablePattern.ReplaceAllStringFunc(text, func(match string) string {
 		name := match[1 : len(match)-1]
 		if extra != nil {
 			if value, ok := extra[name]; ok {
@@ -123,7 +130,9 @@ func (b *Builder) injectTemplateVariables(text string, extra map[string]string, 
 		default:
 			return match
 		}
-	}), nil
+	})
+	result = strings.NewReplacer(leftBraceEscape, `{`, rightBraceEscape, `}`).Replace(result)
+	return result, nil
 }
 
 // readFileRequiredFS reads a file from an fs.FS and returns its content.
