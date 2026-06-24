@@ -434,8 +434,11 @@ func TestOnUsage(t *testing.T) {
 	c.OnUsage(11186)
 	c.responseSeparator()
 	output := out.String()
-	if !strings.Contains(output, "ctx 11k") {
+	if !strings.Contains(output, "CTX: 11k") {
 		t.Errorf("output missing context size: %q", output)
+	}
+	if !strings.Contains(output, "test/test-model") {
+		t.Errorf("output missing model: %q", output)
 	}
 }
 

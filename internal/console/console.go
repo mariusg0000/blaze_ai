@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -199,11 +200,53 @@ func (c *Console) divider(label, labelColor string, boldLabel bool) {
 }
 
 // responseSeparator prints the separator shown after the assistant finishes responding.
-// If provider usage is available, the separator embeds the prompt token count.
+// Renders a three-line ASCII table with CTX tokens, work directory, and current model.
 //
-// WHAT:  Prints a separator with context size after the response.
+// WHAT:  Prints an ASCII table separator after the response.
 func (c *Console) responseSeparator() {
-	c.ctxSeparator(colorPurple)
+	if c.lastPromptTokens <= 0 {
+		return
+	}
+	c.ensureLineBreakBeforeBlock()
+
+	ctxText := "CTX: " + formatCompactInt(c.lastPromptTokens)
+	workDir := filepath.Base(c.Agent.WorkDir)
+	model := c.Agent.ModelID
+
+	cell1 := " " + ctxText + " "
+	cell2 := " " + workDir + " "
+	cell3 := " " + model + " "
+
+	w1 := len(cell1)
+	w2 := len(cell2)
+	w3 := len(cell3)
+
+	char := "-"
+	vChar := "|"
+	mChar := "+"
+	if c.IsTTY {
+		char = "─"
+		vChar = "│"
+		mChar = "┬"
+	}
+
+	topLine := "┌" + strings.Repeat(char, w1) + mChar + strings.Repeat(char, w2) + mChar + strings.Repeat(char, w3) + "┐"
+	midLine := vChar + cell1 + vChar + cell2 + vChar + cell3 + vChar
+	botLine := "└" + strings.Repeat(char, w1) + "┴" + strings.Repeat(char, w2) + "┴" + strings.Repeat(char, w3) + "┘"
+	if !c.IsTTY {
+		topLine = "+" + strings.Repeat(char, w1) + mChar + strings.Repeat(char, w2) + mChar + strings.Repeat(char, w3) + "+"
+		botLine = "+" + strings.Repeat(char, w1) + "+" + strings.Repeat(char, w2) + "+" + strings.Repeat(char, w3) + "+"
+	}
+
+	if c.IsTTY {
+		fmt.Fprintln(c.Out, c.color(colorPurple, topLine))
+		fmt.Fprintln(c.Out, c.color(colorPurple, midLine))
+		fmt.Fprintln(c.Out, c.color(colorPurple, botLine))
+		return
+	}
+	fmt.Fprintln(c.Out, topLine)
+	fmt.Fprintln(c.Out, midLine)
+	fmt.Fprintln(c.Out, botLine)
 }
 
 // ctxSeparator prints the prompt-token separator using the requested color.
