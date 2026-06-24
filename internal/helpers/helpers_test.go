@@ -53,13 +53,13 @@ func TestDetectNoneAvailable(t *testing.T) {
 
 // TestAvailableCoreHelpers verifies available core helpers appear when detected.
 func TestAvailableCoreHelpers(t *testing.T) {
-	statuses := Detect(fakeLookup([]string{"rg", "fd", "jq", "git", "curl"}))
+	statuses := Detect(fakeLookup([]string{"rg", "fd", "jq", "git", "curl", "pandoc", "sqlite3"}))
 	available := Available(statuses, "/tmp")
-	if len(available) != 5 {
-		t.Fatalf("Available() returned %d helpers, want 5", len(available))
+	if len(available) != 7 {
+		t.Fatalf("Available() returned %d helpers, want 7", len(available))
 	}
-	if available[0].Name != "curl" || available[4].Name != "rg" {
-		t.Fatalf("Available() not sorted by name: first=%q last=%q", available[0].Name, available[4].Name)
+	if available[0].Name != "curl" || available[6].Name != "sqlite3" {
+		t.Fatalf("Available() not sorted by name: first=%q last=%q", available[0].Name, available[6].Name)
 	}
 }
 
@@ -70,7 +70,7 @@ func TestMissingCoreHelpers(t *testing.T) {
 	if len(missing) == 0 {
 		t.Fatal("MissingCore() returned no helpers, want missing core helpers")
 	}
-	if missing[0].Name != "fd" || missing[len(missing)-1].Name != "rg" {
+	if missing[0].Name != "fd" || missing[len(missing)-1].Name != "sqlite3" {
 		t.Fatalf("MissingCore() not sorted or incomplete: first=%q last=%q", missing[0].Name, missing[len(missing)-1].Name)
 	}
 }
@@ -88,7 +88,7 @@ func TestMissingCoreHelpersDeclined(t *testing.T) {
 
 // TestMissingCoreHelpersNoMissing verifies empty result when nothing is missing.
 func TestMissingCoreHelpersNoMissing(t *testing.T) {
-	statuses := Detect(fakeLookup([]string{"rg", "fd", "jq", "git", "curl"}))
+	statuses := Detect(fakeLookup([]string{"rg", "fd", "jq", "git", "curl", "pandoc", "sqlite3"}))
 	missing := MissingCore(statuses, config.HelperSetup{})
 	if len(missing) != 0 {
 		t.Fatalf("MissingCore() returned %d helpers, want 0", len(missing))

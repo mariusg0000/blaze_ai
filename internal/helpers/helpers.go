@@ -140,6 +140,18 @@ var Known = []Helper{
 		Kind:         KindContextual,
 		ProjectFiles: []string{"Dockerfile", "compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"},
 	},
+	{
+		Name:        "pandoc",
+		Description: "document conversion between formats",
+		Instruction: "Use pandoc for converting between document formats (Markdown, HTML, PDF, DOCX, LaTeX).",
+		Kind:        KindCore,
+	},
+	{
+		Name:        "sqlite3",
+		Description: "lightweight SQL database queries",
+		Instruction: "Use sqlite3 for querying SQLite databases and quick data inspection.",
+		Kind:        KindCore,
+	},
 }
 
 // Detect runs lookup against every known helper and returns their statuses.

@@ -1,5 +1,5 @@
 [DESCRIPTION]
-Load when host tools are missing or the user asks about installing helpers. Use for `rg`, `fd`, `jq`, `git`, `curl`, and approval-safe install guidance.
+Load when host tools are missing or the user asks about installing helpers. Use for `rg`, `fd`, `jq`, `git`, `curl`, `pandoc`, `sqlite3`, and approval-safe install guidance.
 
 [DETAILS]
 # Setup Helpers
@@ -19,6 +19,8 @@ Load when host tools are missing or the user asks about installing helpers. Use 
 | jq     | JSON inspection and transformation | `apt install jq` / `brew install jq` / `winget install jqlang.jq` |
 | git    | VCS operations | `apt install git` / `brew install git` / `winget install Git.Git` |
 | curl   | HTTP/API checks, downloads | `apt install curl` / `brew install curl` / (built-in on modern Windows) |
+| pandoc | document conversion (MD, HTML, PDF, DOCX, LaTeX) | `apt install pandoc` / `brew install pandoc` / `winget install JohnMacFarlane.Pandoc` |
+| sqlite3| lightweight SQL database queries | `apt install sqlite3` / `brew install sqlite3` / `winget install SQLite.SQLite` |
 
 ## Detection
 
@@ -26,7 +28,7 @@ Before suggesting installation, verify what is already available:
 
 ```sh
 # Linux / macOS
-command -v rg && command -v fd && command -v jq && command -v git && command -v curl
+command -v rg && command -v fd && command -v jq && command -v git && command -v curl && command -v pandoc && command -v sqlite3
 
 # Windows PowerShell
 Get-Command rg -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
@@ -34,6 +36,8 @@ Get-Command fd -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Sou
 Get-Command jq -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
 Get-Command git -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
 Get-Command curl.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+Get-Command pandoc -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+Get-Command sqlite3 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
 ```
 
 ## Installation
@@ -42,16 +46,19 @@ Get-Command curl.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProper
 1. Detect package manager first: `which apt || which dnf || which pacman || which zypper || which apk`
 2. Ask user which helper(s) to install and confirm.
 3. If sudo is required, ask separately — never batch sudo commands without approval.
-4. Example: `sudo apt update && sudo apt install -y ripgrep fd-find jq`
+4. Example: `sudo apt update && sudo apt install -y ripgrep fd-find jq pandoc sqlite3`
 
 ### macOS
 1. Check for Homebrew: `command -v brew`
-2. If brew exists and user approves: `brew install ripgrep fd jq`
+2. If brew exists and user approves: `brew install ripgrep fd jq pandoc sqlite3`
 3. If brew missing, suggest installing brew first (ask user).
 
 ### Windows
 1. Check for package manager: `winget --version` or `scoop` or `choco`
-2. If winget exists and user approves: `winget install --id BurntSushi.ripgrep`
+2. If winget exists and user approves:
+   - `winget install --id BurntSushi.ripgrep`
+   - `winget install --id JohnMacFarlane.Pandoc`
+   - `winget install --id SQLite.SQLite`
 3. If no package manager, explain that user needs winget/scoop/choco first.
 
 ## Verification After Install

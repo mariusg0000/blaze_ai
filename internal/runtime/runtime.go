@@ -116,7 +116,7 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 		HelperSetup:     cfg.HelperSetup,
 	}
 
-	return &Agent{
+	agent := &Agent{
 		Config:    cfg,
 		Session:   sess,
 		Active:    active,
@@ -129,7 +129,12 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 		ModelID:   modelID,
 		WorkDir:   workDir,
 		OS:        os,
-	}, nil
+	}
+
+	registry.Register(tools.NewTaskWriteTool(func() string { return agent.WorkDir }))
+	registry.Register(tools.NewTaskReadTool(func() string { return agent.WorkDir }))
+
+	return agent, nil
 }
 
 // RunTurn processes one user message: builds the prompt, streams the LLM response,

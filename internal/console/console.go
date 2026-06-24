@@ -535,6 +535,10 @@ func (c *Console) writeRenderedLine(text string, terminated bool) {
 // reLink matches Markdown links [text](url).
 var reLink = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 
+// reUnderscoreItalic matches _text_ only at word boundaries (space or line edge before/after _).
+// Prevents false positives in code identifiers like task_write.
+var reUnderscoreItalic = regexp.MustCompile(`(?:^|\s)_([^_]+)_(?:\s|$)`)
+
 // renderInline strips or styles simple inline Markdown markers within a rendered line.
 func (c *Console) renderInline(text string) string {
 	text = c.toggleDelimited(text, "**", func(s string) string {
@@ -543,11 +547,12 @@ func (c *Console) renderInline(text string) string {
 		}
 		return s
 	})
-	text = c.toggleDelimited(text, "_", func(s string) string {
+	text = reUnderscoreItalic.ReplaceAllStringFunc(text, func(match string) string {
+		inner := match[1 : len(match)-1]
 		if c.IsTTY {
-			return c.color(colorItalic, s)
+			return c.color(colorItalic, inner)
 		}
-		return s
+		return inner
 	})
 	text = c.toggleDelimited(text, "*", func(s string) string {
 		if c.IsTTY {
