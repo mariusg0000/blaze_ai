@@ -76,7 +76,7 @@ func writeFile(t *testing.T, path, content string) {
 // writePromptFixtures creates the prompt templates required by runtime prompt assembly.
 func writePromptFixtures(t *testing.T, promptsDir string) {
 	t.Helper()
-	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n## Tool Discipline\n- Keep relevant loaded skills active across follow-up turns on the same topic or task.\n- Do not unload a skill immediately after one successful action if the user is likely to continue in the same domain.\n- Unload a skill only when the user clearly changes topic or task, or when the loaded skill would interfere with the next turn.\n\n## Active State Rules\n- Only skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.\n- Only memories listed under `## Active Memories` are active right now. Do not infer current active memories from older `load_memory` or `unload_memory` tool results in the conversation history. If there is no `## Active Memories` section below, then no memories are currently active.\n\n{OS_PROMPT}\n\n{HOST_HELPERS_SECTION}\n\n{SKILLS_SECTION}\n\n{MEMORIES_SECTION}\n\n{AGENTS_SECTION}\n")
+	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n## Tool Discipline\n- Keep relevant loaded skills active across follow-up turns on the same topic or task.\n- Do not unload a skill immediately after one successful action if the user is likely to continue in the same domain.\n- Unload a skill only when the user clearly changes topic or task, or when the loaded skill would interfere with the next turn.\n\n## Active State Rules\n- Only skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.\n- Only memories listed under `## Active Memories` are active right now. Do not infer current active memories from older `load_memory` or `unload_memory` tool results in the conversation history. If there is no `## Active Memories` section below, then no memories are currently active.\n\n{OS_PROMPT}\n\n## Host Environment Helpers\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n## Memories\nAvailable memories:\n{MEMORIES_AVAILABLE}\n\nActive memories:\n{MEMORIES_ACTIVE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n")
 	writeFile(t, filepath.Join(promptsDir, "sysprompt.linux.md"), "# Linux System Prompt\n\nScripts at {APP_HOME}/scripts/.\n")
 }
 
@@ -200,7 +200,7 @@ func TestBuildRuntimePartFull(t *testing.T) {
 	}
 
 	// Memory-banks section present.
-	if !strings.Contains(result, "Available Memories") {
+	if !strings.Contains(result, "Available memories:") {
 		t.Error("runtime part missing memories section")
 	}
 	if !strings.Contains(result, "my-network.md") {
@@ -218,7 +218,7 @@ func TestBuildRuntimePartFull(t *testing.T) {
 	}
 
 	// Skills section present.
-	if !strings.Contains(result, "Available Skills") {
+	if !strings.Contains(result, "Available skills:") {
 		t.Error("runtime part missing skills section")
 	}
 	if !strings.Contains(result, "memory-manager.md") {
@@ -263,7 +263,7 @@ func TestBuildRuntimePartMissingOSPrompt(t *testing.T) {
 	}
 }
 
-// TestBuildRuntimePartNoAgentsMD verifies that missing AGENTS.md is omitted silently.
+// TestBuildRuntimePartNoAgentsMD verifies that missing AGENTS.md renders as NULL.
 func TestBuildRuntimePartNoAgentsMD(t *testing.T) {
 	promptsFS, builtinSkillsFS, _ := setupTestDirs(t)
 	// Use a work dir without AGENTS.md.
@@ -279,8 +279,11 @@ func TestBuildRuntimePartNoAgentsMD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
-	if strings.Contains(result, "Project Rules") {
-		t.Error("runtime part should not contain AGENTS.md content")
+	if !strings.Contains(result, "Project Rules (AGENTS.md)") {
+		t.Error("runtime part missing AGENTS.md section")
+	}
+	if !strings.Contains(result, "Project Rules (AGENTS.md)\nNULL") {
+		t.Error("runtime part should render NULL for missing AGENTS.md")
 	}
 }
 
@@ -371,8 +374,8 @@ func TestBuildRuntimePartNoSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
-	if strings.Contains(result, "Available Skills") {
-		t.Error("runtime part should not contain skills section when no skills exist")
+	if !strings.Contains(result, "Available skills:\nNULL") {
+		t.Error("runtime part should render NULL for missing skills")
 	}
 }
 
@@ -459,8 +462,8 @@ func TestBuildRuntimePartOrder(t *testing.T) {
 	universalIdx := strings.Index(result, "Universal System Prompt")
 	osIdx := strings.Index(result, "Linux System Prompt")
 	helpersIdx := strings.Index(result, "Host Environment Helpers")
-	skillsIdx := strings.Index(result, "Available Skills")
-	memoryIdx := strings.Index(result, "Available Memories")
+	skillsIdx := strings.Index(result, "Available skills:")
+	memoryIdx := strings.Index(result, "Available memories:")
 	agentsIdx := strings.Index(result, "Project Rules")
 
 	if universalIdx < 0 || osIdx < 0 || helpersIdx < 0 || skillsIdx < 0 || memoryIdx < 0 || agentsIdx < 0 {
@@ -527,15 +530,15 @@ func TestBuildRuntimePartHelperMissingNotDismissed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
-	if !strings.Contains(result, "## Optional Host Environment Helpers") {
-		t.Error("runtime part missing Optional Host Environment Helpers section")
+	if !strings.Contains(result, "Optional helpers:\n") {
+		t.Error("runtime part missing Optional helpers section")
 	}
 	if !strings.Contains(result, "rg") {
 		t.Error("runtime part missing missing rg in optional section")
 	}
 }
 
-// TestBuildRuntimePartHelperMissingDismissed verifies optional section suppressed when dismissed.
+// TestBuildRuntimePartHelperMissingDismissed verifies optional section renders NULL when dismissed.
 func TestBuildRuntimePartHelperMissingDismissed(t *testing.T) {
 	promptsFS, _, workDir := setupTestDirs(t)
 
@@ -551,8 +554,8 @@ func TestBuildRuntimePartHelperMissingDismissed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
-	if strings.Contains(result, "Optional Host Environment Helpers") {
-		t.Error("runtime part should not contain Optional Host Environment Helpers when dismissed=true")
+	if !strings.Contains(result, "Optional helpers:\nNULL") {
+		t.Error("runtime part should render NULL for dismissed optional helpers")
 	}
 }
 
@@ -574,9 +577,9 @@ func TestBuildRuntimePartHelperDeclined(t *testing.T) {
 	}
 	// Only check the optional section for declined helpers; full prompt may contain
 	// unrelated system data from the host memory file.
-	optIdx := strings.Index(result, "## Optional Host Environment Helpers")
+	optIdx := strings.Index(result, "Optional helpers:")
 	if optIdx < 0 {
-		t.Fatal("expected Optional Host Environment Helpers section")
+		t.Fatal("expected Optional helpers section")
 	}
 	nextSectionIdx := strings.Index(result[optIdx+1:], "\n## ")
 	if nextSectionIdx < 0 {
@@ -611,8 +614,8 @@ func TestBuildRuntimePartHelperOrder(t *testing.T) {
 	universalIdx := strings.Index(result, "Universal System Prompt")
 	osIdx := strings.Index(result, "Linux System Prompt")
 	helpersIdx := strings.Index(result, "Host Environment Helpers")
-	skillsIdx := strings.Index(result, "Available Skills")
-	memoryIdx := strings.Index(result, "Available Memories")
+	skillsIdx := strings.Index(result, "Available skills:")
+	memoryIdx := strings.Index(result, "Available memories:")
 	agentsIdx := strings.Index(result, "Project Rules")
 
 	if universalIdx < 0 || osIdx < 0 || helpersIdx < 0 || skillsIdx < 0 || memoryIdx < 0 {
@@ -625,7 +628,7 @@ func TestBuildRuntimePartHelperOrder(t *testing.T) {
 	}
 }
 
-// TestBuildRuntimePartHelperNoHelpers verifies no helpers section when nothing is available.
+// TestBuildRuntimePartHelperNoHelpers verifies missing helpers render as NULL.
 func TestBuildRuntimePartHelperNoHelpers(t *testing.T) {
 	promptsFS, _, workDir := setupTestDirs(t)
 
@@ -641,7 +644,10 @@ func TestBuildRuntimePartHelperNoHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
-	if strings.Contains(result, "Host") {
-		t.Error("runtime part should not contain any Host Helpers section when nothing to show")
+	if !strings.Contains(result, "Available helpers:\nNULL") {
+		t.Error("runtime part should render NULL for missing host helpers")
+	}
+	if !strings.Contains(result, "Optional helpers:\nNULL") {
+		t.Error("runtime part should render NULL for missing optional host helpers")
 	}
 }

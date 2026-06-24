@@ -93,21 +93,33 @@ func (b *Builder) injectTemplateVariables(text string, extra map[string]string, 
 		name := match[1 : len(match)-1]
 		if extra != nil {
 			if value, ok := extra[name]; ok {
+				if value == "" {
+					return "NULL"
+				}
 				return value
 			}
 		}
 		switch name {
 		case "APP_HOME":
+			if home == "" {
+				return "NULL"
+			}
 			return home
 		case "WORK_DIR":
+			if b.WorkDir == "" {
+				return "NULL"
+			}
 			return b.WorkDir
 		case "OS_INFO":
+			if b.OSInfo == "" {
+				return "NULL"
+			}
 			return b.OSInfo
 		case "SKILL_DIR":
 			if skillDir != "" {
 				return skillDir
 			}
-			return match
+			return "NULL"
 		default:
 			return match
 		}
@@ -148,6 +160,34 @@ func readFileOptional(path string) (string, error) {
 		return "", fmt.Errorf("cannot read %s: %w", path, err)
 	}
 	return string(data), nil
+}
+
+// pruneEmptySection removes a section block when its content is empty.
+//
+// WHAT:  Drops a section and its surrounding blank-line padding when the section has no content.
+// WHY:   sysprompt.md owns the labels, but empty sections should not remain visible.
+// HOW:   Removes the exact block between two known section markers when needed.
+// PARAMS: text — rendered prompt text; startMarker — section start including leading blank lines;
+// endMarker — next section start including leading blank lines, or empty for EOF; empty — whether to remove.
+// RETURNS: string — prompt with the empty section removed.
+func pruneEmptySection(text, startMarker, endMarker string, empty bool) string {
+	if !empty {
+		return text
+	}
+	start := strings.Index(text, startMarker)
+	if start == -1 {
+		return text
+	}
+	if endMarker == "" {
+		return text[:start]
+	}
+	searchFrom := start + len(startMarker)
+	endRel := strings.Index(text[searchFrom:], endMarker)
+	if endRel == -1 {
+		return text
+	}
+	end := searchFrom + endRel
+	return text[:start] + text[end:]
 }
 
 // buildSkillsSection assembles the skills data from discovered skills and the active list.
@@ -328,50 +368,11 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList, activeMemori
 	if err != nil {
 		return "", err
 	}
-	helperSection := ""
-	if helperAvailable != "" {
-		helperSection = strings.Join([]string{
-			"## Host Environment Helpers",
-			"",
-			"The following cross-platform host utilities are available:",
-			helperAvailable,
-		}, "\n")
-	}
-	if helperOptional != "" {
-		optionalSection := strings.Join([]string{
-			"## Optional Host Environment Helpers",
-			"",
-			helperOptional,
-		}, "\n")
-		if helperSection != "" {
-			helperSection += "\n\n"
-		}
-		helperSection += optionalSection
-	}
 
 	// 4. Skills section (optional).
 	skillsAvailable, skillsActive, err := b.buildSkillsSection(activeSkills)
 	if err != nil {
 		return "", err
-	}
-	skillsSection := ""
-	if skillsAvailable != "" {
-		skillsSection = strings.Join([]string{
-			"## Available Skills",
-			"",
-			skillsAvailable,
-		}, "\n")
-	}
-	if skillsActive != "" {
-		activeSection := strings.Join([]string{
-			"## Active Skills",
-			"",
-			skillsActive,
-		}, "\n")
-		if skillsSection != "" {
-			skillsSection += "\n\n"
-		}
-		skillsSection += activeSection
 	}
 
 	// 5. Memories section (optional).
@@ -379,51 +380,33 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList, activeMemori
 	if err != nil {
 		return "", err
 	}
-	memoriesSection := ""
-	if memoriesAvailable != "" {
-		memoriesSection = strings.Join([]string{
-			"## Available Memories",
-			"",
-			memoriesAvailable,
-		}, "\n")
-	}
-	if memoriesActive != "" {
-		activeSection := strings.Join([]string{
-			"## Active Memories",
-			"",
-			memoriesActive,
-		}, "\n")
-		if memoriesSection != "" {
-			memoriesSection += "\n\n"
-		}
-		memoriesSection += activeSection
-	}
 
 	// 6. AGENTS.md from work folder (optional).
 	agents, err := readFileOptional(filepath.Join(b.WorkDir, "AGENTS.md"))
 	if err != nil {
 		return "", err
 	}
-	agentsSection := ""
 	if agents != "" {
 		agents, err = b.injectVariables(agents)
 		if err != nil {
 			return "", err
 		}
-		agentsSection = strings.Join([]string{
-			"## Project Rules (AGENTS.md)",
-			"",
-			agents,
-		}, "\n")
 	}
 
-	return b.injectTemplateVariables(universal, map[string]string{
-		"OS_PROMPT":            strings.TrimSpace(osPrompt),
-		"HOST_HELPERS_SECTION": strings.TrimSpace(helperSection),
-		"SKILLS_SECTION":       strings.TrimSpace(skillsSection),
-		"MEMORIES_SECTION":     strings.TrimSpace(memoriesSection),
-		"AGENTS_SECTION":       strings.TrimSpace(agentsSection),
+	rendered, err := b.injectTemplateVariables(universal, map[string]string{
+		"OS_PROMPT":              strings.TrimSpace(osPrompt),
+		"HOST_HELPERS_AVAILABLE": strings.TrimSpace(helperAvailable),
+		"HOST_HELPERS_OPTIONAL":  strings.TrimSpace(helperOptional),
+		"SKILLS_AVAILABLE":       strings.TrimSpace(skillsAvailable),
+		"SKILLS_ACTIVE":          strings.TrimSpace(skillsActive),
+		"MEMORIES_AVAILABLE":     strings.TrimSpace(memoriesAvailable),
+		"MEMORIES_ACTIVE":        strings.TrimSpace(memoriesActive),
+		"AGENTS_CONTENT":         strings.TrimSpace(agents),
 	}, "")
+	if err != nil {
+		return "", err
+	}
+	return rendered, nil
 }
 
 // Build assembles the full prompt: runtime part + conversation part from the session.

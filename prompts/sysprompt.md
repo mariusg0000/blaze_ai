@@ -50,13 +50,25 @@ You are BlazeAI, a fast cross-platform AI terminal agent for experienced users.
 - The password is entered interactively in the terminal, never in chat.
 
 ## Host Environment Helpers
-{HOST_HELPERS_SECTION}
+Available helpers:
+{HOST_HELPERS_AVAILABLE}
+
+Optional helpers:
+{HOST_HELPERS_OPTIONAL}
 
 ## Skills
-{SKILLS_SECTION}
+Available skills:
+{SKILLS_AVAILABLE}
+
+Active skills:
+{SKILLS_ACTIVE}
 
 ## Memories
-{MEMORIES_SECTION}
+Available memories:
+{MEMORIES_AVAILABLE}
+
+Active memories:
+{MEMORIES_ACTIVE}
 
 ## Project Rules (AGENTS.md)
-{AGENTS_SECTION}
+{AGENTS_CONTENT}

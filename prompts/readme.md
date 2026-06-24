@@ -7,10 +7,13 @@ This directory stores the runtime system prompt fragments used by BlazeAI.
 - `{OS_INFO}`: human-readable operating system info.
 - `{APP_HOME}`: BlazeAI app home path.
 - `{OS_PROMPT}`: rendered OS-specific prompt content.
-- `{HOST_HELPERS_SECTION}`: rendered host helper section.
-- `{SKILLS_SECTION}`: rendered skills section.
-- `{MEMORIES_SECTION}`: rendered memories section.
-- `{AGENTS_SECTION}`: rendered AGENTS.md wrapper section.
+- `{HOST_HELPERS_AVAILABLE}`: available host helper list content.
+- `{HOST_HELPERS_OPTIONAL}`: optional host helper warning content.
+- `{SKILLS_AVAILABLE}`: available skill list content.
+- `{SKILLS_ACTIVE}`: active skill details content.
+- `{MEMORIES_AVAILABLE}`: available memory list content.
+- `{MEMORIES_ACTIVE}`: active memory details content.
+- `{AGENTS_CONTENT}`: AGENTS.md content for the current work tree.
 - `{SKILL_DIR}`: injected when rendering a specific skill file.
 
 ## Files
