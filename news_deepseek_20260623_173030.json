@@ -1,0 +1,42 @@
+[
+  {
+    "date": "2026-06-17T11:55:00+00:00",
+    "title": "DeepSeek Just Raised $7.4 Billion. Here's The Catch.",
+    "body": "DeepSeek closed its first-ever outside funding round at $7.4 billion, but the deal's structure means that for the most part, only one investor actually gets a say.",
+    "url": "https://www.forbes.com/sites/anishasircar/2026/06/17/deepseek-just-raised-74-billion-heres-the-catch/",
+    "image": "https://imageio.forbes.com/specials-images/imageserve/6a32880212056a39399708e8/0x0.jpg?format=jpg&height=900&width=1600&fit=bounds",
+    "source": "Forbes"
+  },
+  {
+    "date": "2026-06-18T10:08:00+00:00",
+    "title": "DeepSeek was set to be added to US Entity List for supporting China's military and intelligence operations,...",
+    "body": "DeepSeek and CXMT, which have both been tagged as supporting Chinese military and intelligence operations, are set to be added to the U.S.'s Entity List. However, the White House hasn't included them",
+    "url": "https://www.yahoo.com/news/politics/articles/deepseek-set-added-us-entity-160045669.html",
+    "image": "https://s.yimg.com/ny/api/res/1.2/L7zn_EZXElNi62tSjZVafg--/YXBwaWQ9aGlnaGxhbmRlcjt3PTEyMDA7aD02NzU7Y2Y9d2VicA--/https://media.zenfs.com/en/toms_hardware_319/d7084cafd676cde9b67f11d650634689",
+    "source": "Yahoo"
+  },
+  {
+    "date": "2026-06-17T08:09:00+00:00",
+    "title": "DeepSeek valued at more than $50 bn after funding round: reports",
+    "body": "Investors have valued Chinese artificial intelligence startup DeepSeek at more than $50 billion in the company's first fundraising round, reports said.",
+    "url": "https://techxplore.com/news/2026-06-deepseek-valued-bn-funding.html",
+    "image": "https://scx2.b-cdn.net/gfx/news/hires/2025/deepseek-2.jpg",
+    "source": "Tech Xplore"
+  },
+  {
+    "date": "2026-06-20T15:46:00+00:00",
+    "title": "DeepSeek V4 Architecture: How Sparse Attention Cuts Inference Costs, What NIST Found",
+    "body": "DeepSeek V4 architecture uses sparse attention to cut inference costs 73% at one-million-token contexts, but a NIST government evaluation found it lags frontier US models by eight months on cross-doma",
+    "url": "https://www.techtimes.com/articles/318725/20260619/deepseek-v4-architecture-how-sparse-attention-cuts-inference-costs-what-nist-found.htm",
+    "image": "https://d.techtimes.com/en/full/467078/deepseek.jpg",
+    "source": "Tech Times"
+  },
+  {
+    "date": "2026-04-26T15:15:00+00:00",
+    "title": "DeepSeek V4 Shows That The Next AI Race Is About Efficiency",
+    "body": "DeepSeek V4's real breakthrough is cost-efficient long-context intelligence: it makes million-token reasoning cheaper and pushes open models closer to frontier systems.",
+    "url": "https://www.forbes.com/sites/geruiwang/2026/04/26/deepseek-v4-shows-that-the-next-ai-race-is-about-efficiency/",
+    "image": null,
+    "source": "Forbes"
+  }
+]

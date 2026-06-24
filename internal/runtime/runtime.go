@@ -3,7 +3,7 @@
 // the Agent struct that ties all packages together, and the RunTurn loop that drives
 // prompt building, LLM streaming, tool execution, and message persistence.
 // Layer: agent core. Dependencies: internal/config, internal/provider, internal/prompt,
-// internal/session, internal/tools, internal/skills.
+// internal/session, internal/tools, internal/skills, internal/memorybanks.
 package runtime
 
 import (
@@ -18,6 +18,7 @@ import (
 
 	"blazeai/internal/compaction"
 	"blazeai/internal/config"
+	"blazeai/internal/memorybanks"
 	"blazeai/internal/platform"
 	"blazeai/internal/prompt"
 	"blazeai/internal/provider"
@@ -50,16 +51,17 @@ type Handler interface {
 // Agent is the core runtime that ties all packages together and drives the conversation loop.
 //
 // WHAT:  Holds all runtime state and orchestrates the LLM call cycle.
-// WHY:   One struct ties config, session, skills, prompt, tools, and provider together.
+// WHY:   One struct ties config, session, skills, memory-banks, prompt, tools, and provider together.
 // PARAMS: Config — loaded configuration; Session — current conversation session;
 //
-//	Active — in-memory active skills list; Builder — prompt assembler;
+//	Active — in-memory active skills list; Banks — in-memory active memory-bank list; Builder — prompt assembler;
 //	Tools — tool registry; Provider — LLM client; Handler — transport callbacks;
 //	ModelID — current provider/model_name; WorkDir — current work folder; OS — detected platform.
 type Agent struct {
 	Config    *config.Config
 	Session   *session.Session
 	Active    *skills.ActiveList
+	Banks     *memorybanks.ActiveList
 	Builder   *prompt.Builder
 	Tools     *tools.Registry
 	Provider  *provider.Client
@@ -72,7 +74,7 @@ type Agent struct {
 }
 
 // NewAgent creates an Agent from a loaded config, session, and detected OS.
-// Initializes the prompt builder, tool registry, provider client, and active skills list.
+// Initializes the prompt builder, tool registry, provider client, and active skill/memory-bank lists.
 //
 // WHAT:  Constructs the runtime agent with all dependencies wired.
 // WHY:   The main entrypoint calls this to assemble the agent before starting the REPL.
@@ -94,11 +96,16 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 		return nil, fmt.Errorf("cannot create provider client: %w", err)
 	}
 
+	active := skills.NewActiveList()
+	banks := memorybanks.NewActiveList()
+
 	registry := tools.NewRegistry()
 	registry.Register(tools.NewShellTool(os))
+	registry.Register(tools.NewLoadSkillTool(active))
+	registry.Register(tools.NewUnloadSkillTool(active))
+	registry.Register(tools.NewLoadMemoryBankTool(banks))
+	registry.Register(tools.NewUnloadMemoryBankTool(banks))
 	registry.Register(tools.NewReplaceBlockTool())
-
-	active := skills.NewActiveList()
 
 	builder := &prompt.Builder{
 		PromptsFS:       promptsFS,
@@ -113,6 +120,7 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 		Config:    cfg,
 		Session:   sess,
 		Active:    active,
+		Banks:     banks,
 		Builder:   builder,
 		Tools:     registry,
 		Provider:  client,
@@ -162,7 +170,7 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		}
 
 		// Build full prompt from disk + session history.
-		messages, err := a.Builder.Build(a.Session, a.Active)
+		messages, err := a.Builder.Build(a.Session, a.Active, a.Banks)
 		if err != nil {
 			return fmt.Errorf("cannot build prompt: %w", err)
 		}

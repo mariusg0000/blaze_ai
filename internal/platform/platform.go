@@ -37,6 +37,7 @@ const appHomeName = "blazeai"
 // scripts/venv is intentionally excluded: it is created lazily when Python is first needed.
 var subfolders = []string{
 	"skills",
+	"memorybanks",
 	"scripts",
 	"backups",
 	"sessions",
@@ -109,7 +110,7 @@ func SelectShell(os OS) (string, error) {
 // The app home is the "blazeai" folder inside the OS user home directory.
 //
 // WHAT:  Returns the absolute path to the blazeai app home directory.
-// WHY:   All runtime data (config, sessions, skills, memory) lives under app home.
+// WHY:   All runtime data (config, sessions, skills, memory, memory-banks) lives under app home.
 // HOW:   Calls os.UserHomeDir and appends the appHomeName folder.
 // RETURNS: string — absolute path to app home; error if home dir cannot be resolved.
 func AppHome() (string, error) {
