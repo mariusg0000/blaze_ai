@@ -121,5 +121,9 @@ sent to the LLM (volatile — not stored in session history).
 - Switch active mode at runtime: the user presses Tab to cycle modes. Newly created modes are hot-reloaded and appear in the cycle immediately. Do NOT suggest `/model modename` — that command does not switch modes.
 - After any edit, validate config integrity (unique names, valid models, provider references).
 
+**After creating or editing a mode:** remind the user to Tab-cycle out and back into that mode for the changes to take effect. The active session's `CurrentMode` holds a stale snapshot until the next cycle.
+
 ### Directive behavior
-The directive is appended to the last message of the payload sent to the LLM on every LLM call while the mode is active. It is not stored in session.json. Use it to constrain agent behavior for the current task (e.g. read-only, quick/cheap, verbose, etc.). Keep directives short and imperative. Always write directives in English, even when the user communicates in another language — the directive is injected into the LLM prompt and must be understood by the model.
+The directive is appended to the last message of the payload sent to the LLM on every LLM call while the mode is active. It is not stored in session.json. Use it to constrain agent behavior for the current task (e.g. read-only, quick/cheap, verbose, etc.). Keep directives short and imperative.
+
+**CRITICAL: Write the directive in English only. Never include translations, dual-language content, separator labels like `[MODE DIRECTIVE]`, or non-English text. The directive is read by the LLM — it is not for the user. Even if the user speaks another language, the directive must be a single block of English text.**
