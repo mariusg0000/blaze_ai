@@ -107,6 +107,7 @@ func TestAppHome(t *testing.T) {
 // TestBootstrap verifies that app home and subfolders are created.
 // This test is idempotent: it should succeed whether or not dirs already exist.
 func TestBootstrap(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	if err := Bootstrap(); err != nil {
 		t.Fatalf("Bootstrap() unexpected error: %v", err)
 	}
@@ -125,15 +126,54 @@ func TestBootstrap(t *testing.T) {
 			t.Errorf("subfolder %s exists but is not a directory", sub)
 		}
 	}
+	for _, path := range []string{
+		filepath.Join(home, "README.md"),
+		filepath.Join(home, "backups", "README.md"),
+		filepath.Join(home, "scripts", "README.md"),
+		filepath.Join(home, "skills", "README.md"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("README not created at %s: %v", path, err)
+		}
+	}
 }
 
 // TestBootstrapIdempotent verifies that calling Bootstrap twice does not error.
 func TestBootstrapIdempotent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	if err := Bootstrap(); err != nil {
 		t.Fatalf("first Bootstrap() failed: %v", err)
 	}
 	if err := Bootstrap(); err != nil {
 		t.Fatalf("second Bootstrap() failed: %v", err)
+	}
+}
+
+// TestBootstrapPreservesExistingReadme verifies bootstrap does not overwrite an existing README.
+func TestBootstrapPreservesExistingReadme(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	home, err := AppHome()
+	if err != nil {
+		t.Fatalf("AppHome() unexpected error: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, "skills"), 0755); err != nil {
+		t.Fatalf("cannot create skills dir: %v", err)
+	}
+	readmePath := filepath.Join(home, "skills", "README.md")
+	const custom = "custom skills readme\n"
+	if err := os.WriteFile(readmePath, []byte(custom), 0644); err != nil {
+		t.Fatalf("cannot seed README: %v", err)
+	}
+
+	if err := Bootstrap(); err != nil {
+		t.Fatalf("Bootstrap() unexpected error: %v", err)
+	}
+	data, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatalf("cannot read seeded README: %v", err)
+	}
+	if string(data) != custom {
+		t.Fatalf("Bootstrap() overwrote existing README: got %q want %q", string(data), custom)
 	}
 }
 

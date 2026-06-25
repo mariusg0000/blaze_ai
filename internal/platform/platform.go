@@ -200,6 +200,9 @@ func Bootstrap() error {
 			return fmt.Errorf("cannot create %s: %w", dir, err)
 		}
 	}
+	if err := copyMissingAppHomeReadmes(home); err != nil {
+		return err
+	}
 	return nil
 }
 
