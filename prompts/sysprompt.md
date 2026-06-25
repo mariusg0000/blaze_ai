@@ -43,6 +43,11 @@ Keep answers structured but not decorative.
 
 [SKILLS]
 
+Active skills persist in the system prompt until unloaded.
+Avoid skill churn. Do not unload a skill immediately after use; keep it loaded for likely follow-up work.
+Unload a skill only when it is clearly irrelevant for about 10 user turns, or when it conflicts with the current task.
+If unsure, keep it loaded.
+
 **Available skills:**
 Use the `load_skill` tool to load a skill if needed.
 
@@ -68,4 +73,3 @@ Use these helpers with shell tool.
 [PROJECT RULES]
 
 {AGENTS_CONTENT}
-
