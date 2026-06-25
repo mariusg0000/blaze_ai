@@ -271,45 +271,32 @@ func DiscoverAll(workDir string) (map[string]*Skill, error) {
 }
 
 // Resolve finds the canonical skill ID for a given name.
-// If name contains / (already scoped like global/foo or project/foo), exact lookup.
-// If name has no prefix, it searches both scopes (global/name, project/name):
-//   - single match → returns that canonical ID
-//   - multiple matches → error with all candidates
-//   - no match → error
+// If name is prefixed with "project/", exact lookup on project/name.
+// If name is bare (no prefix), it resolves to global/name by default.
+// The "global/" prefix is never used for loading — global skills are the default.
 //
 // WHAT:  Resolves a user-provided name to a canonical scoped skill ID.
-// WHY:   load_skill accepts unqualified names; ambiguity must be reported, not silently chosen.
-// PARAMS: name — the name to resolve (may be short or scoped); skills — all discovered skills.
-// RETURNS: string — canonical skill ID; error if not found or ambiguous.
+// WHY:   load_skill accepts bare names for global skills and project/name for project skills.
+// PARAMS: name — the name to resolve (bare or project/name); skills — all discovered skills.
+// RETURNS: string — canonical skill ID; error if not found.
 func Resolve(name string, skills map[string]*Skill) (string, error) {
 	name = strings.TrimSuffix(name, ".md")
 
-	// Already scoped (contains /): exact match on canonical ID.
-	if strings.Contains(name, "/") {
+	// Project-scoped: project/ prefix.
+	if strings.HasPrefix(name, "project/") {
 		if _, ok := skills[name]; ok {
 			return name, nil
 		}
 		return "", fmt.Errorf("skill not found: %s", name)
 	}
 
-	// Unqualified: check both scopes.
-	candidates := []string{"global/" + name, "project/" + name}
-	var matches []string
-	for _, c := range candidates {
-		if _, ok := skills[c]; ok {
-			matches = append(matches, c)
-		}
+	// Bare name: resolve as global by default.
+	id := "global/" + name
+	if _, ok := skills[id]; ok {
+		return id, nil
 	}
 
-	switch len(matches) {
-	case 0:
-		return "", fmt.Errorf("skill not found: %s", name)
-	case 1:
-		return matches[0], nil
-	default:
-		sort.Strings(matches)
-		return "", fmt.Errorf("ambiguous skill name %q: available: %s", name, strings.Join(matches, ", "))
-	}
+	return "", fmt.Errorf("skill not found: %s", name)
 }
 
 // SortedNames returns skill IDs from a map sorted alphabetically.

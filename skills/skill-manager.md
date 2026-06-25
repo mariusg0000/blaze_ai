@@ -99,12 +99,56 @@ For data-only skills, use a concise DATA section with key=value facts.
 
 Do not force this structure if the skill is very small. For small skills, concise procedural rules are better than many headings.
 
+## Where to Create Skills
+
+Skills live on disk in one of two scopes:
+
+- **Global** — `\{GLOBAL_SKILLS_DIR\}/<name>/skill.md`. Shared across all projects.
+- **Project** — `\{PROJECT_SKILLS_DIR\}/<name>/skill.md`. Scoped to the current project.
+
+### Choosing Global vs Project
+
+- **Global** when the skill is: generic, reusable across projects, about personal tools/preferences, cross-project knowledge (network, backup scripts, music player, smart home).
+- **Project** when the skill is: specific to this codebase (build rules, architecture, deploy, project conventions, project-specific paths or names).
+- **Unsure?** Ask the user.
+
+### Generalizing for Global
+
+If promoting a project skill to global:
+- Remove absolute paths → use `\{SKILL_DIR\}`, `\{APP_HOME\}`, `\{GLOBAL_SKILLS_DIR\}`, `\{PROJECT_SKILLS_DIR\}`, or generic descriptions.
+- Remove project/branch names and project-specific conventions.
+- Write examples generically so they apply to any project.
+- If after generalizing nothing useful remains, keep it project.
+
+### Creating the Skill File
+
+Use the shell tool with the real paths (these variables resolve automatically):
+
+```
+mkdir -p {GLOBAL_SKILLS_DIR}/<name>
+```
+or
+```
+mkdir -p {PROJECT_SKILLS_DIR}/<name>
+```
+
+Then write `skill.md` inside that folder with `[DESCRIPTION]` and at least one of `[BEHAVIOR]` or `[DATA]`.
+
+### Restoring Builtin Skills
+
+Builtin skills (skill-manager, customize_me, setup_helpers) are seeded into \{GLOBAL_SKILLS_DIR\} on startup. To restore a builtin to its factory version, delete its folder and restart BlazeAI.
+
 [DATA]
 skill.format.behavior=rules for how to work
 skill.format.data=persistent facts in key=value format
+skill.ids=bare name for global skills (default scope); project/name for project-scoped skills
+skill.resolution=bare name resolves to global by default; project/name resolves to project scope exactly
 skill.scopes=two runtime scopes: global (app_home/skills/) and project (app_home/projects/<project>/skills/)
-skill.ids=global/name and project/name for canonical IDs; builtin skills are templates seeded to global at startup
-skill.seeding=embedded builtin skills are copied to app_home/skills/ on first start; delete folder+restart to restore originals
-skill.global_layout=app_home/skills/<name>/skill.md
-skill.project_layout=app_home/projects/<project>/skills/<name>/skill.md
-skill.resolution=unqualified name resolves if unique across scopes; ambiguous names error listing candidates; scoped names (global/x, project/x) resolve exactly
+skill.global_layout=\{APP_HOME\}/skills/<name>/skill.md
+skill.project_layout=\{APP_HOME\}/projects/<project>/skills/<name>/skill.md
+skill.variable.app_home=\{APP_HOME\} — absolute path to the BlazeAI app home directory (e.g., /home/user/blazeai)
+skill.variable.work_dir=\{WORK_DIR\} — current working directory (project root)
+skill.variable.os_info=\{OS_INFO\} — human-readable OS description (e.g., "linux (Linux 6.8.0)" )
+skill.variable.skill_dir=\{SKILL_DIR\} — the folder of the currently active skill on disk (e.g., /home/user/blazeai/skills/music_player). Resolves to NULL if the skill is embedded. Use for scripts or assets bundled with the skill.
+skill.variable.global_skills_dir=\{GLOBAL_SKILLS_DIR\} — root of the global skills directory (e.g., /home/user/blazeai/skills). Use when creating a new global skill: mkdir -p {GLOBAL_SKILLS_DIR}/<name>
+skill.variable.project_skills_dir=\{PROJECT_SKILLS_DIR\} — root of the current project skills directory (e.g., /home/user/blazeai/projects/<p>/skills). Use when creating a new project skill: mkdir -p {PROJECT_SKILLS_DIR}/<name>

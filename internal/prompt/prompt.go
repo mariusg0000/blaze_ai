@@ -87,6 +87,14 @@ func (b *Builder) injectTemplateVariables(text string, extra map[string]string, 
 				return "NULL"
 			}
 			return home
+		case "GLOBAL_SKILLS_DIR":
+			return filepath.Join(home, "skills")
+		case "PROJECT_SKILLS_DIR":
+			projectDir, err := platform.ProjectDir(b.WorkDir)
+			if err != nil {
+				return "NULL"
+			}
+			return filepath.Join(projectDir, "skills")
 		case "WORK_DIR":
 			if b.WorkDir == "" {
 				return "NULL"
@@ -152,7 +160,7 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string,
 		if err != nil {
 			return "", "", err
 		}
-		displayName := id + ".md"
+		displayName := strings.TrimPrefix(id, "global/") + ".md"
 		available = append(available, fmt.Sprintf("- **%s**: %s", displayName, desc))
 	}
 
@@ -165,7 +173,7 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string,
 			if !ok {
 				continue
 			}
-			sb.WriteString(fmt.Sprintf("### %s\n\n", id))
+			sb.WriteString(fmt.Sprintf("### %s\n\n", strings.TrimPrefix(id, "global/")))
 
 			if skill.Behavior != "" {
 				behavior, err := b.injectVariablesForSkill(skill.Behavior, skill.Dir)
