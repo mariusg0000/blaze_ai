@@ -11,8 +11,6 @@ This directory stores the runtime system prompt fragments used by BlazeAI.
 - `{HOST_HELPERS_OPTIONAL}`: optional host helper warning content.
 - `{SKILLS_AVAILABLE}`: available skill list content.
 - `{SKILLS_ACTIVE}`: active skill details content.
-- `{MEMORIES_AVAILABLE}`: available memory list content.
-- `{MEMORIES_ACTIVE}`: active memory details content.
 - `{AGENTS_CONTENT}`: AGENTS.md content for the current work tree.
 - `{SKILL_DIR}`: injected when rendering a specific skill file.
 

@@ -3,7 +3,7 @@
 // the Agent struct that ties all packages together, and the RunTurn loop that drives
 // prompt building, LLM streaming, tool execution, and message persistence.
 // Layer: agent core. Dependencies: internal/config, internal/provider, internal/prompt,
-// internal/session, internal/tools, internal/skills, internal/memories.
+// internal/session, internal/tools, internal/skills.
 package runtime
 
 import (
@@ -18,7 +18,6 @@ import (
 
 	"blazeai/internal/compaction"
 	"blazeai/internal/config"
-	"blazeai/internal/memories"
 	"blazeai/internal/platform"
 	"blazeai/internal/prompt"
 	"blazeai/internal/provider"
@@ -33,7 +32,6 @@ var ErrTurnAborted = errors.New("turn aborted")
 const userAbortMessage = "User requested an urgent abort. The previous assistant turn was interrupted before completion. Tool execution may have produced partial side effects before cancellation. Do not continue the interrupted response. Wait for the user's next instruction."
 
 // Handler is the contract between the agent core and transports.
-// The agent core calls these methods during execution; each transport implements them.
 //
 // WHAT:  The only boundary between agent core and user-facing transport.
 // WHY:   Console and web both implement this interface over the same core.
@@ -51,10 +49,10 @@ type Handler interface {
 // Agent is the core runtime that ties all packages together and drives the conversation loop.
 //
 // WHAT:  Holds all runtime state and orchestrates the LLM call cycle.
-// WHY:   One struct ties config, session, skills, memories, prompt, tools, and provider together.
+// WHY:   One struct ties config, session, skills, prompt, tools, and provider together.
 // PARAMS: Config — loaded configuration; Session — current conversation session;
 //
-//	Active — in-memory active skills list; Memories — in-memory active memory list; Builder — prompt assembler;
+//	Active — in-memory active skills list; Builder — prompt assembler;
 //	Tools — tool registry; Provider — LLM client; Handler — transport callbacks;
 //	ModelID — current provider/model_name; WorkDir — current work folder; OS — detected platform.
 type Agent struct {
@@ -62,7 +60,6 @@ type Agent struct {
 	Modes     *config.ModesConfig
 	Session   *session.Session
 	Active    *skills.ActiveList
-	Memories  *memories.ActiveList
 	Builder   *prompt.Builder
 	Tools     *tools.Registry
 	Provider  *provider.Client
@@ -76,7 +73,6 @@ type Agent struct {
 }
 
 // NewAgent creates an Agent from a loaded config, session, and detected OS.
-// Initializes the prompt builder, tool registry, provider client, and active skill/memory lists.
 //
 // WHAT:  Constructs the runtime agent with all dependencies wired.
 // WHY:   The main entrypoint calls this to assemble the agent before starting the REPL.
@@ -128,15 +124,6 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 	}
 
 	active := skills.NewActiveList()
-	memoriesList := memories.NewActiveList()
-
-	registry := tools.NewRegistry()
-	registry.Register(tools.NewShellTool(os))
-	registry.Register(tools.NewLoadSkillTool(active))
-	registry.Register(tools.NewUnloadSkillTool(active))
-	registry.Register(tools.NewLoadMemoryTool(memoriesList))
-	registry.Register(tools.NewUnloadMemoryTool(memoriesList))
-	registry.Register(tools.NewReplaceBlockTool())
 
 	builder := &prompt.Builder{
 		PromptsFS:       promptsFS,
@@ -152,9 +139,7 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 		Modes:       modes,
 		Session:     sess,
 		Active:      active,
-		Memories:    memoriesList,
 		Builder:     builder,
-		Tools:       registry,
 		Provider:    client,
 		Handler:     handler,
 		Compactor:   compaction.NewManager(cfg, client),
@@ -164,15 +149,29 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 		OS:          os,
 	}
 
+	// Build resolver for skill tools: resolves names against current discovery.
+	skillResolver := func(name string) (string, error) {
+		all, err := skills.DiscoverAll(builtinSkillsFS, agent.WorkDir)
+		if err != nil {
+			return "", fmt.Errorf("skill discovery failed: %w", err)
+		}
+		return skills.Resolve(name, all)
+	}
+
+	registry := tools.NewRegistry()
+	registry.Register(tools.NewShellTool(os))
+	registry.Register(tools.NewLoadSkillTool(active, skillResolver))
+	registry.Register(tools.NewUnloadSkillTool(active, skillResolver))
+	registry.Register(tools.NewReplaceBlockTool())
 	registry.Register(tools.NewTaskWriteTool(func() string { return agent.WorkDir }))
 	registry.Register(tools.NewTaskReadTool(func() string { return agent.WorkDir }))
+	agent.Tools = registry
 
 	return agent, nil
 }
 
 // RunTurn processes one user message: builds the prompt, streams the LLM response,
 // executes any tool calls, persists all messages, and loops if tools were called.
-// Returns nil when the turn completes (no more pending tool calls).
 //
 // WHAT:  Executes one full conversation turn including tool call loop.
 // WHY:   The REPL calls this for each user input.
@@ -208,7 +207,7 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		}
 
 		// Build full prompt from disk + session history.
-		messages, err := a.Builder.Build(a.Session, a.Active, a.Memories)
+		messages, err := a.Builder.Build(a.Session, a.Active)
 		if err != nil {
 			return fmt.Errorf("cannot build prompt: %w", err)
 		}
@@ -346,12 +345,6 @@ func shouldPersistAssistantMessage(msg session.Message) bool {
 }
 
 // injectDirective appends the mode directive to the last message in a copy of the slice.
-// The original messages slice is never mutated — only the returned copy is modified.
-//
-// WHAT:  Appends a volatile mode directive to the last message's content.
-// WHY:   The directive is never persisted in session.json but must reach the LLM.
-// PARAMS: messages — the prompt messages; directive — the mode directive text.
-// RETURNS: []session.Message — a copy with the directive appended to the last element.
 func injectDirective(messages []session.Message, directive string) []session.Message {
 	if len(messages) == 0 {
 		return messages
@@ -391,11 +384,6 @@ func (a *Agent) appendAbortedToolResults(toolCalls []tools.ToolCall, start int) 
 }
 
 // sanitizeSession removes any trailing incomplete tool-call round before an LLM call.
-//
-// WHAT:  Ensures the persisted session is valid for provider APIs before prompt build/stream.
-// WHY:   Interrupted turns can leave an assistant tool_calls message without matching tool results.
-// HOW:   Sanitizes the in-memory session and persists it immediately.
-// RETURNS: error if sanitizing or saving fails.
 func (a *Agent) sanitizeSession() error {
 	if err := a.Session.Sanitize(); err != nil {
 		return fmt.Errorf("cannot sanitize session: %w", err)
@@ -407,12 +395,6 @@ func (a *Agent) sanitizeSession() error {
 }
 
 // SetModel changes the current model and recreates the provider client.
-// The model ID must be a valid provider/model_name in config.
-//
-// WHAT:  Switches the active model at runtime.
-// WHY:   /model command calls this to change the model.
-// PARAMS: modelID — full provider/model_name identifier.
-// RETURNS: error if the model is invalid or provider client cannot be created.
 func (a *Agent) SetModel(modelID string) error {
 	if err := validateModelInConfig(a.Config, modelID); err != nil {
 		return err
@@ -438,11 +420,6 @@ func (a *Agent) SetModel(modelID string) error {
 }
 
 // SetWorkDir changes the current work folder and updates the prompt builder.
-//
-// WHAT:  Changes the work folder for tool execution and AGENTS.md resolution.
-// WHY:   /cd command calls this to change the work folder.
-// PARAMS: dir — the new work directory path.
-// RETURNS: error if the path is invalid.
 func (a *Agent) SetWorkDir(dir string) error {
 	if dir == "" {
 		return fmt.Errorf("path is empty")
@@ -456,21 +433,11 @@ func (a *Agent) SetWorkDir(dir string) error {
 }
 
 // ReloadModes re-reads modes from modes.json on disk to pick up hot changes.
-//
-// WHAT:  Hot-reloads the modes list from the persisted modes file.
-// WHY:   When the skill creates/edits modes at runtime, the in-memory modes are stale.
-// RETURNS: error if the file cannot be read or modes are invalid.
 func (a *Agent) ReloadModes() error {
 	return a.Modes.Reload()
 }
 
 // ListProviderModels fetches the list of available model IDs from a configured provider.
-//
-// WHAT:  Creates a raw client for the named provider and calls its /models endpoint.
-// WHY:   Interactive /model command needs to show available models for user selection.
-// HOW:   Finds the provider in config, calls provider.NewClientRaw + ListModels.
-// PARAMS: providerName — the name of a configured provider.
-// RETURNS: []string — sorted model IDs; error if provider not found or fetch fails.
 func (a *Agent) ListProviderModels(providerName string) ([]string, error) {
 	for _, p := range a.Config.Providers {
 		if p.Name == providerName {
@@ -482,12 +449,6 @@ func (a *Agent) ListProviderModels(providerName string) ([]string, error) {
 }
 
 // SetMode switches the active work mode by name.
-// Updates the model, recreates the provider client, and persists LastMode to config.
-//
-// WHAT:  Changes the active work mode at runtime.
-// WHY:   Tab cycling and /mode commands call this to switch modes.
-// PARAMS: name — the mode name to activate.
-// RETURNS: error if mode not found or model invalid.
 func (a *Agent) SetMode(name string) error {
 	if err := a.ReloadModes(); err != nil {
 		return fmt.Errorf("cannot reload modes: %w", err)
@@ -513,11 +474,6 @@ func (a *Agent) SetMode(name string) error {
 }
 
 // NextMode returns the next mode in the config list cyclically.
-//
-// WHAT:  Cycles to the next work mode.
-// WHY:   Tab key calls this to switch to the next mode.
-// HOW:   Hot-reloads modes from disk first, then advances cyclically.
-// RETURNS: *config.Mode — the next mode; error if no modes are configured.
 func (a *Agent) NextMode() (*config.Mode, error) {
 	if err := a.ReloadModes(); err != nil {
 		return nil, fmt.Errorf("cannot reload modes: %w", err)
@@ -550,9 +506,6 @@ func (a *Agent) NextMode() (*config.Mode, error) {
 }
 
 // CloseSession marks the session as cleanly closed.
-//
-// WHAT:  Clean close for /exit.
-// RETURNS: error if persisting fails.
 func (a *Agent) CloseSession() error {
 	return a.Session.Close()
 }
@@ -560,7 +513,7 @@ func (a *Agent) CloseSession() error {
 // ResetConversation clears the current session history and loaded context.
 //
 // WHAT:  Restarts the current session in place without changing its folder name.
-// WHY:   /clear and /new need a clean prompt state with only the sysprompt and no active skills or memories.
+// WHY:   /clear and /new need a clean prompt state with only the sysprompt and no active skills.
 // RETURNS: error if clearing summaries or persisting the reset session fails.
 func (a *Agent) ResetConversation() error {
 	if a.Compactor != nil {
@@ -574,23 +527,13 @@ func (a *Agent) ResetConversation() error {
 	if a.Active != nil {
 		a.Active.Clear()
 	}
-	if a.Memories != nil {
-		a.Memories.Clear()
-	}
 	if err := a.Session.Reset(); err != nil {
 		return fmt.Errorf("cannot reset session: %w", err)
 	}
 	return nil
 }
 
-// CloseSession marks the session as cleanly closed.
-
 // validateModelInConfig checks that a model ID exists in the config's providers and favorite models.
-//
-// WHAT:  Validates that a model ID is known to config.
-// WHY:   /model must reject models not in config.
-// PARAMS: cfg — loaded config; modelID — the model to validate.
-// RETURNS: error if the model format is invalid or provider is unknown.
 func validateModelInConfig(cfg *config.Config, modelID string) error {
 	if err := validateModelFormat(modelID); err != nil {
 		return err

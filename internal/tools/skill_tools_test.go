@@ -13,7 +13,7 @@ import (
 // TestLoadSkillExecute verifies that a skill is added to the active list.
 func TestLoadSkillExecute(t *testing.T) {
 	active := skills.NewActiveList()
-	tool := NewLoadSkillTool(active)
+	tool := NewLoadSkillTool(active, nil)
 	args := json.RawMessage(`{"name":"memory-manager"}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "skill loaded: memory-manager") {
@@ -27,7 +27,7 @@ func TestLoadSkillExecute(t *testing.T) {
 // TestLoadSkillExecuteWithMarkdownSuffix verifies .md names are normalized.
 func TestLoadSkillExecuteWithMarkdownSuffix(t *testing.T) {
 	active := skills.NewActiveList()
-	tool := NewLoadSkillTool(active)
+	tool := NewLoadSkillTool(active, nil)
 	args := json.RawMessage(`{"name":"memory-manager.md"}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "skill loaded: memory-manager") {
@@ -44,7 +44,7 @@ func TestLoadSkillExecuteWithMarkdownSuffix(t *testing.T) {
 // TestLoadSkillExecuteEmptyName verifies error on empty name.
 func TestLoadSkillExecuteEmptyName(t *testing.T) {
 	active := skills.NewActiveList()
-	tool := NewLoadSkillTool(active)
+	tool := NewLoadSkillTool(active, nil)
 	args := json.RawMessage(`{"name":""}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error") {
@@ -55,7 +55,7 @@ func TestLoadSkillExecuteEmptyName(t *testing.T) {
 // TestLoadSkillExecuteInvalidArgs verifies error on invalid JSON.
 func TestLoadSkillExecuteInvalidArgs(t *testing.T) {
 	active := skills.NewActiveList()
-	tool := NewLoadSkillTool(active)
+	tool := NewLoadSkillTool(active, nil)
 	args := json.RawMessage(`{invalid}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error") {
@@ -65,7 +65,7 @@ func TestLoadSkillExecuteInvalidArgs(t *testing.T) {
 
 // TestLoadSkillName verifies the tool name.
 func TestLoadSkillName(t *testing.T) {
-	tool := NewLoadSkillTool(skills.NewActiveList())
+	tool := NewLoadSkillTool(skills.NewActiveList(), nil)
 	if tool.Name() != "load_skill" {
 		t.Errorf("Name() = %q, want 'load_skill'", tool.Name())
 	}
@@ -73,7 +73,7 @@ func TestLoadSkillName(t *testing.T) {
 
 // TestLoadSkillParameters verifies parameters is valid JSON.
 func TestLoadSkillParameters(t *testing.T) {
-	tool := NewLoadSkillTool(skills.NewActiveList())
+	tool := NewLoadSkillTool(skills.NewActiveList(), nil)
 	params := tool.Parameters()
 	if !json.Valid(params) {
 		t.Error("Parameters() is not valid JSON")
@@ -85,7 +85,7 @@ func TestLoadSkillParameters(t *testing.T) {
 func TestUnloadSkillExecute(t *testing.T) {
 	active := skills.NewActiveList()
 	active.Load("memory-manager")
-	tool := NewUnloadSkillTool(active)
+	tool := NewUnloadSkillTool(active, nil)
 	args := json.RawMessage(`{"name":"memory-manager"}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "skill unloaded: memory-manager") {
@@ -100,7 +100,7 @@ func TestUnloadSkillExecute(t *testing.T) {
 func TestUnloadSkillExecuteWithMarkdownSuffix(t *testing.T) {
 	active := skills.NewActiveList()
 	active.Load("memory-manager")
-	tool := NewUnloadSkillTool(active)
+	tool := NewUnloadSkillTool(active, nil)
 	args := json.RawMessage(`{"name":"memory-manager.md"}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "skill unloaded: memory-manager") {
@@ -114,7 +114,7 @@ func TestUnloadSkillExecuteWithMarkdownSuffix(t *testing.T) {
 // TestUnloadSkillExecuteNotPresent verifies unloading a non-active skill still succeeds.
 func TestUnloadSkillExecuteNotPresent(t *testing.T) {
 	active := skills.NewActiveList()
-	tool := NewUnloadSkillTool(active)
+	tool := NewUnloadSkillTool(active, nil)
 	args := json.RawMessage(`{"name":"ghost"}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "skill unloaded: ghost") {
@@ -125,7 +125,7 @@ func TestUnloadSkillExecuteNotPresent(t *testing.T) {
 // TestUnloadSkillExecuteEmptyName verifies error on empty name.
 func TestUnloadSkillExecuteEmptyName(t *testing.T) {
 	active := skills.NewActiveList()
-	tool := NewUnloadSkillTool(active)
+	tool := NewUnloadSkillTool(active, nil)
 	args := json.RawMessage(`{"name":""}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error") {
@@ -135,7 +135,7 @@ func TestUnloadSkillExecuteEmptyName(t *testing.T) {
 
 // TestUnloadSkillName verifies the tool name.
 func TestUnloadSkillName(t *testing.T) {
-	tool := NewUnloadSkillTool(skills.NewActiveList())
+	tool := NewUnloadSkillTool(skills.NewActiveList(), nil)
 	if tool.Name() != "unload_skill" {
 		t.Errorf("Name() = %q, want 'unload_skill'", tool.Name())
 	}
@@ -143,7 +143,7 @@ func TestUnloadSkillName(t *testing.T) {
 
 // TestUnloadSkillParameters verifies parameters is valid JSON.
 func TestUnloadSkillParameters(t *testing.T) {
-	tool := NewUnloadSkillTool(skills.NewActiveList())
+	tool := NewUnloadSkillTool(skills.NewActiveList(), nil)
 	params := tool.Parameters()
 	if !json.Valid(params) {
 		t.Error("Parameters() is not valid JSON")
@@ -153,7 +153,7 @@ func TestUnloadSkillParameters(t *testing.T) {
 
 // TestUnloadSkillDescription verifies unload description stays minimal.
 func TestUnloadSkillDescription(t *testing.T) {
-	tool := NewUnloadSkillTool(skills.NewActiveList())
+	tool := NewUnloadSkillTool(skills.NewActiveList(), nil)
 	desc := tool.Description()
 	if desc != "Unload a skill by name." {
 		t.Fatalf("Description() = %q, want minimal unload description", desc)

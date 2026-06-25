@@ -553,7 +553,6 @@ func TestHandleCommandClear(t *testing.T) {
 		t.Run(strings.TrimPrefix(cmd, "/"), func(t *testing.T) {
 			c, out := newConsole(mockAgent(t))
 			c.Agent.Active.Load("music_player")
-			c.Agent.Memories.Load("music-library")
 			if err := c.Agent.Session.Append(session.Message{Role: "user", Content: "old context"}); err != nil {
 				t.Fatalf("Append() failed: %v", err)
 			}
@@ -584,9 +583,7 @@ func TestHandleCommandClear(t *testing.T) {
 			if len(c.Agent.Active.List()) != 0 {
 				t.Errorf("active skills = %v, want empty", c.Agent.Active.List())
 			}
-			if len(c.Agent.Memories.List()) != 0 {
-				t.Errorf("active memories = %v, want empty", c.Agent.Memories.List())
-			}
+
 			if _, err := os.Stat(summaryDir); !os.IsNotExist(err) {
 				t.Errorf("summaries dir still exists: %v", err)
 			}

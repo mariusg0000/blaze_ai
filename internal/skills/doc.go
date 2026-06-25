@@ -1,5 +1,6 @@
-// skills/doc.go — skill discovery, validation, and active skills list management.
-// Discovers builtin and custom skills from disk, validates [DESCRIPTION] and [DETAILS] sections,
-// maintains the in-memory active skills list, and resolves collisions (custom wins over builtin).
-// Layer: skill management. Dependencies: internal/platform (app home path for custom skills).
+// skills/doc.go — skill discovery, parsing, validation, scoping, and active list.
+// Discovers skills from builtin (embedded), global (app_home/skills/), and project
+// (workdir/.blazeai/skills/) sources. Parses [DESCRIPTION], [BEHAVIOR], [DATA].
+// Maintains the in-memory active skills list and resolves names across scopes.
+// Layer: skill management. Dependencies: internal/platform.
 package skills

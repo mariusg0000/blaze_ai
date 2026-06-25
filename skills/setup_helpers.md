@@ -1,7 +1,7 @@
 [DESCRIPTION]
 Load when host tools are missing or the user asks about installing helpers. Use for `rg`, `fd`, `jq`, `git`, `curl`, `pandoc`, `sqlite3`, and approval-safe install guidance.
 
-[DETAILS]
+[BEHAVIOR]
 # Setup Helpers
 
 ## Scope

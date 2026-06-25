@@ -186,7 +186,7 @@ func TestShellFormatArgsFallbackTruncated(t *testing.T) {
 
 // TestLoadSkillFormatArgs verifies load_skill prefers purpose for display.
 func TestLoadSkillFormatArgs(t *testing.T) {
-	l := NewLoadSkillTool(nil)
+	l := NewLoadSkillTool(nil, nil)
 	result := l.FormatArgs(json.RawMessage(`{"purpose":"Load memory manager skill for persistence rules","name":"memory-manager.md"}`))
 	if result != "Load memory manager skill for persistence rules" {
 		t.Errorf("FormatArgs() = %q, want %q", result, "Load memory manager skill for persistence rules")
@@ -195,7 +195,7 @@ func TestLoadSkillFormatArgs(t *testing.T) {
 
 // TestLoadSkillFormatArgsFallback verifies load_skill falls back to normalized skill name.
 func TestLoadSkillFormatArgsFallback(t *testing.T) {
-	l := NewLoadSkillTool(nil)
+	l := NewLoadSkillTool(nil, nil)
 	result := l.FormatArgs(json.RawMessage(`{"name":"memory-manager.md"}`))
 	if result != "memory-manager" {
 		t.Errorf("FormatArgs() = %q, want %q", result, "memory-manager")
@@ -204,7 +204,7 @@ func TestLoadSkillFormatArgsFallback(t *testing.T) {
 
 // TestUnloadSkillFormatArgs verifies unload_skill prefers purpose for display.
 func TestUnloadSkillFormatArgs(t *testing.T) {
-	u := NewUnloadSkillTool(nil)
+	u := NewUnloadSkillTool(nil, nil)
 	result := u.FormatArgs(json.RawMessage(`{"purpose":"Unload memory manager skill after finishing persistence update","name":"memory-manager"}`))
 	if result != "Unload memory manager skill after finishing persistence update" {
 		t.Errorf("FormatArgs() = %q, want %q", result, "Unload memory manager skill after finishing persistence update")
@@ -213,7 +213,7 @@ func TestUnloadSkillFormatArgs(t *testing.T) {
 
 // TestUnloadSkillFormatArgsFallback verifies unload_skill falls back to skill name.
 func TestUnloadSkillFormatArgsFallback(t *testing.T) {
-	u := NewUnloadSkillTool(nil)
+	u := NewUnloadSkillTool(nil, nil)
 	result := u.FormatArgs(json.RawMessage(`{"name":"memory-manager"}`))
 	if result != "memory-manager" {
 		t.Errorf("FormatArgs() = %q, want %q", result, "memory-manager")

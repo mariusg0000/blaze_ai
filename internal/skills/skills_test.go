@@ -40,7 +40,7 @@ func TestParseValid(t *testing.T) {
 	content := `[DESCRIPTION]
 A test skill for testing purposes.
 
-[DETAILS]
+[BEHAVIOR]
 # Test Skill
 
 This is the full detail of the test skill.
@@ -55,7 +55,7 @@ It has multiple lines.`
 	if skill.Description != "A test skill for testing purposes." {
 		t.Errorf("Description = %q, want 'A test skill for testing purposes.'", skill.Description)
 	}
-	if skill.Details == "" {
+	if skill.Behavior == "" {
 		t.Error("Details is empty, want content")
 	}
 }
@@ -70,13 +70,13 @@ Only details here.`
 	}
 }
 
-// TestParseMissingDetails verifies error when [DETAILS] is absent.
-func TestParseMissingDetails(t *testing.T) {
+// TestParseMissingBehaviorOrData verifies error when neither [BEHAVIOR] nor [DATA] is present.
+func TestParseMissingBehaviorOrData(t *testing.T) {
 	content := `[DESCRIPTION]
 Only description here.`
 	_, err := Parse("test", content)
-	if err != ErrMissingDetails {
-		t.Errorf("Parse() err = %v, want ErrMissingDetails", err)
+	if err != ErrMissingBehaviorOrData {
+		t.Errorf("Parse() err = %v, want ErrMissingBehaviorOrData", err)
 	}
 }
 
@@ -88,15 +88,15 @@ func TestParseBothMissing(t *testing.T) {
 	}
 }
 
-// TestParseDetailsAtEnd verifies that [DETAILS] as the last section is captured fully.
-func TestParseDetailsAtEnd(t *testing.T) {
-	content := "[DESCRIPTION]\nShort desc.\n\n[DETAILS]\nLine 1\nLine 2\nLine 3"
+// TestParseBehaviorAtEnd verifies that [BEHAVIOR] as the last section is captured fully.
+func TestParseBehaviorAtEnd(t *testing.T) {
+	content := "[DESCRIPTION]\nShort desc.\n\n[BEHAVIOR]\nLine 1\nLine 2\nLine 3"
 	skill, err := Parse("test", content)
 	if err != nil {
 		t.Fatalf("Parse() unexpected error: %v", err)
 	}
-	if !contains(skill.Details, "Line 1") || !contains(skill.Details, "Line 3") {
-		t.Errorf("Details = %q, want all three lines", skill.Details)
+	if !contains(skill.Behavior, "Line 1") || !contains(skill.Behavior, "Line 3") {
+		t.Errorf("Details = %q, want all three lines", skill.Behavior)
 	}
 }
 
@@ -188,9 +188,9 @@ func TestDiscoverFromDirs(t *testing.T) {
 	builtin := filepath.Join(t.TempDir(), "builtin")
 	custom := filepath.Join(t.TempDir(), "custom")
 
-	writeSkill(t, builtin, "memory-manager.md", "[DESCRIPTION]\nBuiltin memory manager.\n\n[DETAILS]\nBuiltin details.")
-	writeSkill(t, builtin, "skill-manager.md", "[DESCRIPTION]\nBuiltin skill manager.\n\n[DETAILS]\nBuiltin skill manager details.")
-	writeCustomSkill(t, custom, "my_skill", "[DESCRIPTION]\nCustom skill.\n\n[DETAILS]\nCustom details.")
+	writeSkill(t, builtin, "memory-manager.md", "[DESCRIPTION]\nBuiltin memory manager.\n\n[BEHAVIOR]\nBuiltin details.")
+	writeSkill(t, builtin, "skill-manager.md", "[DESCRIPTION]\nBuiltin skill manager.\n\n[BEHAVIOR]\nBuiltin skill manager details.")
+	writeCustomSkill(t, custom, "my_skill", "[DESCRIPTION]\nCustom skill.\n\n[BEHAVIOR]\nCustom details.")
 
 	skills, err := DiscoverFromDirs(builtin, custom)
 	if err != nil {
@@ -215,8 +215,8 @@ func TestDiscoverCollisionCustomWins(t *testing.T) {
 	builtin := filepath.Join(t.TempDir(), "builtin")
 	custom := filepath.Join(t.TempDir(), "custom")
 
-	writeSkill(t, builtin, "memory-manager.md", "[DESCRIPTION]\nBuiltin memory manager.\n\n[DETAILS]\nBuiltin details.")
-	writeCustomSkill(t, custom, "memory-manager", "[DESCRIPTION]\nCustom memory manager.\n\n[DETAILS]\nCustom details.")
+	writeSkill(t, builtin, "memory-manager.md", "[DESCRIPTION]\nBuiltin memory manager.\n\n[BEHAVIOR]\nBuiltin details.")
+	writeCustomSkill(t, custom, "memory-manager", "[DESCRIPTION]\nCustom memory manager.\n\n[BEHAVIOR]\nCustom details.")
 
 	skills, err := DiscoverFromDirs(builtin, custom)
 	if err != nil {
@@ -235,7 +235,7 @@ func TestDiscoverSkipsInvalid(t *testing.T) {
 	builtin := filepath.Join(t.TempDir(), "builtin")
 	custom := filepath.Join(t.TempDir(), "custom")
 
-	writeSkill(t, builtin, "valid.md", "[DESCRIPTION]\nValid.\n\n[DETAILS]\nValid details.")
+	writeSkill(t, builtin, "valid.md", "[DESCRIPTION]\nValid.\n\n[BEHAVIOR]\nValid details.")
 	writeSkill(t, builtin, "invalid.md", "no sections here")
 
 	skills, err := DiscoverFromDirs(builtin, custom)
@@ -258,7 +258,7 @@ func TestDiscoverCustomSkillFolder(t *testing.T) {
 	builtin := filepath.Join(t.TempDir(), "builtin")
 	custom := filepath.Join(t.TempDir(), "custom")
 
-	writeCustomSkill(t, custom, "project_hub", "[DESCRIPTION]\nFolder custom skill.\n\n[DETAILS]\nFolder details.")
+	writeCustomSkill(t, custom, "project_hub", "[DESCRIPTION]\nFolder custom skill.\n\n[BEHAVIOR]\nFolder details.")
 
 	discovered, err := DiscoverFromDirs(builtin, custom)
 	if err != nil {
@@ -309,7 +309,7 @@ func TestDiscoverSkipsNonMd(t *testing.T) {
 	builtin := filepath.Join(t.TempDir(), "builtin")
 	custom := filepath.Join(t.TempDir(), "custom")
 
-	writeSkill(t, builtin, "valid.md", "[DESCRIPTION]\nValid.\n\n[DETAILS]\nValid details.")
+	writeSkill(t, builtin, "valid.md", "[DESCRIPTION]\nValid.\n\n[BEHAVIOR]\nValid details.")
 	writeSkill(t, builtin, "readme.txt", "not a skill")
 
 	skills, err := DiscoverFromDirs(builtin, custom)
@@ -326,7 +326,7 @@ func TestDiscoverSkipsDirs(t *testing.T) {
 	builtin := filepath.Join(t.TempDir(), "builtin")
 	custom := filepath.Join(t.TempDir(), "custom")
 
-	writeSkill(t, builtin, "valid.md", "[DESCRIPTION]\nValid.\n\n[DETAILS]\nValid details.")
+	writeSkill(t, builtin, "valid.md", "[DESCRIPTION]\nValid.\n\n[BEHAVIOR]\nValid details.")
 	subdir := filepath.Join(builtin, "subdir")
 	if err := os.MkdirAll(subdir, 0755); err != nil {
 		t.Fatalf("cannot create subdir: %v", err)

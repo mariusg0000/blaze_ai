@@ -1,6 +1,6 @@
 // tools.go — native tool interface, registry, and OpenAI tool-calling format definitions.
 // Defines the Tool interface, Registry, and JSON structures for OpenAI-compatible tool calls.
-// Layer: tool execution. Dependencies: internal/skills, internal/memories, internal/platform.
+// Layer: tool execution. Dependencies: internal/skills, internal/platform.
 package tools
 
 import (

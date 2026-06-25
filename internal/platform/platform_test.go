@@ -130,7 +130,7 @@ func TestBootstrap(t *testing.T) {
 		filepath.Join(home, "README.md"),
 		filepath.Join(home, "backups", "README.md"),
 		filepath.Join(home, "config", "README.md"),
-		filepath.Join(home, "memories", "README.md"),
+
 		filepath.Join(home, "projects", "README.md"),
 		filepath.Join(home, "scripts", "README.md"),
 		filepath.Join(home, "skills", "README.md"),

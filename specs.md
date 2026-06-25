@@ -62,28 +62,26 @@
 ### App Home Bootstrap
 - Resolved from OS home directory + `blazeai` folder.
 - Created at first start if missing.
-- Standard subfolders: `skills`, `scripts`, `scripts/venv` (lazy), `backups`, `sessions`, `memory`, `config`.
+- Standard subfolders: `skills`, `scripts`, `scripts/venv` (lazy), `backups`, `projects`, `config`.
 - `{APP_HOME}` variable injected into prompts and skills at build time.
 
 ### Prompt Build
 - Rebuilt on every LLM call from disk. Nothing reused.
-- Runtime part order: universal sysprompt → OS sysprompt → `AGENTS.md` (if exists in work folder) → `memory.md` → skills section.
-- Skills section: available skills (all `[DESCRIPTION]` blocks + file names) then active skills (`[DETAILS]` of loaded skills).
+- Runtime part order: universal sysprompt → OS sysprompt → host helpers → skills section → `AGENTS.md` (if exists in work folder).
+- Skills section: available skills (all `[DESCRIPTION]` blocks + file names) then active skills (`[BEHAVIOR]` and `[DATA]` of loaded skills).
 - Conversation part: persisted message history from session JSON, appended after runtime part.
-- Required sources: universal prompt, OS prompt. Optional: `AGENTS.md`, `memory.md`, skills.
+- Required sources: universal prompt, OS prompt. Optional: `AGENTS.md`, skills.
 
 ### Skills
-- Format: Markdown with fixed sections `[DESCRIPTION]` and `[DETAILS]`. Invalid without both.
-- Discovery: builtin `skills/` in project distribution + custom `app_home/skills/`. Both read every build.
+- Format: Markdown with `[DESCRIPTION]` (required) and at least one of `[BEHAVIOR]` or `[DATA]`.
+- Discovery: builtin (embedded `skills/`), global (`app_home/skills/`), project (`<workdir>/.blazeai/skills/`). All read every build.
 - Collision: `skill-manager` forbids duplicates. If collision exists, custom wins.
-- Builtin skills: `memory-manager`, `skill-manager`, `customize_me`.
+- Builtin skills: `skill-manager`, `customize_me`.
 - Active skills: in-memory list of names, starts empty per session, not persisted, not deduced from history.
 - `load_skill` / `unload_skill` only modify the in-memory list.
 
 ### Memory
-- Single file: `app_home/memory/memory.md`.
-- Read fresh every prompt build.
-- Updated explicitly by agent via `shell` or user action. No automatic runtime writes.
+- Handled through skill `[DATA]` sections. No separate memory subsystem.
 
 ### Sessions
 - No database. File-based storage in `app_home/sessions/`.

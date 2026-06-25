@@ -39,7 +39,7 @@
 - The app home is the `blazeai` folder inside that OS home directory.
 - If the `blazeai` folder does not exist, the runtime creates it.
 - The app home is the canonical storage root for BlazeAI runtime data.
-- Standard subfolders are created under app home, including `skills`, `scripts`, `backups`, `sessions`, and `memory`.
+- Standard subfolders are created under app home: `skills`, `scripts`, `backups`, `projects`, `config`.
 - The app home layout must be portable across supported operating systems.
 
 ## Session Model

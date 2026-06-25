@@ -37,11 +37,9 @@ const appHomeName = "blazeai"
 // scripts/venv is intentionally excluded: it is created lazily when Python is first needed.
 var subfolders = []string{
 	"skills",
-	"memories",
 	"scripts",
 	"backups",
 	"projects",
-	"memory",
 	"config",
 }
 

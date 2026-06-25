@@ -38,7 +38,6 @@ func copyMissingAppHomeReadmes(home string) error {
 		{embedded: "apphome_readmes/README.md", target: filepath.Join(home, "README.md")},
 		{embedded: "apphome_readmes/backups/README.md", target: filepath.Join(home, "backups", "README.md")},
 		{embedded: "apphome_readmes/config/README.md", target: filepath.Join(home, "config", "README.md")},
-		{embedded: "apphome_readmes/memories/README.md", target: filepath.Join(home, "memories", "README.md")},
 		{embedded: "apphome_readmes/projects/README.md", target: filepath.Join(home, "projects", "README.md")},
 		{embedded: "apphome_readmes/scripts/README.md", target: filepath.Join(home, "scripts", "README.md")},
 		{embedded: "apphome_readmes/skills/README.md", target: filepath.Join(home, "skills", "README.md")},

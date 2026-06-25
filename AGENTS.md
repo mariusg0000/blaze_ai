@@ -53,7 +53,7 @@ Never modify files in Read-Only or Planning Mode. Never use TodoWrite in Read-On
 
 ### 3.2 Planning
 
-For every **non-trivial** task, discuss and produce a plan before implementing. *Non-trivial* = code changes, file writes, multiple steps, tests, validation, design choices, bug fixing, refactoring, or behavior changes.
+For every **non-trivial** task, discuss and produce a plan before implementing. *Non-trivial* = code changes, file writes, multiple steps, validation, design choices, bug fixing, refactoring, or behavior changes.
 
 Plan includes: **goal, files likely to change, steps, subtasks, constraints, validation plan, risks/open questions**.
 
@@ -139,7 +139,7 @@ Before any commit:
 * Incomplete/ambiguous/contradictory spec → **stop and ask**.
 * Uncertain about a fact → say `I do not know`.
 * **No** refactors, renames, cleanup, formatting sweeps, dependency changes, or scope expansion beyond the approved task.
-* Updating docs/tests/changelog for code you actually touched is **not** scope expansion — it is required (§9, §10.1).
+* Updating docs/changelog for code you actually touched is **not** scope expansion — it is required (§9, §10.1).
 * Preserve existing behavior unless the task requires changing it. Preserve an existing simple, correct, adequate model.
 * Mention useful unrelated improvements **only as suggestions**; never apply without approval.
 * Discovered work needed for the task → add it to TodoWrite and continue. If it significantly changes scope → stop and ask.
@@ -192,7 +192,7 @@ Todos must include:
 * top-level implementation steps
 * important subtasks
 * validation steps
-* documentation/test updates when required
+* documentation updates when required
 * any known constraints or blockers as todo notes when the tool supports it
 
 Keep todos concrete, scoped, and directly tied to the approved requirement.
@@ -282,38 +282,13 @@ SRP applied proportionally (a 30-line script may stay one file). Keep modules sm
 
 Explicit types on public params and return values (Python `typing`/`Protocol`/`TypedDict`/`Literal`; TS strict; Rust public API types; Go idiomatic; Java/Kotlin public API types).
 
-When available in the project, validation must pass: **formatter, linter, strict type checker, test suite** (e.g. Python `ruff` + `mypy --strict`; TS `tsc --strict`; Rust `cargo fmt`/`clippy`/`test`). If no validation command is defined, infer the safest conventional one and report the assumption. If validation cannot run, explain why. **If validation fails and cannot be fixed within the approved scope, do not mark the task `Completed` and do not propose a commit — report and ask.**
+When available in the project, validation must pass: **formatter, linter, strict type checker** (e.g. Python `ruff` + `mypy --strict`; TS `tsc --strict`; Rust `cargo fmt`/`clippy`). If no validation command is defined, infer the safest conventional one and report the assumption. If validation cannot run, explain why. **If validation fails and cannot be fixed within the approved scope, do not mark the task `Completed` and do not propose a commit — report and ask.**
 
 ---
 
-## 8. Testing
+## 8. Testing Policy
 
-Testing must be proportional to risk and task size.
-
-Add or update tests when the change affects non-trivial behavior, data correctness, validation, parsing, retries, persistence, protocol handling, rendering logic, public APIs, security-sensitive logic, or state mutation.
-
-For substantial behavior changes, cover at least:
-- one expected path
-- one important edge case
-- one important failure path
-
-For small, low-risk, or mechanical changes, a focused validation command, smoke test, type check, linter, or direct manual verification is acceptable. Do not create unnecessary tests just to satisfy a fixed count.
-
-Place tests in the conventional location (`tests/`, `__tests__/`, or framework equivalent).
-
-If no test structure exists:
-- for small changes, do not create one unless clearly useful; report what validation was done instead
-- for substantial behavior changes, ask before creating a new test structure
-
-Exempt:
-- DTOs
-- trivial accessors
-- pass-through wrappers
-- static config
-- pure documentation changes
-- file moves/renames without behavior change
-- typo or formatting-only changes
-- Quick Mode changes unless the quick change directly affects executable behavior
+**Do not create or run tests.** Never propose, suggest, or execute test creation, test execution, or test framework setup. All testing-related activities are outside the scope of this agent.
 
 ---
 
@@ -357,7 +332,7 @@ Update all relevant headers/docs/comments in the **same patch** as code changes;
 
 ### 10.1 File Modification Rules
 
-Default to incremental scoped patches (search/replace or unified diff). Full rewrite only when patching is impractical, and justify it first. Update relevant headers/docs/tests/changelog in the same patch when applicable. Don't mix unrelated changes, silently reformat unrelated files, or touch generated files unless the task requires it.
+Default to incremental scoped patches (search/replace or unified diff). Full rewrite only when patching is impractical, and justify it first. Update relevant headers/docs/changelog in the same patch when applicable. Don't mix unrelated changes, silently reformat unrelated files, or touch generated files unless the task requires it.
 
 ### 10.2 Before Commit (always)
 
@@ -415,7 +390,7 @@ If the user explicitly asks for task-related-only staging, stage only files rela
 
 If unrelated or pre-existing changes are included by default mode, mention them briefly in the decision summary and commit message. Do not invent detailed rationale for unrelated files.
 
-One commit including: code changes, doc changes, test changes (if any), the new `decisions/` file, and all staged files. Do **not** create a separate commit only for the decision summary.
+One commit including: code changes, doc changes, the new `decisions/` file, and all staged files. Do **not** create a separate commit only for the decision summary.
 
 ### 10.5 Commit Message
 

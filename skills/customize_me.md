@@ -1,7 +1,7 @@
 [DESCRIPTION]
 Load when the user wants to configure BlazeAI models, providers, API keys, favorite models, role assignments, or work modes. Use for any config.json or modes.json changes including creating, editing, or deleting modes.
 
-[DETAILS]
+[BEHAVIOR]
 # Customize Me
 
 ## Config Location

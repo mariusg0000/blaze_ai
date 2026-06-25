@@ -140,8 +140,7 @@
   - `scripts/`: task scripts and Python venv
   - `scripts/venv/`: Python virtual environment, created lazily
   - `backups/`: agent-created backups
-  - `sessions/`: session folders with JSON message history
-  - `memory/`: persistent memory file
+  - `projects/`: per-project session folders with JSON message history
   - `config/`: runtime configuration
 
 ## High-Risk Areas

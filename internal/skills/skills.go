@@ -1,8 +1,10 @@
-// skills.go — skill discovery, parsing, validation, and active skills list.
-// Discovers skill files from builtin (project skills/) and custom (app_home/skills/) locations,
-// parses [DESCRIPTION] and [DETAILS] sections, validates required sections, resolves collisions
-// (custom wins over builtin), and maintains an in-memory active skills list per session.
-// Layer: skill management. Dependencies: internal/platform (app home path for custom skills).
+// skills.go — skill discovery, parsing, validation, scoping, and active skills list.
+// Discovers skill files from builtin (embedded skills/), global (app_home/skills/),
+// and project (workdir/.blazeai/skills/) locations. Parses [DESCRIPTION] (required),
+// [BEHAVIOR] (optional), and [DATA] (optional) sections. At least one of Behavior
+// or Data must be present. Project-scoped skills use project/ prefix in their IDs.
+// Resolution: unqualified names resolve if unique across scopes; ambiguous names error.
+// Layer: skill management. Dependencies: internal/platform.
 package skills
 
 import (
@@ -17,56 +19,58 @@ import (
 	"blazeai/internal/platform"
 )
 
+// Scope identifies the source of a skill.
+type Scope string
+
+const (
+	ScopeGlobal  Scope = "global"
+	ScopeProject Scope = "project"
+)
+
 // ErrMissingDescription is returned when a skill file lacks a [DESCRIPTION] section.
 var ErrMissingDescription = errors.New("skill missing [DESCRIPTION] section")
 
-// ErrMissingDetails is returned when a skill file lacks a [DETAILS] section.
-var ErrMissingDetails = errors.New("skill missing [DETAILS] section")
+// ErrMissingBehaviorOrData is returned when a skill file has neither [BEHAVIOR] nor [DATA].
+var ErrMissingBehaviorOrData = errors.New("skill missing [BEHAVIOR] and [DATA]: at least one is required")
 
-// Skill represents a parsed skill file with its name, description, and details.
+// Skill represents a parsed skill file.
 //
-// WHAT:  Holds the parsed content of a single skill file.
-// WHY:   The prompt builder needs description (available skills) and details (active skills).
-// PARAMS: Name — file name without extension; Description — [DESCRIPTION] content; Details — [DETAILS] content.
+// WHAT:  Holds the parsed content of a single skill file with optional behavior and data.
+// WHY:   The prompt builder needs description (available skills), behavior, and data (active skills).
+// Fields: Name — file/dir name without extension; Description — [DESCRIPTION] content;
+//
+//	Behavior — [BEHAVIOR] content (optional); Data — [DATA] content (optional);
+//	Dir — folder path for custom skills (empty for builtin); Scope — global or project.
 type Skill struct {
 	Name        string
 	Description string
-	Details     string
+	Behavior    string
+	Data        string
 	Dir         string
+	Scope       Scope
 }
 
-// ActiveList holds the in-memory list of active skill names for the current session.
+// ActiveList holds the in-memory list of active skill IDs for the current session.
 // The list starts empty, is not persisted, and is not deduced from history.
 //
 // WHAT:  Tracks which skills are loaded in the current session.
-// WHY:   load_skill and unload_skill modify this list; prompt builder injects details of active skills.
+// WHY:   load_skill and unload_skill modify this list; prompt builder injects active skill content.
 // HOW:   Simple slice with Load/Unload/Has/List methods.
 type ActiveList struct {
 	names []string
 }
 
 // Clear removes all active skills from the list.
-//
-// WHAT:  Resets the active skill list to empty.
-// WHY:   /clear and similar reset flows need to remove all loaded skills at once.
 func (a *ActiveList) Clear() {
 	a.names = a.names[:0]
 }
 
 // NewActiveList returns an empty ActiveList for a new session.
-//
-// WHAT:  Creates a fresh active skills list.
-// WHY:   The list starts empty at the beginning of every session per spec.
-// RETURNS: *ActiveList — empty list ready for Load/Unload operations.
 func NewActiveList() *ActiveList {
 	return &ActiveList{names: []string{}}
 }
 
-// Load adds a skill name to the active list if not already present.
-//
-// WHAT:  Activates a skill by name.
-// WHY:   load_skill tool calls this to make a skill's [DETAILS] available in the prompt.
-// PARAMS: name — the skill name to activate.
+// Load adds a skill ID to the active list if not already present.
 func (a *ActiveList) Load(name string) {
 	for _, n := range a.names {
 		if n == name {
@@ -76,11 +80,7 @@ func (a *ActiveList) Load(name string) {
 	a.names = append(a.names, name)
 }
 
-// Unload removes a skill name from the active list if present.
-//
-// WHAT:  Deactivates a skill by name.
-// WHY:   unload_skill tool calls this to remove a skill's [DETAILS] from the prompt.
-// PARAMS: name — the skill name to deactivate.
+// Unload removes a skill ID from the active list if present.
 func (a *ActiveList) Unload(name string) {
 	for i, n := range a.names {
 		if n == name {
@@ -90,12 +90,7 @@ func (a *ActiveList) Unload(name string) {
 	}
 }
 
-// Has returns true if the given skill name is in the active list.
-//
-// WHAT:  Checks whether a skill is currently active.
-// WHY:   Useful for conditional behavior and debugging.
-// PARAMS: name — the skill name to check.
-// RETURNS: bool — true if active.
+// Has returns true if the given skill ID is in the active list.
 func (a *ActiveList) Has(name string) bool {
 	for _, n := range a.names {
 		if n == name {
@@ -105,49 +100,42 @@ func (a *ActiveList) Has(name string) bool {
 	return false
 }
 
-// List returns a copy of the active skill names.
-//
-// WHAT:  Returns all active skill names.
-// WHY:   The prompt builder needs the list to inject [DETAILS] for each active skill.
-// RETURNS: []string — copy of the active names list.
+// List returns a copy of the active skill IDs.
 func (a *ActiveList) List() []string {
 	result := make([]string, len(a.names))
 	copy(result, a.names)
 	return result
 }
 
-// Parse extracts [DESCRIPTION] and [DETAILS] sections from skill file content.
-// Both sections are required. Returns an error if either is missing.
+// Parse extracts [DESCRIPTION], [BEHAVIOR], and [DATA] sections from skill content.
+// [DESCRIPTION] is required. At least one of [BEHAVIOR] or [DATA] must be present.
 //
-// WHAT:  Parses raw Markdown content into a Skill with description and details.
-// WHY:   Skill files must have both sections to be valid per spec.
-// HOW:   Finds [DESCRIPTION] and [DETAILS] markers, extracts content between them.
+// WHAT:  Parses raw Markdown content into a Skill.
 // PARAMS: name — the skill name (file name without extension); content — raw file content.
-// RETURNS: *Skill — parsed skill; error if a required section is missing.
+// RETURNS: *Skill — parsed skill; error if required sections are missing.
 func Parse(name, content string) (*Skill, error) {
 	desc, err := extractSection(content, "DESCRIPTION")
 	if err != nil {
 		return nil, err
 	}
-	details, err := extractSection(content, "DETAILS")
-	if err != nil {
-		return nil, err
+
+	behavior, _ := extractOptionalSection(content, "BEHAVIOR")
+	data, _ := extractOptionalSection(content, "DATA")
+
+	if behavior == "" && data == "" {
+		return nil, ErrMissingBehaviorOrData
 	}
+
 	return &Skill{
 		Name:        name,
 		Description: strings.TrimSpace(desc),
-		Details:     strings.TrimSpace(details),
+		Behavior:    strings.TrimSpace(behavior),
+		Data:        strings.TrimSpace(data),
 	}, nil
 }
 
-// extractSection finds a [SECTION] block and returns its content.
-// A section starts with [SECTION] on its own line and ends at the next [SECTION]
-// marker or end of content.
-//
-// WHAT:  Extracts the text between [sectionName] and the next section marker.
-// WHY:   Skills use bracketed section headers to delimit description and details.
-// PARAMS: content — raw skill text; sectionName — the section to extract (without brackets).
-// RETURNS: string — section content; error if the section marker is not found.
+// extractSection finds a required [SECTION] block and returns its content.
+// A section starts with [SECTION] on its own line and ends at the next [SECTION] marker or EOF.
 func extractSection(content, sectionName string) (string, error) {
 	marker := "[" + sectionName + "]"
 	idx := strings.Index(content, marker)
@@ -155,7 +143,7 @@ func extractSection(content, sectionName string) (string, error) {
 		if sectionName == "DESCRIPTION" {
 			return "", ErrMissingDescription
 		}
-		return "", ErrMissingDetails
+		return "", fmt.Errorf("skill missing [%s] section", sectionName)
 	}
 	start := idx + len(marker)
 	rest := content[start:]
@@ -166,155 +154,23 @@ func extractSection(content, sectionName string) (string, error) {
 	return strings.TrimSpace(rest[:nextIdx]), nil
 }
 
-// Discover finds and parses all skill files from builtin and custom locations.
-// Builtin skills are read from the builtinDir; custom skills from app_home/skills/.
-// If a custom skill has the same name as a builtin, the custom skill wins.
-//
-// WHAT:  Scans both skill directories, parses valid files, and returns merged results.
-// WHY:   The prompt builder needs all available skills with collision resolution.
-// HOW:   Reads builtin first, then custom; custom entries override builtin by name.
-// PARAMS: builtinDir — path to the project's builtin skills directory.
-// RETURNS: map[string]*Skill — all discovered skills keyed by name; error on read failure.
-func Discover(builtinDir string) (map[string]*Skill, error) {
-	skills := make(map[string]*Skill)
-
-	if err := discoverFromDir(builtinDir, skills); err != nil {
-		return nil, fmt.Errorf("builtin skills: %w", err)
-	}
-
-	home, err := platform.AppHome()
+// extractOptionalSection finds an optional [SECTION] block. Returns empty string if missing.
+func extractOptionalSection(content, sectionName string) (string, error) {
+	result, err := extractSection(content, sectionName)
 	if err != nil {
-		return nil, err
+		return "", nil
 	}
-	customDir := filepath.Join(home, "skills")
-	if err := discoverCustomFromDir(customDir, skills); err != nil {
-		return nil, fmt.Errorf("custom skills: %w", err)
-	}
-
-	return skills, nil
+	return result, nil
 }
 
-// discoverFromDir reads builtin .md skill files from one directory and adds valid skills to the map.
-// Invalid files (missing sections) are skipped silently — only errors from directory
-// listing or file reading are returned.
+// DiscoverFromFS discovers skills from builtin (embedded FS) and global (app_home/skills/).
+// Builtin skills are read from builtinFS; global custom skills from disk override builtin by name.
+// Project skills are NOT loaded here — use DiscoverProject for workdir-scoped skills.
 //
-// WHAT:  Scans one directory for skill files and adds them to the skills map.
-// WHY:   Both builtin and custom directories are scanned the same way.
-// HOW:   Lists .md files, reads each, parses, adds to map. Skips invalid files.
-// PARAMS: dir — directory to scan; skills — map to populate (existing entries are overridden).
-func discoverFromDir(dir string, skills map[string]*Skill) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".md") {
-			continue
-		}
-		skillName := strings.TrimSuffix(name, ".md")
-		path := filepath.Join(dir, name)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("cannot read skill %s: %w", path, err)
-		}
-		skill, err := Parse(skillName, string(data))
-		if err != nil {
-			continue
-		}
-		skills[skillName] = skill
-	}
-	return nil
-}
-
-// discoverCustomFromDir reads custom skills from {APP_HOME}/skills/<name>/skill.md folders.
-// Invalid skill folders are skipped silently — only directory listing or file read errors return.
-//
-// WHAT:  Scans custom skill directories and reads each folder's skill.md file.
-// WHY:   Custom skills may carry scripts, data, or other resources alongside the main skill file.
-// HOW:   Lists subdirectories, reads skill.md from each, parses it, and records the folder path.
-// PARAMS: dir — custom skills root; skills — map to populate (existing entries are overridden).
-func discoverCustomFromDir(dir string, skills map[string]*Skill) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		skillName := entry.Name()
-		skillDir := filepath.Join(dir, skillName)
-		path := filepath.Join(skillDir, "skill.md")
-		data, err := os.ReadFile(path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return fmt.Errorf("cannot read skill %s: %w", path, err)
-		}
-		skill, err := Parse(skillName, string(data))
-		if err != nil {
-			continue
-		}
-		skill.Dir = skillDir
-		skills[skillName] = skill
-	}
-	return nil
-}
-
-// SortedNames returns skill names from a map sorted alphabetically.
-//
-// WHAT:  Returns a sorted list of skill names.
-// WHY:   Deterministic ordering for prompt building and display.
-// PARAMS: skills — the skills map to extract names from.
-// RETURNS: []string — skill names sorted alphabetically.
-func SortedNames(skills map[string]*Skill) []string {
-	names := make([]string, 0, len(skills))
-	for name := range skills {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
-// DiscoverFromDirs is a test-friendly variant of Discover that accepts explicit directories.
-// Custom skills override builtin skills by name.
-//
-// WHAT:  Same as Discover but with explicit directory paths.
-// WHY:   Enables testing with temp directories without depending on app home.
-// PARAMS: builtinDir — builtin skills path; customDir — custom skills path.
-// RETURNS: map[string]*Skill — all discovered skills keyed by name; error on read failure.
-func DiscoverFromDirs(builtinDir, customDir string) (map[string]*Skill, error) {
-	skills := make(map[string]*Skill)
-
-	if err := discoverFromDir(builtinDir, skills); err != nil {
-		return nil, fmt.Errorf("builtin skills: %w", err)
-	}
-	if err := discoverCustomFromDir(customDir, skills); err != nil {
-		return nil, fmt.Errorf("custom skills: %w", err)
-	}
-
-	return skills, nil
-}
-
-// DiscoverFromFS discovers builtin skills from an fs.FS (e.g. embedded assets)
-// and custom skills from disk (app_home/skills/). Custom skills override builtin by name.
-//
-// WHAT:  Scans builtin skills from an FS and custom skills from disk.
-// WHY:   Enables embed.FS usage for builtin skills.
-// HOW:   Reads from builtinFS first, then app_home/skills via discoverFromDir.
+// WHAT:  Scans builtin and global skill sources.
+// WHY:   The prompt builder needs all available non-project skills.
 // PARAMS: builtinFS — filesystem containing builtin skill .md files.
-// RETURNS: map[string]*Skill — all discovered skills keyed by name; error on read failure.
+// RETURNS: map[string]*Skill — discovered skills keyed by ID; error on read failure.
 func DiscoverFromFS(builtinFS fs.FS) (map[string]*Skill, error) {
 	skills := make(map[string]*Skill)
 
@@ -326,20 +182,112 @@ func DiscoverFromFS(builtinFS fs.FS) (map[string]*Skill, error) {
 	if err != nil {
 		return nil, err
 	}
-	customDir := filepath.Join(home, "skills")
-	if err := discoverCustomFromDir(customDir, skills); err != nil {
-		return nil, fmt.Errorf("custom skills: %w", err)
+	globalDir := filepath.Join(home, "skills")
+	if err := discoverGlobalFromDir(globalDir, skills); err != nil {
+		return nil, fmt.Errorf("global skills: %w", err)
 	}
 
 	return skills, nil
 }
 
-// discoverFromFS reads all .md files from an fs.FS and adds valid skills to the map.
+// DiscoverProject discovers project-scoped skills from workdir/.blazeai/skills/.
+// Keys use project/ prefix to avoid collision with global skills.
 //
-// WHAT:  Scans an fs.FS for skill files and adds them to the skills map.
-// WHY:   Works with embedded filesystems (embed.FS), os.DirFS, or any fs.FS.
-// HOW:   Lists .md files, reads each, parses, adds to map. Skips invalid files.
-// PARAMS: fsys — the filesystem to scan; skills — map to populate.
+// WHAT:  Scans project skill directory.
+// WHY:   Project skills are separate from global, keyed with project/ prefix.
+// PARAMS: workDir — the current working directory (project root).
+// RETURNS: map[string]*Skill — project skills keyed as project/name; error on read failure.
+func DiscoverProject(workDir string) (map[string]*Skill, error) {
+	projectDir := filepath.Join(workDir, ".blazeai", "skills")
+	skills := make(map[string]*Skill)
+	if err := discoverFromSubdirs(projectDir, skills, ScopeProject); err != nil {
+		return nil, fmt.Errorf("project skills: %w", err)
+	}
+	return skills, nil
+}
+
+// DiscoverAll discovers skills from all scopes and returns a merged map.
+// Project skills have project/ prefix keys; global/builtin have bare name keys.
+//
+// WHAT:  Full discovery across builtin, global, and project.
+// WHY:   Prompt building and skill resolution need all available skills.
+// PARAMS: builtinFS — builtin skill filesystem; workDir — current working directory.
+// RETURNS: map[string]*Skill — all skills; error on discovery failure.
+func DiscoverAll(builtinFS fs.FS, workDir string) (map[string]*Skill, error) {
+	all, err := DiscoverFromFS(builtinFS)
+	if err != nil {
+		return nil, err
+	}
+	project, err := DiscoverProject(workDir)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range project {
+		all[k] = v
+	}
+	return all, nil
+}
+
+// Resolve finds the canonical skill ID for a given name.
+// If name contains / (already scoped), exact lookup is performed.
+// If name has no / prefix, it searches all skills:
+//   - single match → returns that ID
+//   - multiple matches → error with all candidates
+//   - no match → error
+//
+// WHAT:  Resolves a user-provided name to a canonical skill ID.
+// WHY:   load_skill accepts unqualified names; ambiguity must be reported, not silently chosen.
+// PARAMS: name — the name to resolve (may be short or scoped); skills — all discovered skills.
+// RETURNS: string — canonical skill ID; error if not found or ambiguous.
+func Resolve(name string, skills map[string]*Skill) (string, error) {
+	name = strings.TrimSuffix(name, ".md")
+
+	// Already scoped: exact match.
+	if strings.Contains(name, "/") {
+		if _, ok := skills[name]; ok {
+			return name, nil
+		}
+		return "", fmt.Errorf("skill not found: %s", name)
+	}
+
+	// Unqualified: find all matches.
+	var matches []string
+	for key := range skills {
+		baseName := key
+		// Strip project/ prefix for matching.
+		if before, after, ok := strings.Cut(key, "/"); ok {
+			if before == "project" && after == name {
+				matches = append(matches, key)
+			}
+			continue
+		}
+		if baseName == name {
+			matches = append(matches, key)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("skill not found: %s", name)
+	case 1:
+		return matches[0], nil
+	default:
+		sort.Strings(matches)
+		return "", fmt.Errorf("ambiguous skill name %q: available: %s", name, strings.Join(matches, ", "))
+	}
+}
+
+// SortedNames returns skill IDs from a map sorted alphabetically.
+func SortedNames(skills map[string]*Skill) []string {
+	names := make([]string, 0, len(skills))
+	for name := range skills {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// discoverFromFS reads .md files from an fs.FS and adds valid skills to the map.
 func discoverFromFS(fsys fs.FS, skills map[string]*Skill) error {
 	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
@@ -360,6 +308,101 @@ func discoverFromFS(fsys fs.FS, skills map[string]*Skill) error {
 		data, err := fs.ReadFile(fsys, name)
 		if err != nil {
 			return fmt.Errorf("cannot read skill %s: %w", name, err)
+		}
+		skill, err := Parse(skillName, string(data))
+		if err != nil {
+			continue
+		}
+		skills[skillName] = skill
+	}
+	return nil
+}
+
+// discoverGlobalFromDir reads global custom skills from app_home/skills/<name>/skill.md.
+// Custom skills override builtin skills by name (collision: custom wins).
+func discoverGlobalFromDir(dir string, skills map[string]*Skill) error {
+	return discoverFromSubdirs(dir, skills, ScopeGlobal)
+}
+
+// discoverFromSubdirs reads skills from subdirectory layout: <dir>/<name>/skill.md.
+func discoverFromSubdirs(root string, skills map[string]*Skill, scope Scope) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		skillDir := filepath.Join(root, name)
+		skillFile := filepath.Join(skillDir, "skill.md")
+		data, err := os.ReadFile(skillFile)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("cannot read skill %s: %w", skillFile, err)
+		}
+		skill, err := Parse(name, string(data))
+		if err != nil {
+			continue
+		}
+		skill.Dir = skillDir
+		skill.Scope = scope
+
+		var key string
+		if scope == ScopeProject {
+			key = "project/" + name
+		} else {
+			key = name
+		}
+		skills[key] = skill
+	}
+	return nil
+}
+
+// DiscoverFromDirs is a test-friendly variant accepting explicit directories.
+// Builtin skills are flat .md files; custom skills are folder/<name>/skill.md layout.
+// Custom overrides builtin by name.
+func DiscoverFromDirs(builtinDir, customDir string) (map[string]*Skill, error) {
+	skills := make(map[string]*Skill)
+
+	if err := discoverBuiltinFromDir(builtinDir, skills); err != nil {
+		return nil, fmt.Errorf("builtin skills: %w", err)
+	}
+	if err := discoverFromSubdirs(customDir, skills, ScopeGlobal); err != nil {
+		return nil, fmt.Errorf("custom skills: %w", err)
+	}
+
+	return skills, nil
+}
+
+// discoverBuiltinFromDir reads flat .md files from a directory (like embedded builtin layout).
+func discoverBuiltinFromDir(dir string, skills map[string]*Skill) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		skillName := strings.TrimSuffix(name, ".md")
+		path := filepath.Join(dir, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("cannot read skill %s: %w", path, err)
 		}
 		skill, err := Parse(skillName, string(data))
 		if err != nil {

@@ -1,7 +1,7 @@
 # 02 - Core Runtime
 
 ## Overview
-- This spec defines the BlazeAI runtime mechanics: provider and model configuration, prompt construction, session persistence, tool contract, skills, memory, and first-run setup.
+- This spec defines the BlazeAI runtime mechanics: provider and model configuration, prompt construction, session persistence, tool contract, skills, and first-run setup.
 - Product intent and interface shape are defined in `01-product-scope.md`.
 - Interface implementation details are defined in `03-interfaces.md`.
 - Platform and operations behavior is defined in `04-platform-ops.md`.
@@ -83,14 +83,14 @@
 - The runtime part is assembled in this exact order:
   1. universal system prompt (`prompts/sysprompt.md`)
   2. OS-specific system prompt (`prompts/sysprompt.<os>.md`)
-  3. `AGENTS.md` from the current work folder, if it exists
-  4. `memory.md` from the memory folder
-  5. skills section
+  3. host helpers section (optional)
+  4. skills section
+  5. `AGENTS.md` from the current work folder, if it exists
 
 ### Skills Section
 - The skills section has two distinct parts:
   1. **Available skills**: the `[DESCRIPTION]` of every discovered skill, concatenated, including the skill file name.
-  2. **Active skills**: the `[DETAILS]` of every skill currently in the active skills list, concatenated, with a context description so the LLM understands what this section is.
+  2. **Active skills**: the `[BEHAVIOR]` (procedural guidance) and `[DATA]` (persistent facts) sections of every skill currently active, concatenated.
 
 - The available skills block tells the LLM which skills can be loaded.
 - The active skills block injects the full details of only the skills the user or agent has activated.
@@ -100,22 +100,23 @@
 - Universal prompt: `prompts/sysprompt.md`
 - OS prompt: `prompts/sysprompt.<os>.md` where `<os>` is `linux`, `darwin`, or `windows`
 - `AGENTS.md`: read from the current work folder only; not recursive; optional
-- Memory: `app_home/memory/memory.md`
 - Builtin skills: `skills/` in the project distribution
-- Custom skills: `app_home/skills/`
+- Custom global skills: `app_home/skills/`
+- Project skills: `<workdir>/.blazeai/skills/`
 
 ### Missing Source Handling
 - Universal prompt: required; if missing, the runtime stops with a clear error.
 - OS prompt: required; if missing, the runtime stops with a clear error.
 - `AGENTS.md`: optional; if missing, it is omitted silently.
-- `memory.md`: optional; if missing, it is omitted silently.
 - Skills: optional; if no skills are found, the skills section is omitted.
 
 ### Variable Injection
 - Prompt files and skill files support variable placeholders in the form `{VARIABLE_NAME}`.
 - The runtime replaces placeholders with resolved values at prompt build time.
-- Guaranteed variable in this phase:
+- Guaranteed variables:
   - `{APP_HOME}`: the resolved application home path
+  - `{WORK_DIR}`: the current working directory
+  - `{SKILL_DIR}`: the skill's directory path (only in skill content)
 - Additional variables may be added in future phases.
 - Unknown or unresolvable variables are left as-is in the text.
 
@@ -128,57 +129,60 @@
 ## Active Skills
 
 ### Active Skills List
-- The runtime keeps an in-memory list of active skill names (for example `memory.md`).
+- The runtime keeps an in-memory list of active skill IDs.
 - The list starts empty at the beginning of every session.
 - The list is not persisted in the session JSON.
 - The list is not deduced from conversation history.
 
 ### Load And Unload
-- `load_skill` tool: adds a skill name to the active skills list.
-- `unload_skill` tool: removes a skill name from the active skills list.
+- `load_skill` tool: resolves the skill name (handling scope prefixes) and adds the canonical ID to the active list.
+- `unload_skill` tool: removes a skill ID from the active list.
 - These tools only modify the in-memory list. They do not touch disk.
-- At the next prompt build, the runtime reads the `[DETAILS]` of every skill in the active list and injects them.
+- At the next prompt build, the runtime reads the `[BEHAVIOR]` and `[DATA]` of every skill in the active list and injects them.
+- If a loaded skill no longer exists on disk, it is silently omitted from the prompt.
 
 ## Skills
 
 ### Skill Format
 - Every skill file is Markdown.
-- Every skill must contain two fixed sections:
-  - `[DESCRIPTION]`: short summary shown in the available skills block.
-  - `[DETAILS]`: full content injected when the skill is active.
-- Skills without these sections are invalid and are reported as errors.
+- Every skill must contain three sections:
+  - `[DESCRIPTION]`: short summary shown in the available skills block (required).
+  - `[BEHAVIOR]`: procedural guidance, workflow rules, decision logic (optional).
+  - `[DATA]`: persistent facts in compact key=value format (optional).
+- At least one of `[BEHAVIOR]` or `[DATA]` must be present.
+- Skills without `[DESCRIPTION]` or without at least one content section are invalid and skipped.
+
+### Skill Scopes
+- Three scopes with resolution rules:
+  1. **builtin**: skills embedded in the binary; bare name resolution
+  2. **global**: custom skills in `app_home/skills/<name>/skill.md`; bare name, overrides builtin
+  3. **project**: skills in `<workdir>/.blazeai/skills/<name>/skill.md`; uses `project/` prefix
+
+- Unqualified bare name resolves to a unique match across scopes.
+- Ambiguous bare name (exists both global and project) → error listing candidates.
+- Scoped name (`project/foo`) → exact lookup in that scope.
 
 ### Skill Discovery
-- Skills are discovered from two locations:
-  1. builtin skills: `skills/` in the project distribution
-  2. custom skills: `app_home/skills/`
-- Both locations are read on every prompt build.
-- The skill file name is the skill identifier.
+- Skills are discovered from three locations on every prompt build:
+  1. builtin skills: `skills/` embedded in the project distribution
+  2. custom global skills: `app_home/skills/<name>/skill.md`
+  3. project skills: `<workdir>/.blazeai/skills/<name>/skill.md`
+- Each skill is a subfolder containing `skill.md`.
 
 ### Skill Collision
 - `skill-manager` validates and forbids creating a skill with the same name as an existing one.
-- If despite that a custom skill has the same name as a builtin skill, the custom skill wins.
-- The builtin skill with the same name is ignored when a custom one exists.
+- If a custom skill has the same name as a builtin skill, the custom skill wins.
+- The builtin skill is ignored when a custom override exists.
+- Project skills use `project/` prefix to avoid collision with global/builtin.
 
 ### Builtin Skills
-- At least three builtin skills ship with the product:
-  1. `memory`: explains how and where persistent memory is stored and updated.
-  2. `skill-manager`: explains how and where to create or modify a custom skill, including naming, format, and validation rules.
-  3. `customize_me`: explains how to configure providers, models, and roles in `config.json`, enabling the LLM to assist with auto-configuration.
+- At least two builtin skills ship with the product:
+  1. `skill-manager`: explains how to create, modify, review, and repair skills. Includes skill format, data authoring rules, and the behavior/data distinction.
+  2. `customize_me`: explains how to configure providers, models, and roles in `config.json`, enabling the LLM to assist with auto-configuration.
 
 ## Memory
 
-### Location
-- Memory lives at `app_home/memory/memory.md`.
-- A single memory file is used in this phase.
-
-### Role
-- Memory content is injected into the runtime part of every prompt build.
-- Memory is read fresh from disk on every prompt build.
-
-### Updates
-- Memory updates are performed explicitly by the agent using the `shell` tool or by user action.
-- The runtime does not automatically write to memory.
+Memory is handled through skills. Persistent facts are stored in the `[DATA]` section of skills, eliminating the need for a separate memory subsystem. The old `app_home/memory/memory.md` file is no longer used or created by the runtime.
 
 ## Sessions
 

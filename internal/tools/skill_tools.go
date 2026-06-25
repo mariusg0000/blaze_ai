@@ -1,5 +1,6 @@
 // skill_tools.go — load_skill and unload_skill tool implementations.
-// These tools modify the in-memory active skills list. They do not touch disk.
+// These tools modify the in-memory active skills list. They validate existence
+// and resolve ambiguous names via an injectable resolver function.
 // Layer: tool execution. Dependencies: internal/skills.
 package tools
 
@@ -13,29 +14,24 @@ import (
 )
 
 // SkillArgs are the arguments for load_skill and unload_skill.
-//
-// WHAT:  Parsed arguments for skill management tools.
-// PARAMS: Name — the skill name to load or unload.
 type SkillArgs struct {
 	Name    string `json:"name"`
 	Purpose string `json:"purpose,omitempty"`
 }
 
+// ResolveFunc resolves a skill name to a canonical skill ID.
+// Returns an error if the name is not found or ambiguous.
+type ResolveFunc func(name string) (string, error)
+
 // LoadSkillTool adds a skill to the active skills list.
-//
-// WHAT:  Implements the load_skill tool — activates a skill by name.
-// WHY:   The LLM calls this to make a skill's [DETAILS] available in subsequent prompts.
-// PARAMS: active — the session's active skills list.
 type LoadSkillTool struct {
-	active *skills.ActiveList
+	active  *skills.ActiveList
+	resolve ResolveFunc
 }
 
-// NewLoadSkillTool creates a LoadSkillTool bound to the given active list.
-//
-// PARAMS: active — the active skills list to modify.
-// RETURNS: *LoadSkillTool — ready to execute.
-func NewLoadSkillTool(active *skills.ActiveList) *LoadSkillTool {
-	return &LoadSkillTool{active: active}
+// NewLoadSkillTool creates a LoadSkillTool bound to the given active list and resolver.
+func NewLoadSkillTool(active *skills.ActiveList, resolve ResolveFunc) *LoadSkillTool {
+	return &LoadSkillTool{active: active, resolve: resolve}
 }
 
 // Name returns the tool's unique identifier.
@@ -60,7 +56,7 @@ func (t *LoadSkillTool) FormatArgs(args json.RawMessage) string {
 
 // Description returns the human-readable description for the LLM.
 func (t *LoadSkillTool) Description() string {
-	return "Load a skill by name."
+	return "Load a skill by name. Use project/ prefix for project-scoped skills."
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -74,17 +70,14 @@ func (t *LoadSkillTool) Parameters() json.RawMessage {
 			},
 			"name": {
 				"type": "string",
-				"description": "The skill name to load."
+				"description": "The skill name to load. Use project/ prefix for project-scoped skills."
 			}
 		},
 		"required": ["purpose", "name"]
 	}`)
 }
 
-// Execute adds the skill name to the active list.
-//
-// PARAMS: ctx — turn cancellation context; args — raw JSON with the skill name.
-// RETURNS: string — confirmation message.
+// Execute resolves the skill name and adds it to the active list.
 func (t *LoadSkillTool) Execute(ctx context.Context, args json.RawMessage) string {
 	if ctx != nil && ctx.Err() != nil {
 		return "aborted before execution by user"
@@ -96,26 +89,29 @@ func (t *LoadSkillTool) Execute(ctx context.Context, args json.RawMessage) strin
 	if parsed.Name == "" {
 		return "error: name is required"
 	}
+
 	name := normalizeSkillName(parsed.Name)
+	if t.resolve != nil {
+		resolved, err := t.resolve(name)
+		if err != nil {
+			return fmt.Sprintf("error: %v", err)
+		}
+		t.active.Load(resolved)
+		return fmt.Sprintf("skill loaded: %s", resolved)
+	}
 	t.active.Load(name)
 	return fmt.Sprintf("skill loaded: %s", name)
 }
 
 // UnloadSkillTool removes a skill from the active skills list.
-//
-// WHAT:  Implements the unload_skill tool — deactivates a skill by name.
-// WHY:   The LLM calls this to remove a skill's [DETAILS] from subsequent prompts.
-// PARAMS: active — the session's active skills list.
 type UnloadSkillTool struct {
-	active *skills.ActiveList
+	active  *skills.ActiveList
+	resolve ResolveFunc
 }
 
-// NewUnloadSkillTool creates an UnloadSkillTool bound to the given active list.
-//
-// PARAMS: active — the active skills list to modify.
-// RETURNS: *UnloadSkillTool — ready to execute.
-func NewUnloadSkillTool(active *skills.ActiveList) *UnloadSkillTool {
-	return &UnloadSkillTool{active: active}
+// NewUnloadSkillTool creates an UnloadSkillTool bound to the given active list and resolver.
+func NewUnloadSkillTool(active *skills.ActiveList, resolve ResolveFunc) *UnloadSkillTool {
+	return &UnloadSkillTool{active: active, resolve: resolve}
 }
 
 // Name returns the tool's unique identifier.
@@ -161,10 +157,7 @@ func (t *UnloadSkillTool) Parameters() json.RawMessage {
 	}`)
 }
 
-// Execute removes the skill name from the active list.
-//
-// PARAMS: ctx — turn cancellation context; args — raw JSON with the skill name.
-// RETURNS: string — confirmation message.
+// Execute resolves the skill name and removes it from the active list.
 func (t *UnloadSkillTool) Execute(ctx context.Context, args json.RawMessage) string {
 	if ctx != nil && ctx.Err() != nil {
 		return "aborted before execution by user"
@@ -176,20 +169,24 @@ func (t *UnloadSkillTool) Execute(ctx context.Context, args json.RawMessage) str
 	if parsed.Name == "" {
 		return "error: name is required"
 	}
+
 	name := normalizeSkillName(parsed.Name)
+
+	// Try exact lookup first (what's in active list).
 	t.active.Unload(name)
+
+	// Also try resolving in case the active list has a canonical ID.
+	if t.resolve != nil {
+		resolved, err := t.resolve(name)
+		if err == nil && resolved != name {
+			t.active.Unload(resolved)
+		}
+	}
+
 	return fmt.Sprintf("skill unloaded: %s", name)
 }
 
-// normalizeSkillName converts the user-facing skill filename to the internal skill key.
-//
-// WHAT:  Strips the optional .md suffix from a skill name.
-// WHY:   Available skills are displayed as filenames like memory-manager.md, while discovery keys use
-//
-//	the basename without extension, like memory.
-//
-// PARAMS: name — the skill name from tool input.
-// RETURNS: string — normalized internal skill name.
+// normalizeSkillName strips the optional .md suffix.
 func normalizeSkillName(name string) string {
 	return strings.TrimSuffix(name, ".md")
 }

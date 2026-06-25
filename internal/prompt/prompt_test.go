@@ -12,7 +12,6 @@ import (
 
 	"blazeai/internal/config"
 	"blazeai/internal/helpers"
-	"blazeai/internal/memories"
 	"blazeai/internal/platform"
 	"blazeai/internal/session"
 	"blazeai/internal/skills"
@@ -39,8 +38,8 @@ func setupTestDirs(t *testing.T) (promptsFS, builtinSkillsFS fs.FS, workDir stri
 	writePromptFixtures(t, promptsDir)
 
 	// Builtin skill.
-	writeFile(t, filepath.Join(builtinSkillsDir, "memory-manager.md"),
-		"[DESCRIPTION]\nLoad when the user or the model decides something should be stored in persistent memory banks. Use for creating, updating, compacting, and cleaning memory banks.\n\n[DETAILS]\n# Memory Manager\n\nUse the `shell` tool with an absolute path to create, edit, or remove memory-bank files under {APP_HOME}/memories/. Example: `{APP_HOME}/memories/my-network.md`.\n")
+	writeFile(t, filepath.Join(builtinSkillsDir, "skill-manager.md"),
+		"[DESCRIPTION]\nLoad when creating, reviewing, or modifying a skill.\n\n[BEHAVIOR]\n# Skill Manager\n\nManage skills at {APP_HOME}/skills/.\n")
 
 	appHome, err := platform.AppHome()
 	if err != nil {
@@ -48,10 +47,7 @@ func setupTestDirs(t *testing.T) (promptsFS, builtinSkillsFS fs.FS, workDir stri
 	}
 	customSkillDir := filepath.Join(appHome, "skills", "project_hub")
 	writeFile(t, filepath.Join(customSkillDir, "skill.md"),
-		"[DESCRIPTION]\nProject Hub skill with local scripts at {SKILL_DIR}/scripts/run.py.\n\n[DETAILS]\nUse local helper at {SKILL_DIR}/scripts/run.py.\n")
-
-	writeFile(t, filepath.Join(appHome, "memories", "my-network.md"),
-		"[DESCRIPTION]\nNetwork inventory memory.\n\n[DETAILS]\nIPs, servers, and roles for the network.\n")
+		"[DESCRIPTION]\nProject Hub skill with local scripts at {SKILL_DIR}/scripts/run.py.\n\n[BEHAVIOR]\nUse local helper at {SKILL_DIR}/scripts/run.py.\n[DATA]\napi.url=https://example.com\n")
 
 	// AGENTS.md in work dir.
 	writeFile(t, filepath.Join(workDir, "AGENTS.md"),
@@ -76,7 +72,7 @@ func writeFile(t *testing.T, path, content string) {
 // writePromptFixtures creates the prompt templates required by runtime prompt assembly.
 func writePromptFixtures(t *testing.T, promptsDir string) {
 	t.Helper()
-	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\nEach app-home folder has a `README.md` that documents its structure, use, and rules. When a task involves any of these folders, you MUST read its `README.md` first before inspecting or modifying any other file in that folder.\n\n## Tool Discipline\n- Keep relevant loaded skills active across follow-up turns on the same topic or task.\n- Do not unload a skill immediately after one successful action if the user is likely to continue in the same domain.\n- Unload a skill only when the user clearly changes topic or task, or when the loaded skill would interfere with the next turn.\n\n## Active State Rules\n- Only skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.\n- Only memories listed under `## Active Memories` are active right now. Do not infer current active memories from older `load_memory` or `unload_memory` tool results in the conversation history. If there is no `## Active Memories` section below, then no memories are currently active.\n\n{OS_PROMPT}\n\n## Host Environment Helpers\n{HOST_HELPERS_ADVISORY}\n\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n## Memories\nAvailable memories:\n{MEMORIES_AVAILABLE}\n\nActive memories:\n{MEMORIES_ACTIVE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n")
+	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n{OS_PROMPT}\n\n## Host Environment Helpers\n{HOST_HELPERS_ADVISORY}\n\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n")
 	writeFile(t, filepath.Join(promptsDir, "sysprompt.linux.md"), "# Linux System Prompt\n\nScripts at {APP_HOME}/scripts/.\n")
 }
 
@@ -106,7 +102,7 @@ func TestInjectVariablesOSInfo(t *testing.T) {
 	}
 }
 
-// TestInjectVariablesAll verifies all four variables in one call.
+// TestInjectVariablesAll verifies all variables in one call.
 func TestInjectVariablesAll(t *testing.T) {
 	home, _ := platform.AppHome()
 	b := &Builder{WorkDir: "/tmp", OSInfo: "Linux"}
@@ -197,7 +193,7 @@ func TestBuildRuntimePartFull(t *testing.T) {
 		OS:              platform.Linux,
 	}
 	active := skills.NewActiveList()
-	result, err := b.BuildRuntimePart(active, memories.NewActiveList())
+	result, err := b.BuildRuntimePart(active)
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
@@ -219,20 +215,6 @@ func TestBuildRuntimePartFull(t *testing.T) {
 	if !strings.Contains(result, "Linux System Prompt") {
 		t.Error("runtime part missing OS prompt")
 	}
-	if !strings.Contains(result, "Keep relevant loaded skills active across follow-up turns on the same topic or task.") {
-		t.Error("runtime part missing keep-loaded skills guidance")
-	}
-	if !strings.Contains(result, "Unload a skill only when the user clearly changes topic or task") {
-		t.Error("runtime part missing unload-on-topic-shift guidance")
-	}
-
-	// Memory-banks section present.
-	if !strings.Contains(result, "Available memories:") {
-		t.Error("runtime part missing memories section")
-	}
-	if !strings.Contains(result, "my-network.md") {
-		t.Error("runtime part missing memory file name")
-	}
 
 	// AGENTS.md present.
 	if !strings.Contains(result, "Project Rules") {
@@ -248,11 +230,8 @@ func TestBuildRuntimePartFull(t *testing.T) {
 	if !strings.Contains(result, "Available skills:") {
 		t.Error("runtime part missing skills section")
 	}
-	if !strings.Contains(result, "memory-manager.md") {
+	if !strings.Contains(result, "skill-manager.md") {
 		t.Error("runtime part missing skill file name")
-	}
-	if !strings.Contains(result, "Only skills listed under `## Active Skills` are active right now") {
-		t.Error("runtime part missing explicit active skill state guidance")
 	}
 }
 
@@ -265,7 +244,7 @@ func TestBuildRuntimePartMissingUniversal(t *testing.T) {
 		WorkDir:         root,
 		OS:              platform.Linux,
 	}
-	_, err := b.BuildRuntimePart(skills.NewActiveList(), memories.NewActiveList())
+	_, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != ErrUniversalPromptMissing {
 		t.Errorf("BuildRuntimePart() err = %v, want ErrUniversalPromptMissing", err)
 	}
@@ -284,7 +263,7 @@ func TestBuildRuntimePartMissingOSPrompt(t *testing.T) {
 		WorkDir:         root,
 		OS:              platform.Linux,
 	}
-	_, err := b.BuildRuntimePart(skills.NewActiveList(), memories.NewActiveList())
+	_, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != ErrOSPromptMissing {
 		t.Errorf("BuildRuntimePart() err = %v, want ErrOSPromptMissing", err)
 	}
@@ -302,7 +281,7 @@ func TestBuildRuntimePartNoAgentsMD(t *testing.T) {
 		WorkDir:         emptyWork,
 		OS:              platform.Linux,
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList(), memories.NewActiveList())
+	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
@@ -314,7 +293,7 @@ func TestBuildRuntimePartNoAgentsMD(t *testing.T) {
 	}
 }
 
-// TestBuildRuntimePartActiveSkills verifies that active skills inject [DETAILS].
+// TestBuildRuntimePartActiveSkills verifies that active skills inject Behavior and Data.
 func TestBuildRuntimePartActiveSkills(t *testing.T) {
 	promptsFS, builtinSkillsFS, workDir := setupTestDirs(t)
 
@@ -325,48 +304,20 @@ func TestBuildRuntimePartActiveSkills(t *testing.T) {
 		OS:              platform.Linux,
 	}
 	active := skills.NewActiveList()
-	active.Load("memory-manager")
+	active.Load("project_hub")
 
-	result, err := b.BuildRuntimePart(active, memories.NewActiveList())
+	result, err := b.BuildRuntimePart(active)
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
-	if !strings.Contains(result, "Active Skills") {
-		t.Error("runtime part missing Active Skills section")
+	if !strings.Contains(result, "Active skills:") {
+		t.Error("runtime part missing Active skills section")
 	}
-	if !strings.Contains(result, "Use the `shell` tool with an absolute path") {
-		t.Error("runtime part missing active skill details")
+	if !strings.Contains(result, "Use local helper") {
+		t.Error("runtime part missing active skill behavior")
 	}
-	if !strings.Contains(result, "Do not infer current active skills from older `load_skill` or `unload_skill` tool results") {
-		t.Error("runtime part missing history-versus-state guidance")
-	}
-}
-
-// TestBuildRuntimePartActiveMemories verifies that active memories inject [DETAILS].
-func TestBuildRuntimePartActiveMemories(t *testing.T) {
-	promptsFS, builtinSkillsFS, workDir := setupTestDirs(t)
-
-	b := &Builder{
-		PromptsFS:       promptsFS,
-		BuiltinSkillsFS: builtinSkillsFS,
-		WorkDir:         workDir,
-		OS:              platform.Linux,
-	}
-	active := memories.NewActiveList()
-	active.Load("my-network")
-
-	result, err := b.BuildRuntimePart(skills.NewActiveList(), active)
-	if err != nil {
-		t.Fatalf("BuildRuntimePart() error: %v", err)
-	}
-	if !strings.Contains(result, "Active Memories") {
-		t.Error("runtime part missing Active Memories section")
-	}
-	if !strings.Contains(result, "IPs, servers, and roles") {
-		t.Error("runtime part missing active memory details")
-	}
-	if !strings.Contains(result, "Do not infer current active memories from older `load_memory` or `unload_memory` tool results") {
-		t.Error("runtime part missing memory history-versus-state guidance")
+	if !strings.Contains(result, "api.url") {
+		t.Error("runtime part missing active skill data")
 	}
 }
 
@@ -397,7 +348,7 @@ func TestBuildRuntimePartNoSkills(t *testing.T) {
 		WorkDir:         root,
 		OS:              platform.Linux,
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList(), memories.NewActiveList())
+	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
@@ -424,7 +375,7 @@ func TestBuild(t *testing.T) {
 		},
 	}
 
-	messages, err := b.Build(sess, skills.NewActiveList(), memories.NewActiveList())
+	messages, err := b.Build(sess, skills.NewActiveList())
 	if err != nil {
 		t.Fatalf("Build() error: %v", err)
 	}
@@ -457,7 +408,7 @@ func TestBuildEmptySession(t *testing.T) {
 
 	sess := &session.Session{Messages: []session.Message{}}
 
-	messages, err := b.Build(sess, skills.NewActiveList(), memories.NewActiveList())
+	messages, err := b.Build(sess, skills.NewActiveList())
 	if err != nil {
 		t.Fatalf("Build() error: %v", err)
 	}
@@ -469,7 +420,7 @@ func TestBuildEmptySession(t *testing.T) {
 	}
 }
 
-// TestBuildRuntimePartOrder verifies source order: universal → OS → helpers → skills → memories → AGENTS.
+// TestBuildRuntimePartOrder verifies source order: universal → OS → helpers → skills → AGENTS.
 func TestBuildRuntimePartOrder(t *testing.T) {
 	promptsFS, builtinSkillsFS, workDir := setupTestDirs(t)
 
@@ -480,26 +431,24 @@ func TestBuildRuntimePartOrder(t *testing.T) {
 		OS:              platform.Linux,
 		HelperLookup:    fakeHelperLookup([]string{"rg", "fd", "jq", "git", "curl"}),
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList(), memories.NewActiveList())
+	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
 
-	// Check relative positions.
 	universalIdx := strings.Index(result, "Universal System Prompt")
 	osIdx := strings.Index(result, "Linux System Prompt")
 	helpersIdx := strings.Index(result, "Host Environment Helpers")
 	skillsIdx := strings.Index(result, "Available skills:")
-	memoryIdx := strings.Index(result, "Available memories:")
 	agentsIdx := strings.Index(result, "Project Rules")
 
-	if universalIdx < 0 || osIdx < 0 || helpersIdx < 0 || skillsIdx < 0 || memoryIdx < 0 || agentsIdx < 0 {
-		t.Fatalf("missing sections: universal=%d os=%d helpers=%d skills=%d memory=%d agents=%d",
-			universalIdx, osIdx, helpersIdx, skillsIdx, memoryIdx, agentsIdx)
+	if universalIdx < 0 || osIdx < 0 || helpersIdx < 0 || skillsIdx < 0 || agentsIdx < 0 {
+		t.Fatalf("missing sections: universal=%d os=%d helpers=%d skills=%d agents=%d",
+			universalIdx, osIdx, helpersIdx, skillsIdx, agentsIdx)
 	}
-	if !(universalIdx < osIdx && osIdx < helpersIdx && helpersIdx < skillsIdx && skillsIdx < memoryIdx && memoryIdx < agentsIdx) {
-		t.Errorf("wrong order: universal=%d os=%d helpers=%d skills=%d memory=%d agents=%d",
-			universalIdx, osIdx, helpersIdx, skillsIdx, memoryIdx, agentsIdx)
+	if !(universalIdx < osIdx && osIdx < helpersIdx && helpersIdx < skillsIdx && skillsIdx < agentsIdx) {
+		t.Errorf("wrong order: universal=%d os=%d helpers=%d skills=%d agents=%d",
+			universalIdx, osIdx, helpersIdx, skillsIdx, agentsIdx)
 	}
 }
 
@@ -529,7 +478,7 @@ func TestBuildRuntimePartHelperAvailable(t *testing.T) {
 		HelperSetup:     config.HelperSetup{},
 		HelperLookup:    fakeHelperLookup([]string{"rg", "jq", "curl"}),
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList(), memories.NewActiveList())
+	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
@@ -553,7 +502,7 @@ func TestBuildRuntimePartHelperMissingNotDismissed(t *testing.T) {
 		HelperSetup:     config.HelperSetup{},
 		HelperLookup:    fakeHelperLookup([]string{"git"}),
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList(), memories.NewActiveList())
+	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
@@ -577,7 +526,7 @@ func TestBuildRuntimePartHelperMissingDismissed(t *testing.T) {
 		HelperSetup:     config.HelperSetup{Dismissed: true},
 		HelperLookup:    fakeHelperLookup([]string{"git"}),
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList(), memories.NewActiveList())
+	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
@@ -598,12 +547,10 @@ func TestBuildRuntimePartHelperDeclined(t *testing.T) {
 		HelperSetup:     config.HelperSetup{Declined: []string{"rg", "fd"}},
 		HelperLookup:    fakeHelperLookup([]string{"git"}),
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList(), memories.NewActiveList())
+	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
-	// Only check the optional section for declined helpers; full prompt may contain
-	// unrelated system data from the host memory file.
 	optIdx := strings.Index(result, "Optional helpers:")
 	if optIdx < 0 {
 		t.Fatal("expected Optional helpers section")
@@ -621,7 +568,7 @@ func TestBuildRuntimePartHelperDeclined(t *testing.T) {
 	}
 }
 
-// TestBuildRuntimePartHelperOrder verifies helper section is after OS prompt, before skills, memories, and AGENTS.md.
+// TestBuildRuntimePartHelperOrder verifies helper section is after OS prompt, before skills and AGENTS.md.
 func TestBuildRuntimePartHelperOrder(t *testing.T) {
 	promptsFS, builtinSkillsFS, workDir := setupTestDirs(t)
 
@@ -633,7 +580,7 @@ func TestBuildRuntimePartHelperOrder(t *testing.T) {
 		HelperSetup:     config.HelperSetup{},
 		HelperLookup:    fakeHelperLookup([]string{"rg", "fd", "jq", "git", "curl"}),
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList(), memories.NewActiveList())
+	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
@@ -642,16 +589,15 @@ func TestBuildRuntimePartHelperOrder(t *testing.T) {
 	osIdx := strings.Index(result, "Linux System Prompt")
 	helpersIdx := strings.Index(result, "Host Environment Helpers")
 	skillsIdx := strings.Index(result, "Available skills:")
-	memoryIdx := strings.Index(result, "Available memories:")
 	agentsIdx := strings.Index(result, "Project Rules")
 
-	if universalIdx < 0 || osIdx < 0 || helpersIdx < 0 || skillsIdx < 0 || memoryIdx < 0 {
-		t.Fatalf("missing sections: universal=%d os=%d helpers=%d skills=%d memory=%d",
-			universalIdx, osIdx, helpersIdx, skillsIdx, memoryIdx)
+	if universalIdx < 0 || osIdx < 0 || helpersIdx < 0 || skillsIdx < 0 {
+		t.Fatalf("missing sections: universal=%d os=%d helpers=%d skills=%d",
+			universalIdx, osIdx, helpersIdx, skillsIdx)
 	}
-	if !(osIdx < helpersIdx && helpersIdx < skillsIdx && skillsIdx < memoryIdx && memoryIdx < agentsIdx) {
-		t.Errorf("wrong order: os=%d helpers=%d skills=%d memory=%d agents=%d (expected: OS < helpers < skills < memory < AGENTS)",
-			osIdx, helpersIdx, skillsIdx, memoryIdx, agentsIdx)
+	if !(osIdx < helpersIdx && helpersIdx < skillsIdx && skillsIdx < agentsIdx) {
+		t.Errorf("wrong order: os=%d helpers=%d skills=%d agents=%d (expected: OS < helpers < skills < AGENTS)",
+			osIdx, helpersIdx, skillsIdx, agentsIdx)
 	}
 }
 
@@ -667,7 +613,7 @@ func TestBuildRuntimePartHelperNoHelpers(t *testing.T) {
 		HelperSetup:     config.HelperSetup{Dismissed: true},
 		HelperLookup:    fakeHelperLookup(nil),
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList(), memories.NewActiveList())
+	result, err := b.BuildRuntimePart(skills.NewActiveList())
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}

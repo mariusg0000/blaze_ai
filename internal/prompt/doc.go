@@ -1,7 +1,7 @@
 // prompt/doc.go — prompt assembly from disk sources on every LLM call.
 // Rebuilds the runtime prompt part in order: universal sysprompt, OS sysprompt,
-// host helpers, skills section, memories, AGENTS.md.
+// host helpers, skills section, AGENTS.md.
+// Skills include builtin, global, and project-scoped discovery.
 // Replaces {VARIABLE_NAME} placeholders at build time.
-// Layer: prompt construction. Dependencies: internal/skills, internal/memory,
-// internal/memories, internal/platform.
+// Layer: prompt construction. Dependencies: internal/skills, internal/platform.
 package prompt
