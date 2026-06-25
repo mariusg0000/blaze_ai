@@ -97,7 +97,7 @@ func (t *LoadSkillTool) Execute(ctx context.Context, args json.RawMessage) strin
 			return fmt.Sprintf("error: %v", err)
 		}
 		t.active.Load(resolved)
-		return fmt.Sprintf("skill loaded: %s", resolved)
+		return fmt.Sprintf("skill loaded: %s", strings.TrimPrefix(resolved, "global/"))
 	}
 	t.active.Load(name)
 	return fmt.Sprintf("skill loaded: %s", name)

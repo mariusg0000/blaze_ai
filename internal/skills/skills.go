@@ -111,6 +111,8 @@ func (a *ActiveList) List() []string {
 
 // Parse extracts [DESCRIPTION], [BEHAVIOR], and [DATA] sections from skill content.
 // [DESCRIPTION] is required. At least one of [BEHAVIOR] or [DATA] must be present.
+// Section markers must appear at the start of a line (after newline or at position 0).
+// References to [SECTION] names inside body text (e.g., in backticks or prose) are ignored.
 //
 // WHAT:  Parses raw Markdown content into a Skill.
 // PARAMS: name — the skill name (folder name); content — raw file content.
@@ -137,17 +139,25 @@ func Parse(name, content string) (*Skill, error) {
 }
 
 // extractSection finds a required [SECTION] block and returns its content.
-// A section starts with [SECTION] on its own line and ends at the next [SECTION] marker or EOF.
+// The marker must appear at the start of a line (after \n or at position 0).
+// A section ends at the next [SECTION] marker (also at start of line) or EOF.
 func extractSection(content, sectionName string) (string, error) {
-	marker := "[" + sectionName + "]"
+	marker := "\n[" + sectionName + "]"
 	idx := strings.Index(content, marker)
 	if idx < 0 {
-		if sectionName == "DESCRIPTION" {
-			return "", ErrMissingDescription
+		if strings.HasPrefix(content, "["+sectionName+"]") {
+			idx = 0
+		} else {
+			if sectionName == "DESCRIPTION" {
+				return "", ErrMissingDescription
+			}
+			return "", fmt.Errorf("skill missing [%s] section", sectionName)
 		}
-		return "", fmt.Errorf("skill missing [%s] section", sectionName)
 	}
-	start := idx + len(marker)
+	if idx > 0 {
+		idx++ // skip the leading \n
+	}
+	start := idx + len("["+sectionName+"]")
 	rest := content[start:]
 	nextIdx := strings.Index(rest, "\n[")
 	if nextIdx < 0 {

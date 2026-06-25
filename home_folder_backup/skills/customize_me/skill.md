@@ -138,27 +138,25 @@ The directive is appended to the last message of the payload sent to the LLM on 
 
 ## Customizing Builtin Skills
 
-Builtin skills (skill-manager, customize_me, setup_helpers) are seeded into the global skills directory at startup: `\{GLOBAL_SKILLS_DIR\}/<name>/skill.md`. The embedded template is copied only if the file does not already exist — existing files are never overwritten.
+Builtin skills (skill-manager, customize_me, setup_helpers) are seeded into the global skills directory at startup: `{APP_HOME}/skills/<name>/skill.md`. The embedded template is copied only if the file does not already exist — existing files are never overwritten.
 
-**To customize a builtin skill:** edit `\{GLOBAL_SKILLS_DIR\}/<name>/skill.md` directly. Changes persist across restarts.
+**To customize a builtin skill:** edit `{APP_HOME}/skills/<name>/skill.md` directly. Changes persist across restarts.
 
-**To restore a builtin skill to its original:** delete the folder `\{GLOBAL_SKILLS_DIR\}/<name>/` and restart BlazeAI. The original template will be re-seeded on next startup.
+**To restore a builtin skill to its original:** delete the folder `{APP_HOME}/skills/<name>/` and restart BlazeAI. The original template will be re-seeded on next startup.
 
 **Rules:**
-- Only edit skills in `\{GLOBAL_SKILLS_DIR\}/` — never modify embedded files (they are read-only templates).
+- Only edit skills in `{APP_HOME}/skills/` — never modify embedded files (they are read-only templates).
 
 ## Skill Locations
 
 Skills live in two scopes, each with a specific directory layout:
 
-- **Global:** `\{GLOBAL_SKILLS_DIR\}/<name>/skill.md` — shared across all projects. Use for general-purpose skills (network info, backup scripts, personal preferences, cross-project tooling).
-- **Project:** `\{PROJECT_SKILLS_DIR\}/<name>/skill.md` — scoped to the current project. Use for project-specific build rules, architecture, deploy scripts, or skills with paths/names tied to one codebase.
+- **Global:** `{APP_HOME}/skills/<name>/skill.md` — shared across all projects. Use for general-purpose skills (network info, backup scripts, personal preferences, cross-project tooling).
+- **Project:** `{APP_HOME}/projects/<project>/skills/<name>/skill.md` — scoped to the current project. Use for project-specific build rules, architecture, deploy scripts, or skills with paths/names tied to one codebase.
 
 ### Creating or Editing a Skill
 
-When the user asks to create or modify a skill, determine the scope.
-
-Skills are always stored as a folder containing `skill.md`: `<skills_dir>/<name>/skill.md`. Never use a flat `.md` file directly under the skills directory — flat files are not discovered.
+When the user asks to create or modify a skill, determine the scope:
 
 - **100% certain it's global** (generic, no project-specific references) → write to global path.
 - **100% certain it's project** (references the current project by name, paths, or conventions) → write to project path.
@@ -168,7 +166,7 @@ Skills are always stored as a folder containing `skill.md`: `<skills_dir>/<name>
 
 If the user wants a project-specific skill to become global, or if you determine a skill should be global:
 
-- Remove absolute paths — use `\{SKILL_DIR\}`, `\{APP_HOME\}`, `\{GLOBAL_SKILLS_DIR\}`, `\{PROJECT_SKILLS_DIR\}`, or generic paths.
+- Remove absolute paths — use `{SKILL_DIR}`, `{APP_HOME}`, or generic paths.
 - Remove project names, branch names, or project-specific conventions.
 - Replace OS-specific commands with cross-platform alternatives when possible.
 - Write examples in a generic form that applies to any project.

@@ -7,7 +7,7 @@
 - Environment variables: `$VAR` or `${VAR}`.
 
 ## Conventions
-- Scripts are stored under {APP_HOME}/scripts/ as bash scripts.
+- Executable scripts (bash programs, not AI skills) are stored under {APP_HOME}/scripts/.
 - Quote paths and variables to handle spaces.
 - Use `chmod +x` before executing scripts.
 - macOS coreutils may differ from GNU; check availability.

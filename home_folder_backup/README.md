@@ -7,14 +7,14 @@ Manual snapshot of selected BlazeAI `app_home` folders into the repository for v
 | Source (app_home) | Purpose |
 |---|---|
 | `config/` | config.json, modes.json |
-| `memories/` | All memory bank .md files |
+| `skills/` | Global custom skill folders |
+| `projects/<name>/skills/` | Project-scoped skill folders (all projects) |
 | `scripts/` | Custom scripts (venv/ excluded) |
-| `skills/` | All custom skill folders |
 
 ## Excluded
 
 - `scripts/venv/` — Python virtual environment, not tracked
-- `backups/`, `projects/`, `sessions/` — runtime data, not configuration
+- `backups/`, `projects/<name>/sessions/` — runtime data, not configuration
 
 ## Manual Backup
 

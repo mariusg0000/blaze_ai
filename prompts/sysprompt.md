@@ -79,8 +79,6 @@ You are BlazeAI, a fast AI terminal agent.
 
 ## Skills
 
-Each skill is a reusable context module. Skills have a `[DESCRIPTION]` (required) and at least one of `[BEHAVIOR]` (workflow rules) or `[DATA]` (persistent facts). Skills exist in two scopes: global and project. Load by name (global, the default) or `project/name` (project).
-
 Available skills:
 {SKILLS_AVAILABLE}
 

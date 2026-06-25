@@ -1,0 +1,32 @@
+{
+  "compaction": {
+    "maxContextTokens": 100000,
+    "minContextTokens": 50000,
+    "summaryMaxTokens": 2000,
+    "maxSummaryFiles": 10,
+    "tokenCoefficient": 3.5,
+    "maxBackoffOffsetTokens": 25000
+  },
+  "favorite_models": [
+    "opencode-go/deepseek-v4-flash",
+    "opencode-go/deepseek-v4-pro"
+  ],
+  "helperSetup": {
+    "dismissed": false
+  },
+  "last_model": "opencode-go/mimo-v2.5",
+  "providers": [
+    {
+      "name": "opencode-go",
+      "endpoint": "https://opencode.ai/zen/go/v1",
+      "api_key": "sk-5DLaSSwjORVrMN9UWP4AuM7N7tygV9J0TxSOJvn4Fj5sUehAqx1AtYiIpab2be0X"
+    }
+  ],
+  "roles": {
+    "default": "opencode-go/deepseek-v4-flash"
+  },
+  "stripReasoning": {
+    "enable": true,
+    "preserveLast": 5
+  }
+}
