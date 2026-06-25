@@ -1,5 +1,5 @@
 [DESCRIPTION]
-MUST load using `load_skill coding` before writing, editing, generating, refactoring, or debugging any code. Also required before producing scripts, source files, configuration files, or discussing architecture, structure, or design changes. Skip only for inline shell commands, one-liner fixes, or simple file reads.
+MUST load using `load_skill coding` for any code-related task beyond inline shell commands: writing, editing, generating, refactoring, debugging, implementing, or building code. Also required when analyzing, reviewing, or understanding a codebase, planning code changes, producing scripts or configuration files, or discussing architecture, structure, or design. Skip only for read-only file inspection without modification intent.
 
 [BEHAVIOR]
 # Coding
