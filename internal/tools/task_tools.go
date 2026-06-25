@@ -1,6 +1,6 @@
 // task_tools.go — task_write and task_read tool implementations.
-// Tasks are stored as a markdown file in the project directory (project-scoped).
-// Layer: tool execution. Dependencies: internal/platform (project dir resolution).
+// Tasks are stored as a markdown file in the working directory.
+// Layer: tool execution.
 package tools
 
 import (
@@ -10,8 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"blazeai/internal/platform"
 )
 
 const tasksFileName = "tasks.md"
@@ -87,11 +85,7 @@ func (t *TaskWriteTool) Execute(ctx context.Context, args json.RawMessage) strin
 	if parsed.Tasks == "" {
 		return "error: tasks is required"
 	}
-	projectDir, err := platform.EnsureProjectDir(t.workDir())
-	if err != nil {
-		return fmt.Sprintf("error: cannot resolve project dir: %v", err)
-	}
-	path := filepath.Join(projectDir, tasksFileName)
+	path := filepath.Join(t.workDir(), tasksFileName)
 	if err := os.WriteFile(path, []byte(parsed.Tasks), 0644); err != nil {
 		return fmt.Sprintf("error: cannot write tasks: %v", err)
 	}
@@ -157,11 +151,7 @@ func (t *TaskReadTool) Execute(ctx context.Context, args json.RawMessage) string
 	if ctx != nil && ctx.Err() != nil {
 		return "aborted before execution by user"
 	}
-	projectDir, err := platform.EnsureProjectDir(t.workDir())
-	if err != nil {
-		return fmt.Sprintf("error: cannot resolve project dir: %v", err)
-	}
-	path := filepath.Join(projectDir, tasksFileName)
+	path := filepath.Join(t.workDir(), tasksFileName)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

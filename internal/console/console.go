@@ -13,7 +13,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -203,7 +202,7 @@ func (c *Console) divider(label, labelColor string, boldLabel bool) {
 }
 
 // responseSeparator prints the separator shown after the assistant finishes responding.
-// Renders a three-line ASCII table with CTX tokens, work directory, and current model.
+// Renders a three-line ASCII table with CTX tokens, current model, and work directory (tail-truncated).
 //
 // WHAT:  Prints an ASCII table separator after the response.
 func (c *Console) responseSeparator() {
@@ -213,12 +212,12 @@ func (c *Console) responseSeparator() {
 	c.ensureLineBreakBeforeBlock()
 
 	ctxText := "CTX: " + formatCompactInt(c.lastPromptTokens)
-	workDir := filepath.Base(c.Agent.WorkDir)
 	model := c.Agent.ModelID
+	workDir := truncatePathTail(c.Agent.WorkDir, 30)
 
 	cell1 := " " + ctxText + " "
-	cell2 := " " + workDir + " "
-	cell3 := " " + model + " "
+	cell2 := " " + model + " "
+	cell3 := " " + workDir + " "
 
 	w1 := len(cell1)
 	w2 := len(cell2)
@@ -274,6 +273,20 @@ func formatCompactInt(n int) string {
 		return fmt.Sprintf("%.1fk", float64(n)/1000)
 	}
 	return fmt.Sprintf("%dk", n/1000)
+}
+
+// truncatePathTail returns the last maxLen characters of an absolute path.
+// If the path is longer than maxLen, prepends "..." to indicate truncation.
+// The total result including "..." does not exceed maxLen.
+//
+// WHAT:  Truncates a path for compact display, keeping the tail.
+// PARAMS: path — the full absolute path; maxLen — maximum output length including "...".
+// RETURNS: string — the truncated path.
+func truncatePathTail(path string, maxLen int) string {
+	if len(path) <= maxLen {
+		return path
+	}
+	return "..." + path[len(path)-maxLen+3:]
 }
 
 // OnUsage records the prompt token count from the latest provider response.
@@ -713,16 +726,14 @@ func splitTableRow(line string) []string {
 
 // promptLabel returns the colored input prompt label.
 //
-// WHAT:  Builds the [USER/(provider/model)] > label.
+// WHAT:  Builds the [<mode> mode]> label.
 // RETURNS: string — the formatted prompt label.
 func (c *Console) promptLabel() string {
-	model := c.Agent.ModelID
 	if c.Agent.CurrentMode != nil {
-		label := fmt.Sprintf("[USER/%s|%s] > ", model, c.Agent.CurrentMode.Name)
+		label := fmt.Sprintf("[%s mode]> ", c.Agent.CurrentMode.Name)
 		return c.color(colorBlue, c.bold(label))
 	}
-	label := fmt.Sprintf("[USER/%s] > ", model)
-	return c.color(colorBlue, c.bold(label))
+	return c.color(colorBlue, c.bold("[default mode]> "))
 }
 
 // Run starts the REPL loop. Reads input, handles slash commands, and runs agent turns.

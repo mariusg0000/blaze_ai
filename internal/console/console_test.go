@@ -685,7 +685,7 @@ func TestRunAgentTurnInputInterrupt(t *testing.T) {
 	}
 }
 
-// TestPromptLabelWithMode verifies prompt label includes mode name when mode is active.
+// TestPromptLabelWithMode verifies prompt label shows [<mode> mode]> format.
 func TestPromptLabelWithMode(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.Agent.Modes = &config.ModesConfig{
@@ -699,24 +699,21 @@ func TestPromptLabelWithMode(t *testing.T) {
 	if !strings.Contains(out.String(), "") {
 		// promptLabel returns a string, doesn't write to out
 	}
-	if !strings.Contains(label, "planning") {
-		t.Errorf("promptLabel() = %q, want contains 'planning'", label)
-	}
-	if !strings.Contains(label, "test/test-model") {
-		t.Errorf("promptLabel() = %q, want contains model", label)
+	if !strings.Contains(label, "[planning mode]") {
+		t.Errorf("promptLabel() = %q, want [planning mode]>", label)
 	}
 }
 
-// TestPromptLabelWithoutMode verifies prompt label has no mode when no mode is active.
+// TestPromptLabelWithoutMode verifies prompt label defaults to [default mode]> when no mode.
 func TestPromptLabelWithoutMode(t *testing.T) {
 	c, _ := newConsole(mockAgent(t))
 	c.Agent.CurrentMode = nil
 	label := c.promptLabel()
-	if strings.Contains(label, "|") {
-		t.Errorf("promptLabel() = %q, should not contain '|' when no mode", label)
+	if !strings.Contains(label, "[default mode]") {
+		t.Errorf("promptLabel() = %q, want [default mode]>", label)
 	}
-	if !strings.Contains(label, "test/test-model") {
-		t.Errorf("promptLabel() = %q, want contains model", label)
+	if strings.Contains(label, "USER") {
+		t.Errorf("promptLabel() = %q, should not contain USER", label)
 	}
 }
 
