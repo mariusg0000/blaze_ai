@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -26,13 +27,17 @@ type ReplaceBlockArgs struct {
 //
 // WHAT:  Finds an exact block of text in a file and replaces it with new text.
 // WHY:   Enables the LLM to make precise edits to existing files without rewriting them.
-type ReplaceBlockTool struct{}
+// PARAMS: workDir — function returning the current working directory for relative UI paths.
+type ReplaceBlockTool struct {
+	workDir func() string
+}
 
 // NewReplaceBlockTool creates a ReplaceBlockTool.
 //
+// PARAMS: workDir — closure returning the current working directory for display formatting.
 // RETURNS: *ReplaceBlockTool — ready to execute.
-func NewReplaceBlockTool() *ReplaceBlockTool {
-	return &ReplaceBlockTool{}
+func NewReplaceBlockTool(workDir func() string) *ReplaceBlockTool {
+	return &ReplaceBlockTool{workDir: workDir}
 }
 
 // Name returns the tool's unique identifier.
@@ -40,24 +45,29 @@ func (t *ReplaceBlockTool) Name() string {
 	return "replace_block"
 }
 
-// FormatArgs extracts the file path for display.
+// FormatArgs formats a concise UI label with relative path and edit purpose.
 func (t *ReplaceBlockTool) FormatArgs(args json.RawMessage) string {
 	parsed, err := ParseToolCallArgs[ReplaceBlockArgs](args)
 	if err != nil {
-		return ""
+		return "Editing file"
 	}
-	if strings.TrimSpace(parsed.Purpose) != "" {
-		return strings.TrimSpace(parsed.Purpose)
+	path := t.displayPath(parsed.FilePath)
+	purpose := strings.TrimSpace(parsed.Purpose)
+	if path == "" && purpose == "" {
+		return "Editing file"
 	}
-	if parsed.FilePath == "" {
-		return ""
+	if path == "" {
+		return truncateDisplay("Editing: "+purpose, 80)
 	}
-	return truncateDisplay(parsed.FilePath, 80)
+	if purpose == "" {
+		return truncateDisplay("Editing: "+path, 80)
+	}
+	return truncateDisplay("Editing: "+path+" — "+purpose, 80)
 }
 
 // Description returns the human-readable description for the LLM.
 func (t *ReplaceBlockTool) Description() string {
-	return "Replace an exact block of text in a file with a new block. The old block must match exactly."
+	return "Replace the first exact text block match in a file. The old block must match exactly, including whitespace and newlines."
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -67,7 +77,7 @@ func (t *ReplaceBlockTool) Parameters() json.RawMessage {
 		"properties": {
 			"purpose": {
 				"type": "string",
-				"description": "A concise summary of this edit, up to 3 sentences. First sentence: what is changed in which file — state the file path and the nature of the modification (add, replace, remove, fix, update, refactor). Second sentence: why this edit is needed — e.g. implement a feature, fix a bug, update documentation, follow a convention. Third sentence (optional): any side effects, dependencies, or follow-up changes this edit enables or requires."
+				"description": "A concise summary of this edit, up to 2 sentences. First sentence: state what the edit changes. Second sentence: explain why the edit is needed, including any relevant constraint or safety concern."
 			},
 			"file_path": {
 				"type": "string",
@@ -75,15 +85,34 @@ func (t *ReplaceBlockTool) Parameters() json.RawMessage {
 			},
 			"old_block": {
 				"type": "string",
-				"description": "The exact text block to find and replace."
+				"description": "The exact existing text block to replace. It must match the file content exactly, including whitespace and newlines."
 			},
 			"new_block": {
 				"type": "string",
-				"description": "The new text block to write in place of the old block."
+				"description": "The replacement text to write in place of old_block. Use an empty string to remove the old block."
 			}
 		},
 		"required": ["purpose", "file_path", "old_block", "new_block"]
 	}`)
+}
+
+// displayPath converts an absolute file path to a working-directory-relative display path when possible.
+func (t *ReplaceBlockTool) displayPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	if t.workDir == nil {
+		return path
+	}
+	workDir := t.workDir()
+	if workDir == "" {
+		return path
+	}
+	rel, err := filepath.Rel(workDir, path)
+	if err != nil {
+		return path
+	}
+	return rel
 }
 
 // Execute reads the file, replaces old_block with new_block, and writes it back.

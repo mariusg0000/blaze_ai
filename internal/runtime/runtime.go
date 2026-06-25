@@ -160,7 +160,7 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 	registry.Register(tools.NewShellTool(os))
 	registry.Register(tools.NewLoadSkillTool(active, skillResolver))
 	registry.Register(tools.NewUnloadSkillTool(active, skillResolver))
-	registry.Register(tools.NewReplaceBlockTool())
+	registry.Register(tools.NewReplaceBlockTool(func() string { return agent.WorkDir }))
 	registry.Register(tools.NewTaskWriteTool(func() string { return agent.WorkDir }))
 	registry.Register(tools.NewTaskReadTool(func() string { return agent.WorkDir }))
 	agent.Tools = registry

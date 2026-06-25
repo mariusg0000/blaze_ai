@@ -184,56 +184,56 @@ func TestShellFormatArgsFallbackTruncated(t *testing.T) {
 	}
 }
 
-// TestLoadSkillFormatArgs verifies load_skill prefers purpose for display.
+// TestLoadSkillFormatArgs verifies load_skill uses a fixed UI label.
 func TestLoadSkillFormatArgs(t *testing.T) {
 	l := NewLoadSkillTool(nil, nil)
-	result := l.FormatArgs(json.RawMessage(`{"purpose":"Load memory manager skill for persistence rules","name":"memory-manager.md"}`))
-	if result != "Load memory manager skill for persistence rules" {
-		t.Errorf("FormatArgs() = %q, want %q", result, "Load memory manager skill for persistence rules")
+	result := l.FormatArgs(json.RawMessage(`{"name":"memory-manager.md"}`))
+	if result != "Loading skill: memory-manager" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "Loading skill: memory-manager")
 	}
 }
 
-// TestLoadSkillFormatArgsFallback verifies load_skill falls back to normalized skill name.
+// TestLoadSkillFormatArgsFallback verifies load_skill uses a generic label on invalid args.
 func TestLoadSkillFormatArgsFallback(t *testing.T) {
 	l := NewLoadSkillTool(nil, nil)
-	result := l.FormatArgs(json.RawMessage(`{"name":"memory-manager.md"}`))
-	if result != "memory-manager" {
-		t.Errorf("FormatArgs() = %q, want %q", result, "memory-manager")
+	result := l.FormatArgs(json.RawMessage(`{invalid}`))
+	if result != "Loading skill" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "Loading skill")
 	}
 }
 
-// TestUnloadSkillFormatArgs verifies unload_skill prefers purpose for display.
+// TestUnloadSkillFormatArgs verifies unload_skill uses a fixed UI label.
 func TestUnloadSkillFormatArgs(t *testing.T) {
 	u := NewUnloadSkillTool(nil, nil)
-	result := u.FormatArgs(json.RawMessage(`{"purpose":"Unload memory manager skill after finishing persistence update","name":"memory-manager"}`))
-	if result != "Unload memory manager skill after finishing persistence update" {
-		t.Errorf("FormatArgs() = %q, want %q", result, "Unload memory manager skill after finishing persistence update")
+	result := u.FormatArgs(json.RawMessage(`{"name":"memory-manager"}`))
+	if result != "Unloading skill: memory-manager" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "Unloading skill: memory-manager")
 	}
 }
 
-// TestUnloadSkillFormatArgsFallback verifies unload_skill falls back to skill name.
+// TestUnloadSkillFormatArgsFallback verifies unload_skill uses a generic label on invalid args.
 func TestUnloadSkillFormatArgsFallback(t *testing.T) {
 	u := NewUnloadSkillTool(nil, nil)
-	result := u.FormatArgs(json.RawMessage(`{"name":"memory-manager"}`))
-	if result != "memory-manager" {
-		t.Errorf("FormatArgs() = %q, want %q", result, "memory-manager")
+	result := u.FormatArgs(json.RawMessage(`{invalid}`))
+	if result != "Unloading skill" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "Unloading skill")
 	}
 }
 
-// TestReplaceBlockFormatArgs verifies replace_block prefers purpose for display.
+// TestReplaceBlockFormatArgs verifies replace_block shows relative path and purpose.
 func TestReplaceBlockFormatArgs(t *testing.T) {
-	r := NewReplaceBlockTool()
-	result := r.FormatArgs(json.RawMessage(`{"purpose":"Update console renderer in internal/console/console.go","file_path":"/path/to/file.go","old_block":"old","new_block":"new"}`))
-	if result != "Update console renderer in internal/console/console.go" {
-		t.Errorf("FormatArgs() = %q, want %q", result, "Update console renderer in internal/console/console.go")
+	r := NewReplaceBlockTool(func() string { return "/path/to" })
+	result := r.FormatArgs(json.RawMessage(`{"purpose":"Update console renderer","file_path":"/path/to/file.go","old_block":"old","new_block":"new"}`))
+	if result != "Editing: file.go — Update console renderer" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "Editing: file.go — Update console renderer")
 	}
 }
 
-// TestReplaceBlockFormatArgsFallback verifies replace_block falls back to file path.
+// TestReplaceBlockFormatArgsFallback verifies replace_block falls back to a path-only label.
 func TestReplaceBlockFormatArgsFallback(t *testing.T) {
-	r := NewReplaceBlockTool()
+	r := NewReplaceBlockTool(func() string { return "/path/to" })
 	result := r.FormatArgs(json.RawMessage(`{"file_path":"/path/to/file.go","old_block":"old","new_block":"new"}`))
-	if result != "/path/to/file.go" {
-		t.Errorf("FormatArgs() = %q, want %q", result, "/path/to/file.go")
+	if result != "Editing: file.go" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "Editing: file.go")
 	}
 }

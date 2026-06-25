@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 const tasksFileName = "tasks.md"
@@ -17,9 +16,8 @@ const tasksFileName = "tasks.md"
 // TaskWriteArgs are the arguments for task_write.
 //
 // WHAT:  Parsed arguments for writing the project task list.
-// PARAMS: Purpose — human-readable reason for the write; Tasks — full markdown content to write (overwrite).
+// PARAMS: Tasks — full markdown content to write (overwrite).
 type TaskWriteArgs struct {
-	Purpose string `json:"purpose,omitempty"`
 	Tasks   string `json:"tasks"`
 }
 
@@ -43,35 +41,25 @@ func NewTaskWriteTool(workDir func() string) *TaskWriteTool {
 func (t *TaskWriteTool) Name() string { return "task_write" }
 
 func (t *TaskWriteTool) Description() string {
-	return "Write project task list (markdown). Full overwrite."
+	return "Save the current tasks. Full overwrite."
 }
 
 func (t *TaskWriteTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"purpose": {
-				"type": "string",
-				"description": "A concise summary of this write, up to 3 sentences. First sentence: what structural changes or progress updates this write records in tasks.md, the file being overwritten. Second sentence: why this update is needed — e.g. new task discovered, task completed, task blocked, plan revised. Third sentence (optional): any dependencies or next-phase context captured in the update."
-			},
 			"tasks": {
 				"type": "string",
-				"description": "Full task list in markdown format."
+				"description": "Complete Markdown task list to save."
 			}
 		},
-		"required": ["purpose", "tasks"]
+		"required": ["tasks"]
 	}`)
 }
 
 func (t *TaskWriteTool) FormatArgs(args json.RawMessage) string {
-	parsed, err := ParseToolCallArgs[TaskWriteArgs](args)
-	if err != nil {
-		return ""
-	}
-	if strings.TrimSpace(parsed.Purpose) != "" {
-		return strings.TrimSpace(parsed.Purpose)
-	}
-	return truncateDisplay(parsed.Tasks, 80)
+	_ = args
+	return "Saving tasks"
 }
 
 func (t *TaskWriteTool) Execute(ctx context.Context, args json.RawMessage) string {
@@ -95,10 +83,8 @@ func (t *TaskWriteTool) Execute(ctx context.Context, args json.RawMessage) strin
 // TaskReadArgs are the arguments for task_read.
 //
 // WHAT:  Parsed arguments for reading the project task list.
-// PARAMS: Purpose — human-readable reason for the read.
-type TaskReadArgs struct {
-	Purpose string `json:"purpose,omitempty"`
-}
+// PARAMS: none.
+type TaskReadArgs struct{}
 
 // TaskReadTool reads the project task list from disk.
 //
@@ -120,31 +106,19 @@ func NewTaskReadTool(workDir func() string) *TaskReadTool {
 func (t *TaskReadTool) Name() string { return "task_read" }
 
 func (t *TaskReadTool) Description() string {
-	return "Read project task list."
+	return "Load the current tasks."
 }
 
 func (t *TaskReadTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
-		"properties": {
-			"purpose": {
-				"type": "string",
-				"description": "A concise summary of why the task list is being read, up to 3 sentences. First sentence: what triggered this read — e.g. session start, resume with -c, directory change, or pre-decision checkpoint. Second sentence: what specific information or status the read is expected to surface. Third sentence (optional): what action will follow based on the read result."
-			}
-		},
-		"required": ["purpose"]
+		"properties": {}
 	}`)
 }
 
 func (t *TaskReadTool) FormatArgs(args json.RawMessage) string {
-	parsed, err := ParseToolCallArgs[TaskReadArgs](args)
-	if err != nil {
-		return ""
-	}
-	if strings.TrimSpace(parsed.Purpose) != "" {
-		return strings.TrimSpace(parsed.Purpose)
-	}
-	return ""
+	_ = args
+	return "Loading tasks"
 }
 
 func (t *TaskReadTool) Execute(ctx context.Context, args json.RawMessage) string {

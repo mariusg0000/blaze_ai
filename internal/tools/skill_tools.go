@@ -15,8 +15,7 @@ import (
 
 // SkillArgs are the arguments for load_skill and unload_skill.
 type SkillArgs struct {
-	Name    string `json:"name"`
-	Purpose string `json:"purpose,omitempty"`
+	Name string `json:"name"`
 }
 
 // ResolveFunc resolves a skill name to a canonical skill ID.
@@ -39,24 +38,21 @@ func (t *LoadSkillTool) Name() string {
 	return "load_skill"
 }
 
-// FormatArgs extracts the skill name for display.
+// FormatArgs returns a fixed UI label for the skill load action.
 func (t *LoadSkillTool) FormatArgs(args json.RawMessage) string {
 	parsed, err := ParseToolCallArgs[SkillArgs](args)
 	if err != nil {
-		return ""
-	}
-	if strings.TrimSpace(parsed.Purpose) != "" {
-		return strings.TrimSpace(parsed.Purpose)
+		return "Loading skill"
 	}
 	if parsed.Name == "" {
-		return ""
+		return "Loading skill"
 	}
-	return truncateDisplay(normalizeSkillName(parsed.Name), 80)
+	return truncateDisplay("Loading skill: "+normalizeSkillName(parsed.Name), 80)
 }
 
 // Description returns the human-readable description for the LLM.
 func (t *LoadSkillTool) Description() string {
-	return "Load a skill by name. Use project/ prefix for project-scoped skills."
+	return "Load a skill into the current session. Use project/ prefix for project-scoped skills."
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -64,16 +60,12 @@ func (t *LoadSkillTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"purpose": {
-				"type": "string",
-				"description": "A concise summary of why this skill is being loaded, up to 3 sentences. First sentence: which skill is loaded and what capability, behavior, or domain knowledge it provides. Second sentence: why this skill is needed for the current or upcoming task. Third sentence (optional): how the loaded skill will change the agent's behavior or tool selection."
-			},
 			"name": {
 				"type": "string",
 				"description": "The skill name to load. Use project/ prefix for project-scoped skills."
 			}
 		},
-		"required": ["purpose", "name"]
+		"required": ["name"]
 	}`)
 }
 
@@ -119,24 +111,21 @@ func (t *UnloadSkillTool) Name() string {
 	return "unload_skill"
 }
 
-// FormatArgs extracts the skill name for display.
+// FormatArgs returns a fixed UI label for the skill unload action.
 func (t *UnloadSkillTool) FormatArgs(args json.RawMessage) string {
 	parsed, err := ParseToolCallArgs[SkillArgs](args)
 	if err != nil {
-		return ""
-	}
-	if strings.TrimSpace(parsed.Purpose) != "" {
-		return strings.TrimSpace(parsed.Purpose)
+		return "Unloading skill"
 	}
 	if parsed.Name == "" {
-		return ""
+		return "Unloading skill"
 	}
-	return truncateDisplay(normalizeSkillName(parsed.Name), 80)
+	return truncateDisplay("Unloading skill: "+normalizeSkillName(parsed.Name), 80)
 }
 
 // Description returns the human-readable description for the LLM.
 func (t *UnloadSkillTool) Description() string {
-	return "Unload a skill by name."
+	return "Unload a skill from the current session."
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -144,16 +133,12 @@ func (t *UnloadSkillTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"purpose": {
-				"type": "string",
-				"description": "A concise summary of why this skill is being unloaded, up to 3 sentences. First sentence: which skill is unloaded and what domain or capability it covered. Second sentence: why this skill is no longer needed — e.g. task complete, topic changed, or it would interfere with the next turn. Third sentence (optional): whether another skill will replace it or the agent returns to default behavior."
-			},
 			"name": {
 				"type": "string",
 				"description": "The skill name to unload."
 			}
 		},
-		"required": ["purpose", "name"]
+		"required": ["name"]
 	}`)
 }
 

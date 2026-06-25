@@ -24,7 +24,7 @@ func writeTestFile(t *testing.T, content string) string {
 // TestReplaceBlockSuccess verifies a basic block replacement.
 func TestReplaceBlockSuccess(t *testing.T) {
 	path := writeTestFile(t, "line1\nold block\nline3")
-	tool := NewReplaceBlockTool()
+	tool := NewReplaceBlockTool(func() string { return filepath.Dir(path) })
 	args := json.RawMessage(`{"file_path":"` + path + `","old_block":"old block","new_block":"new block"}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "block replaced") {
@@ -42,7 +42,7 @@ func TestReplaceBlockSuccess(t *testing.T) {
 // TestReplaceBlockNotFound verifies error when old_block is not in the file.
 func TestReplaceBlockNotFound(t *testing.T) {
 	path := writeTestFile(t, "line1\nline2")
-	tool := NewReplaceBlockTool()
+	tool := NewReplaceBlockTool(nil)
 	args := json.RawMessage(`{"file_path":"` + path + `","old_block":"nonexistent","new_block":"replacement"}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "not found") {
@@ -52,7 +52,7 @@ func TestReplaceBlockNotFound(t *testing.T) {
 
 // TestReplaceBlockFileMissing verifies error when file does not exist.
 func TestReplaceBlockFileMissing(t *testing.T) {
-	tool := NewReplaceBlockTool()
+	tool := NewReplaceBlockTool(nil)
 	args := json.RawMessage(`{"file_path":"/nonexistent/path/file.txt","old_block":"old","new_block":"new"}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error") {
@@ -62,7 +62,7 @@ func TestReplaceBlockFileMissing(t *testing.T) {
 
 // TestReplaceBlockEmptyFilePath verifies error on empty file_path.
 func TestReplaceBlockEmptyFilePath(t *testing.T) {
-	tool := NewReplaceBlockTool()
+	tool := NewReplaceBlockTool(nil)
 	args := json.RawMessage(`{"file_path":"","old_block":"old","new_block":"new"}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error") {
@@ -73,7 +73,7 @@ func TestReplaceBlockEmptyFilePath(t *testing.T) {
 // TestReplaceBlockEmptyOldBlock verifies error on empty old_block.
 func TestReplaceBlockEmptyOldBlock(t *testing.T) {
 	path := writeTestFile(t, "content")
-	tool := NewReplaceBlockTool()
+	tool := NewReplaceBlockTool(func() string { return filepath.Dir(path) })
 	args := json.RawMessage(`{"file_path":"` + path + `","old_block":"","new_block":"new"}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error") {
@@ -84,7 +84,7 @@ func TestReplaceBlockEmptyOldBlock(t *testing.T) {
 // TestReplaceBlockMultiline verifies replacement of a multiline block.
 func TestReplaceBlockMultiline(t *testing.T) {
 	path := writeTestFile(t, "header\nold line 1\nold line 2\nfooter")
-	tool := NewReplaceBlockTool()
+	tool := NewReplaceBlockTool(func() string { return filepath.Dir(path) })
 	args := json.RawMessage(`{"file_path":"` + path + `","old_block":"old line 1\nold line 2","new_block":"new line 1\nnew line 2"}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "block replaced") {
@@ -99,7 +99,7 @@ func TestReplaceBlockMultiline(t *testing.T) {
 // TestReplaceBlockOnlyFirstOccurrence verifies only the first match is replaced.
 func TestReplaceBlockOnlyFirstOccurrence(t *testing.T) {
 	path := writeTestFile(t, "target\ntarget\ntarget")
-	tool := NewReplaceBlockTool()
+	tool := NewReplaceBlockTool(func() string { return filepath.Dir(path) })
 	args := json.RawMessage(`{"file_path":"` + path + `","old_block":"target","new_block":"replaced"}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "block replaced") {
@@ -115,7 +115,7 @@ func TestReplaceBlockOnlyFirstOccurrence(t *testing.T) {
 
 // TestReplaceBlockInvalidArgs verifies error on invalid JSON.
 func TestReplaceBlockInvalidArgs(t *testing.T) {
-	tool := NewReplaceBlockTool()
+	tool := NewReplaceBlockTool(nil)
 	args := json.RawMessage(`{invalid}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error") {
@@ -125,7 +125,7 @@ func TestReplaceBlockInvalidArgs(t *testing.T) {
 
 // TestReplaceBlockName verifies the tool name.
 func TestReplaceBlockName(t *testing.T) {
-	tool := NewReplaceBlockTool()
+	tool := NewReplaceBlockTool(nil)
 	if tool.Name() != "replace_block" {
 		t.Errorf("Name() = %q, want 'replace_block'", tool.Name())
 	}
@@ -133,7 +133,7 @@ func TestReplaceBlockName(t *testing.T) {
 
 // TestReplaceBlockParameters verifies parameters is valid JSON.
 func TestReplaceBlockParameters(t *testing.T) {
-	tool := NewReplaceBlockTool()
+	tool := NewReplaceBlockTool(nil)
 	params := tool.Parameters()
 	if !json.Valid(params) {
 		t.Error("Parameters() is not valid JSON")

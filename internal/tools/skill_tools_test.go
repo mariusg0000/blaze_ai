@@ -78,7 +78,19 @@ func TestLoadSkillParameters(t *testing.T) {
 	if !json.Valid(params) {
 		t.Error("Parameters() is not valid JSON")
 	}
-	schemaIncludesRequiredPurpose(t, params)
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Required   []string                   `json:"required"`
+	}
+	if err := json.Unmarshal(params, &schema); err != nil {
+		t.Fatalf("cannot parse schema: %v", err)
+	}
+	if _, ok := schema.Properties["purpose"]; ok {
+		t.Fatal("load_skill schema should not include purpose")
+	}
+	if len(schema.Required) != 1 || schema.Required[0] != "name" {
+		t.Fatalf("load_skill required = %v, want [name]", schema.Required)
+	}
 }
 
 // TestUnloadSkillExecute verifies that a skill is removed from the active list.
@@ -148,14 +160,26 @@ func TestUnloadSkillParameters(t *testing.T) {
 	if !json.Valid(params) {
 		t.Error("Parameters() is not valid JSON")
 	}
-	schemaIncludesRequiredPurpose(t, params)
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Required   []string                   `json:"required"`
+	}
+	if err := json.Unmarshal(params, &schema); err != nil {
+		t.Fatalf("cannot parse schema: %v", err)
+	}
+	if _, ok := schema.Properties["purpose"]; ok {
+		t.Fatal("unload_skill schema should not include purpose")
+	}
+	if len(schema.Required) != 1 || schema.Required[0] != "name" {
+		t.Fatalf("unload_skill required = %v, want [name]", schema.Required)
+	}
 }
 
 // TestUnloadSkillDescription verifies unload description stays minimal.
 func TestUnloadSkillDescription(t *testing.T) {
 	tool := NewUnloadSkillTool(skills.NewActiveList(), nil)
 	desc := tool.Description()
-	if desc != "Unload a skill by name." {
+	if desc != "Unload a skill from the current session." {
 		t.Fatalf("Description() = %q, want minimal unload description", desc)
 	}
 }

@@ -69,7 +69,7 @@ func (s *ShellTool) FormatArgs(args json.RawMessage) string {
 
 // Description returns the human-readable description for the LLM.
 func (s *ShellTool) Description() string {
-	return "Execute a shell command on the host. Returns stdout, stderr, and exit_code. Avoid broad recursive commands. If the target may be large, refine the command or read it in sequential chunks below 150 kB."
+	return "Execute one or more shell commands on the host. Prefer efficient inline commands and combine small related operations in one call when it improves speed and clarity. Returns stdout, stderr, and exit_code."
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -79,11 +79,11 @@ func (s *ShellTool) Parameters() json.RawMessage {
 		"properties": {
 			"purpose": {
 				"type": "string",
-				"description": "A concise summary of this shell call, up to 3 sentences. First sentence: what this command does, the exact command executed, and which files or folders it reads, writes, modifies, or deletes. Second sentence: why this step is needed in the context of the current task. Third sentence (optional): any important constraints, risks, or expected output."
+				"description": "A concise summary of this shell call, up to 3 sentences. First sentence: state the shell commands or host helpers used and the files or folders they read, write, modify, or delete. Second sentence: explain why this shell call is needed for the current task. Third sentence: explain how the command is structured, what result it is expected to produce, or any relevant constraints or safety concerns."
 			},
 			"command": {
 				"type": "string",
-				"description": "The shell command to execute. Avoid broad recursive commands. If the target may be large, refine the path or pattern, or read it in sequential chunks below 150 kB."
+				"description": "The shell command to execute. Prefer concise inline commands or safe pipelines when they make the task faster or clearer."
 			},
 			"timeout": {
 				"type": "integer",
