@@ -560,6 +560,9 @@ func (c *Console) renderLine(line string, terminated bool) {
 
 	if isTableRow(line) {
 		cells := splitTableRow(line)
+		for i, cell := range cells {
+			cells[i] = c.renderInline(cell)
+		}
 		c.writeRenderedLine("  "+strings.Join(cells, "  -  "), terminated)
 		return
 	}
