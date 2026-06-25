@@ -172,35 +172,6 @@ func (m *ModesConfig) SaveTo(path string) error {
 	return nil
 }
 
-// Reload re-reads modes from disk into the receiver.
-//
-// WHAT:  In-place update of ModesConfig from modes.json on disk.
-// WHY:   When the skill creates/edits modes, the runtime needs to pick them up.
-// RETURNS: error if the file cannot be read, parsed, or is empty/invalid.
-func (m *ModesConfig) Reload() error {
-	path, err := modesPath()
-	if err != nil {
-		return err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("cannot read modes file: %w", err)
-	}
-	var fresh ModesConfig
-	if err := json.Unmarshal(data, &fresh); err != nil {
-		return fmt.Errorf("cannot parse modes file: %w", err)
-	}
-	if err := fresh.validateBasic(); err != nil {
-		return fmt.Errorf("reloaded modes invalid: %w", err)
-	}
-	if len(fresh.Modes) == 0 {
-		return fmt.Errorf("reloaded modes are empty")
-	}
-	m.Modes = fresh.Modes
-	m.LastMode = fresh.LastMode
-	return nil
-}
-
 // MigrateFromConfig reads legacy modes from config.json, saves them to modes.json,
 // strips modes and last_mode from config.json, and saves the cleaned config.
 //

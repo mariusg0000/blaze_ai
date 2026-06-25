@@ -778,50 +778,6 @@ func TestNewAgentAutoCreatesDefaultMode(t *testing.T) {
 	}
 }
 
-// TestNextModeHotReloads verifies that NextMode picks up new modes from disk.
-func TestNextModeHotReloads(t *testing.T) {
-	// Set HOME so config reload reads from our temp dir.
-	t.Setenv("HOME", t.TempDir())
-
-	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
-	defer server.Close()
-
-	// Set up modes on disk with one mode.
-	agent.Modes.Modes = []config.Mode{
-		{Name: "default", Model: "test/test-model"},
-	}
-	agent.Modes.LastMode = "default"
-	agent.Modes.Save()
-	agent.CurrentMode = &agent.Modes.Modes[0]
-
-	// Verify initial cycling works.
-	mode, err := agent.NextMode()
-	if err != nil {
-		t.Fatalf("NextMode() error: %v", err)
-	}
-	if mode.Name != "default" {
-		t.Errorf("NextMode() = %q, want 'default' (only one mode)", mode.Name)
-	}
-
-	// Now add a second mode to disk (simulating skill editing).
-	agent.Modes.Modes = append(agent.Modes.Modes, config.Mode{
-		Name: "planning", Model: "test/test-model", Directive: "plan",
-	})
-	agent.Modes.Save()
-
-	// Reload and cycle — should now include the new mode.
-	if err := agent.ReloadModes(); err != nil {
-		t.Fatalf("ReloadModes() error: %v", err)
-	}
-	mode, err = agent.NextMode()
-	if err != nil {
-		t.Fatalf("NextMode() after reload error: %v", err)
-	}
-	if mode.Name != "planning" {
-		t.Errorf("NextMode() after reload = %q, want 'planning'", mode.Name)
-	}
-}
-
 // TestListProviderModels verifies that ListProviderModels calls the provider endpoint and returns models.
 func TestListProviderModels(t *testing.T) {
 	modelsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

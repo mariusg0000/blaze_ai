@@ -57,8 +57,8 @@ Load when the user wants to configure BlazeAI models, providers, API keys, favor
 1. Read the current file with the `shell` tool.
 2. Modify the JSON with the `shell` tool (use replace_block or direct file editing).
 3. **config.json**: provider and role changes require a session restart.
-4. **modes.json**: new/edited modes are hot-reloaded on the next Tab cycle. No restart needed.
-5. **modes.json safety**: the runtime reads modes.json, validates the JSON, and falls back to a safe default mode if the file is corrupted. However, always validate the JSON before saving when possible.
+4. **modes.json**: all changes (new, edit, delete) require restarting BlazeAI. The modes are loaded once at startup and never reloaded. Inform the user to exit and restart with `-c` to continue the current session.
+5. Always validate JSON syntax and mode rules before saving.
 6. The `/model` command changes the current model (NOT the mode). `/model` does NOT accept mode names; it only accepts `provider/model_name`.
 
 ## Fetching Models from Providers
@@ -126,10 +126,10 @@ Modes.json is a standalone JSON file (not embedded in config.json):
 - Create a new mode: append an entry to the `modes` array in modes.json and persist. Validate with the rules above.
 - Edit a mode's directive or model: find by `name`, update in modes.json, persist.
 - Delete a mode: remove from `modes` array in modes.json. If it was `last_mode`, set `last_mode` to the first remaining mode. Never delete the last remaining mode.
-- Switch active mode at runtime: the user presses Tab to cycle modes. Newly created modes are hot-reloaded and appear in the cycle immediately. Do NOT suggest `/model modename` — that command does not switch modes.
+- Switch active mode at runtime: the user presses Tab to cycle through modes loaded at startup. Do NOT suggest `/model modename` — that command does not switch modes.
 - After any edit to modes.json, validate integrity (unique names, valid models, provider references).
 
-**After creating or editing a mode:** remind the user to Tab-cycle out and back into that mode for the changes to take effect. The active session's `CurrentMode` holds a stale snapshot until the next cycle.
+**After creating or editing a mode:** remind the user that mode changes take effect only after restarting BlazeAI. Suggest restarting with the `-c` flag to continue the current session.
 
 ### Directive behavior
 The directive is appended to the last message of the payload sent to the LLM on every LLM call while the mode is active. It is not stored in session.json. Use it to constrain agent behavior for the current task (e.g. read-only, quick/cheap, verbose, etc.). Keep directives short and imperative.

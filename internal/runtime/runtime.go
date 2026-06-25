@@ -433,11 +433,6 @@ func (a *Agent) SetWorkDir(dir string) error {
 	return nil
 }
 
-// ReloadModes re-reads modes from modes.json on disk to pick up hot changes.
-func (a *Agent) ReloadModes() error {
-	return a.Modes.Reload()
-}
-
 // ListProviderModels fetches the list of available model IDs from a configured provider.
 func (a *Agent) ListProviderModels(providerName string) ([]string, error) {
 	for _, p := range a.Config.Providers {
@@ -451,9 +446,6 @@ func (a *Agent) ListProviderModels(providerName string) ([]string, error) {
 
 // SetMode switches the active work mode by name.
 func (a *Agent) SetMode(name string) error {
-	if err := a.ReloadModes(); err != nil {
-		return fmt.Errorf("cannot reload modes: %w", err)
-	}
 	for i := range a.Modes.Modes {
 		if a.Modes.Modes[i].Name == name {
 			mode := &a.Modes.Modes[i]
@@ -476,9 +468,6 @@ func (a *Agent) SetMode(name string) error {
 
 // NextMode returns the next mode in the config list cyclically.
 func (a *Agent) NextMode() (*config.Mode, error) {
-	if err := a.ReloadModes(); err != nil {
-		return nil, fmt.Errorf("cannot reload modes: %w", err)
-	}
 	if len(a.Modes.Modes) == 0 {
 		return nil, fmt.Errorf("no modes configured")
 	}
