@@ -1,5 +1,5 @@
 [DESCRIPTION]
-Load when the user starts a coding session (write, edit, generate, refactor, or debug code) or when the LLM needs to produce scripts, source files, or configuration files. Also load when the user asks about architecture, structure, or design changes. Do NOT load for inline shell commands, one-liner fixes, or simple file reads.
+MUST load using `load_skill coding` before writing, editing, generating, refactoring, or debugging any code. Also required before producing scripts, source files, configuration files, or discussing architecture, structure, or design changes. Skip only for inline shell commands, one-liner fixes, or simple file reads.
 
 [BEHAVIOR]
 # Coding

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"blazeai/internal/platform"
 )
@@ -18,9 +19,10 @@ const tasksFileName = "tasks.md"
 // TaskWriteArgs are the arguments for task_write.
 //
 // WHAT:  Parsed arguments for writing the project task list.
-// PARAMS: Tasks — full markdown content to write (overwrite).
+// PARAMS: Purpose — human-readable reason for the write; Tasks — full markdown content to write (overwrite).
 type TaskWriteArgs struct {
-	Tasks string `json:"tasks"`
+	Purpose string `json:"purpose,omitempty"`
+	Tasks   string `json:"tasks"`
 }
 
 // TaskWriteTool writes the project task list to disk.
@@ -50,12 +52,16 @@ func (t *TaskWriteTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
+			"purpose": {
+				"type": "string",
+				"description": "Human-readable one-line reason for writing the task list."
+			},
 			"tasks": {
 				"type": "string",
 				"description": "Full task list in markdown format."
 			}
 		},
-		"required": ["tasks"]
+		"required": ["purpose", "tasks"]
 	}`)
 }
 
@@ -63,6 +69,9 @@ func (t *TaskWriteTool) FormatArgs(args json.RawMessage) string {
 	parsed, err := ParseToolCallArgs[TaskWriteArgs](args)
 	if err != nil {
 		return ""
+	}
+	if strings.TrimSpace(parsed.Purpose) != "" {
+		return strings.TrimSpace(parsed.Purpose)
 	}
 	return truncateDisplay(parsed.Tasks, 80)
 }
@@ -87,6 +96,14 @@ func (t *TaskWriteTool) Execute(ctx context.Context, args json.RawMessage) strin
 		return fmt.Sprintf("error: cannot write tasks: %v", err)
 	}
 	return "ok"
+}
+
+// TaskReadArgs are the arguments for task_read.
+//
+// WHAT:  Parsed arguments for reading the project task list.
+// PARAMS: Purpose — human-readable reason for the read.
+type TaskReadArgs struct {
+	Purpose string `json:"purpose,omitempty"`
 }
 
 // TaskReadTool reads the project task list from disk.
@@ -115,11 +132,24 @@ func (t *TaskReadTool) Description() string {
 func (t *TaskReadTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
-		"properties": {}
+		"properties": {
+			"purpose": {
+				"type": "string",
+				"description": "Human-readable one-line reason for reading the task list."
+			}
+		},
+		"required": ["purpose"]
 	}`)
 }
 
 func (t *TaskReadTool) FormatArgs(args json.RawMessage) string {
+	parsed, err := ParseToolCallArgs[TaskReadArgs](args)
+	if err != nil {
+		return ""
+	}
+	if strings.TrimSpace(parsed.Purpose) != "" {
+		return strings.TrimSpace(parsed.Purpose)
+	}
 	return ""
 }
 
