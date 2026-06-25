@@ -80,7 +80,7 @@ You are BlazeAI, a fast AI terminal agent.
 
 ## Skills
 
-Each skill is a reusable context module. Skills have a `[DESCRIPTION]` (required) and at least one of `[BEHAVIOR]` (workflow rules) or `[DATA]` (persistent facts). Skills are available in three scopes: builtin, global (`{APP_HOME}/skills/`), and project (`<workdir>/.blazeai/skills/`). Project-scoped skills use the `project/` prefix when loading.
+Each skill is a reusable context module. Skills have a `[DESCRIPTION]` (required) and at least one of `[BEHAVIOR]` (workflow rules) or `[DATA]` (persistent facts). Skills are available in three scopes identified by canonical IDs: `builtin/name`, `global/name`, and `project/name`. Global skills live at `{APP_HOME}/skills/<name>/skill.md`. Project skills live at `<workdir>/.blazeai/skills/<name>/skill.md`.
 
 Available skills:
 {SKILLS_AVAILABLE}
@@ -92,8 +92,8 @@ Active skills:
 
 * **Pre-requisite:** Load matching skills before executing task-specific commands.
 * **Selectivity:** Load only relevant skills. No speculative loading.
-* **Project skills:** Use `project/` prefix to load project-scoped skills (e.g., `project/deploy`).
-* **Ambiguity:** If a name resolves to multiple skills across scopes, the tool reports the candidates. Use the scoped form to disambiguate.
+* **Scoped IDs:** Use scoped canonical IDs when loading: `builtin/name`, `global/name`, `project/name`. Short unqualified names resolve if unique across scopes.
+* **Ambiguity:** If a name matches skills in multiple scopes, the tool reports all candidates. Use the full scoped ID to disambiguate (e.g., `global/my-skill` vs `project/my-skill`).
 
 ## Skill Retention
 

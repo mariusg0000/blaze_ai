@@ -2,8 +2,9 @@
 // Discovers skill files from builtin (embedded skills/), global (app_home/skills/),
 // and project (workdir/.blazeai/skills/) locations. Parses [DESCRIPTION] (required),
 // [BEHAVIOR] (optional), and [DATA] (optional) sections. At least one of Behavior
-// or Data must be present. Project-scoped skills use project/ prefix in their IDs.
-// Resolution: unqualified names resolve if unique across scopes; ambiguous names error.
+// or Data must be present. All skills use scoped canonical IDs: builtin/name,
+// global/name, project/name. Resolution: unqualified names resolve if unique
+// across scopes; ambiguous names error. No silent override between scopes.
 // Layer: skill management. Dependencies: internal/platform.
 package skills
 
@@ -23,6 +24,7 @@ import (
 type Scope string
 
 const (
+	ScopeBuiltin Scope = "builtin"
 	ScopeGlobal  Scope = "global"
 	ScopeProject Scope = "project"
 )
@@ -229,20 +231,20 @@ func DiscoverAll(builtinFS fs.FS, workDir string) (map[string]*Skill, error) {
 }
 
 // Resolve finds the canonical skill ID for a given name.
-// If name contains / (already scoped), exact lookup is performed.
-// If name has no / prefix, it searches all skills:
-//   - single match → returns that ID
+// If name contains / (already scoped like global/foo or project/foo), exact lookup.
+// If name has no prefix, it searches all scopes (builtin/name, global/name, project/name):
+//   - single match → returns that canonical ID
 //   - multiple matches → error with all candidates
 //   - no match → error
 //
-// WHAT:  Resolves a user-provided name to a canonical skill ID.
+// WHAT:  Resolves a user-provided name to a canonical scoped skill ID.
 // WHY:   load_skill accepts unqualified names; ambiguity must be reported, not silently chosen.
 // PARAMS: name — the name to resolve (may be short or scoped); skills — all discovered skills.
 // RETURNS: string — canonical skill ID; error if not found or ambiguous.
 func Resolve(name string, skills map[string]*Skill) (string, error) {
 	name = strings.TrimSuffix(name, ".md")
 
-	// Already scoped: exact match.
+	// Already scoped (contains /): exact match on canonical ID.
 	if strings.Contains(name, "/") {
 		if _, ok := skills[name]; ok {
 			return name, nil
@@ -250,19 +252,12 @@ func Resolve(name string, skills map[string]*Skill) (string, error) {
 		return "", fmt.Errorf("skill not found: %s", name)
 	}
 
-	// Unqualified: find all matches.
+	// Unqualified: check all three scopes.
+	candidates := []string{"builtin/" + name, "global/" + name, "project/" + name}
 	var matches []string
-	for key := range skills {
-		baseName := key
-		// Strip project/ prefix for matching.
-		if before, after, ok := strings.Cut(key, "/"); ok {
-			if before == "project" && after == name {
-				matches = append(matches, key)
-			}
-			continue
-		}
-		if baseName == name {
-			matches = append(matches, key)
+	for _, c := range candidates {
+		if _, ok := skills[c]; ok {
+			matches = append(matches, c)
 		}
 	}
 
@@ -287,7 +282,8 @@ func SortedNames(skills map[string]*Skill) []string {
 	return names
 }
 
-// discoverFromFS reads .md files from an fs.FS and adds valid skills to the map.
+// discoverFromFS reads .md files from an fs.FS and adds valid builtin skills to the map.
+// Skills are stored with builtin/ prefix as canonical ID.
 func discoverFromFS(fsys fs.FS, skills map[string]*Skill) error {
 	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
@@ -313,18 +309,19 @@ func discoverFromFS(fsys fs.FS, skills map[string]*Skill) error {
 		if err != nil {
 			continue
 		}
-		skills[skillName] = skill
+		skill.Scope = ScopeBuiltin
+		skills["builtin/"+skillName] = skill
 	}
 	return nil
 }
 
 // discoverGlobalFromDir reads global custom skills from app_home/skills/<name>/skill.md.
-// Custom skills override builtin skills by name (collision: custom wins).
 func discoverGlobalFromDir(dir string, skills map[string]*Skill) error {
 	return discoverFromSubdirs(dir, skills, ScopeGlobal)
 }
 
 // discoverFromSubdirs reads skills from subdirectory layout: <dir>/<name>/skill.md.
+// Skills are stored with scope prefix as canonical ID (global/name or project/name).
 func discoverFromSubdirs(root string, skills map[string]*Skill, scope Scope) error {
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -354,20 +351,23 @@ func discoverFromSubdirs(root string, skills map[string]*Skill, scope Scope) err
 		skill.Dir = skillDir
 		skill.Scope = scope
 
-		var key string
-		if scope == ScopeProject {
-			key = "project/" + name
-		} else {
-			key = name
+		var prefix string
+		switch scope {
+		case ScopeProject:
+			prefix = "project/"
+		case ScopeGlobal:
+			prefix = "global/"
+		default:
+			prefix = ""
 		}
-		skills[key] = skill
+		skills[prefix+name] = skill
 	}
 	return nil
 }
 
 // DiscoverFromDirs is a test-friendly variant accepting explicit directories.
 // Builtin skills are flat .md files; custom skills are folder/<name>/skill.md layout.
-// Custom overrides builtin by name.
+// Skills are stored with scope prefix keys.
 func DiscoverFromDirs(builtinDir, customDir string) (map[string]*Skill, error) {
 	skills := make(map[string]*Skill)
 
@@ -382,6 +382,7 @@ func DiscoverFromDirs(builtinDir, customDir string) (map[string]*Skill, error) {
 }
 
 // discoverBuiltinFromDir reads flat .md files from a directory (like embedded builtin layout).
+// Skills are stored with builtin/ prefix as canonical ID.
 func discoverBuiltinFromDir(dir string, skills map[string]*Skill) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -408,7 +409,8 @@ func discoverBuiltinFromDir(dir string, skills map[string]*Skill) error {
 		if err != nil {
 			continue
 		}
-		skills[skillName] = skill
+		skill.Scope = ScopeBuiltin
+		skills["builtin/"+skillName] = skill
 	}
 	return nil
 }

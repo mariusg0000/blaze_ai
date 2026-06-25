@@ -1,0 +1,318 @@
+Plan De Implementare: Unificare Skills + Memories
+Goal
+Unificăm modelul runtime la o singură entitate publică: skill.
+Un skill devine un modul reutilizabil cu:
+[DESCRIPTION]
+...
+
+[BEHAVIOR]
+...
+
+[DATA]
+...
+Reguli:
+- [DESCRIPTION] obligatoriu.
+- Cel puțin una dintre [BEHAVIOR] sau [DATA] obligatorie.
+- Skill doar procedural: [DESCRIPTION] + [BEHAVIOR].
+- Skill doar date: [DESCRIPTION] + [DATA].
+- Skill mixt: toate trei.
+- Scope explicit: global/<name> și project/<name>.
+- Tooluri păstrate simple: load_skill, unload_skill.
+- memories dispare ca entitate runtime separată.
+Design Target
+Structură logică:
+global skill   = app_home/skills/<name>/skill.md
+project skill  = <workdir>/.blazeai/skills/<name>/skill.md
+builtin skill  = embedded skills/<name>.md
+Identificatori:
+skill-manager
+global/node-server
+project/blazeai-runtime
+Recomandare de rezoluție:
+- Builtin skills pot rămâne fără prefix în listă, sau afișate ca builtin/skill-manager.
+- Custom global: global/name.
+- Project: project/name.
+- Dacă user/LLM cere name și există un singur match, se poate încărca.
+- Dacă există mai multe match-uri pentru name, runtime returnează eroare clară: ambiguous skill name: use global/name or project/name.
+- Fără fallback silențios.
+Files Likely To Change
+Core:
+- internal/skills/skills.go
+- internal/tools/skill_tools.go
+- internal/prompt/prompt.go
+- internal/runtime/runtime.go
+- embed.go probabil neschimbat
+- main.go probabil neschimbat
+Remove or retire:
+- internal/memories/memories.go
+- internal/tools/memory_tools.go
+- internal/memory/memory.go dacă decidem că single memory.md dispare
+- internal/memories/*_test.go
+- internal/memory/*_test.go
+- internal/tools/memory_tools_test.go
+Prompt/docs/specs:
+- prompts/sysprompt.md
+- skills/skill-manager.md
+- skills/memory-manager.md probabil redenumit/înlăturat sau convertit
+- internal/platform/apphome_readmes/skills/README.md
+- internal/platform/apphome_readmes/memories/README.md
+- internal/platform/apphome_readmes/README.md
+- specs.md
+- specs/02-core-runtime.md
+- specs/01-product-scope.md
+- specs/04-platform-ops.md
+- ideas/project-scoped-skills-memories.md eventual marcat ca superseded
+Tests:
+- internal/skills/skills_test.go
+- internal/tools/skill_tools_test.go
+- internal/prompt/prompt_test.go
+- internal/runtime/runtime_test.go
+- internal/console/console_test.go
+- internal/platform/platform_test.go
+Implementation Steps
+1. Define Final Skill Model
+Update internal/skills/skills.go:
+type Skill struct {
+    Name        string
+    ID          string
+    Scope       Scope
+    Description string
+    Behavior    string
+    Data        string
+    Dir         string
+}
+Add scope constants:
+type Scope string
+
+const (
+    ScopeBuiltin Scope = "builtin"
+    ScopeGlobal  Scope = "global"
+    ScopeProject Scope = "project"
+)
+Parser rules:
+- Parse [DESCRIPTION].
+- Parse optional [BEHAVIOR].
+- Parse optional [DATA].
+- Error if description missing.
+- Error if both behavior and data missing.
+- Stop supporting [DETAILS] unless we explicitly choose a migration compatibility window.
+My recommendation: do not support [DETAILS] as runtime fallback. Convert all repository builtin skills in the same change.
+2. Add Project-Scoped Discovery
+Add discovery sources in priority/order:
+builtin skills     → embedded skills/*.md
+global skills      → app_home/skills/<name>/skill.md
+project skills     → workdir/.blazeai/skills/<name>/skill.md
+Important behavior:
+- Discovery should return all scoped IDs, not silently override everything.
+- Same exact scoped ID cannot duplicate.
+- Same short name across scopes is allowed but must become ambiguous if loaded unqualified.
+Example available list:
+- **builtin/skill-manager.md**: ...
+- **global/node-server.md**: ...
+- **project/node-server.md**: ...
+Possible simplification:
+- Internally use Scope/Name as ID.
+- For builtin, either builtin/name or just name.
+- I recommend builtin/name internally for consistency, but display can omit prefix only for builtin if wanted.
+3. Replace Memory Active List With Skill Active List
+Remove memories.ActiveList.
+Runtime becomes:
+Agent.Active *skills.ActiveList
+No separate:
+Agent.Memories *memories.ActiveList
+ResetConversation() clears only active skills.
+Tool registry removes:
+load_memory
+unload_memory
+Keeps:
+load_skill
+unload_skill
+load_skill now resolves IDs using discovered skills and current workdir.
+4. Make load_skill Validate Existence And Ambiguity
+Current load_skill blindly loads a string into the active list. That becomes dangerous with scopes.
+Change tool behavior:
+- Parse name.
+- Normalize .md suffix.
+- Resolve name against discovery.
+- If not found: return clear error.
+- If ambiguous: return clear error listing valid IDs.
+- If exactly one match: load canonical ID.
+- Return: skill loaded: project/foo.
+This improves correctness and prevents hidden fallback behavior.
+5. Rebuild Prompt Skill Section
+Replace current two sections:
+## Skills
+Available skills:
+{SKILLS_AVAILABLE}
+
+Active skills:
+{SKILLS_ACTIVE}
+
+## Memories
+Available memories:
+{MEMORIES_AVAILABLE}
+
+Active memories:
+{MEMORIES_ACTIVE}
+With one:
+## Skills
+Available skills:
+{SKILLS_AVAILABLE}
+
+Active skills:
+{SKILLS_ACTIVE}
+Active rendering:
+### project/node-server.md
+
+#### Behavior
+...
+
+#### Data
+...
+If only behavior exists, omit Data. If only data exists, omit Behavior.
+Token economy improvement:
+- One available list.
+- One active list.
+- No duplicate rules for skills/memories.
+- No cross-loading prompt rules between separate entities.
+- Less tool schema overhead because memory tools disappear.
+6. Convert Builtin Skills
+Convert current files:
+- skills/skill-manager.md: [DETAILS] → [BEHAVIOR]; update content to define [BEHAVIOR] and [DATA].
+- skills/memory-manager.md: either remove, or convert into a data-bank guidance skill.
+My recommendation:
+- Remove memory-manager as a separate builtin concept, because memory banks no longer exist.
+- Fold its useful rules into skill-manager.md:
+- data belongs in [DATA]
+- behavior belongs in [BEHAVIOR]
+- avoid procedures in data
+- avoid facts in behavior
+- collision/scoping rules
+- Keep customize_me.md and setup_helpers.md, convert [DETAILS] to [BEHAVIOR].
+Potential issue: removing builtin memory-manager is a visible behavior change. It is correct if we intentionally retire memories.
+7. Update App Home Layout
+Current app home has:
+skills/
+memories/
+memory/
+Target:
+skills/
+projects/
+config/
+scripts/
+backups/
+Question: whether to keep creating memories/ and memory/.
+Recommendation:
+- Stop creating memories/ and memory/ for new installs.
+- Do not delete existing user folders.
+- Update READMEs to say old folders are deprecated only if they exist.
+Because app_home is persisted user data, deletion would be destructive and out of scope.
+8. Migration Strategy
+There are persisted user files in:
+app_home/memories/*.md
+app_home/memory/memory.md
+app_home/skills/<name>/skill.md
+Need a deliberate decision.
+My recommended migration behavior:
+- No automatic runtime fallback.
+- Add a one-time explicit migration command later if needed.
+- For this implementation, support only new format.
+- If old memory files exist, they are not loaded unless migrated.
+Alternative if you want smoother transition:
+- Add a migration function that moves app_home/memories/foo.md to app_home/skills/foo/skill.md and converts [DETAILS] to [DATA].
+- But that is data mutation and should be explicit, not automatic.
+For strict correctness and no silent fallback: manual/explicit migration only.
+9. Remove Memory Tooling
+Remove from tool schema and runtime:
+- load_memory
+- unload_memory
+Update prompt rules:
+- No “Skill and Memory Loading”.
+- No “Related Skills and Memories”.
+- Replace with “Skill Loading” and “Skill Retention”.
+- Data is not loaded separately; it is part of the active skill.
+10. Tests To Update
+Core tests:
+- Skill parser:
+- valid behavior-only skill
+- valid data-only skill
+- valid behavior+data skill
+- missing description fails
+- missing both behavior/data fails
+- old [DETAILS] fails, if no compatibility
+- Discovery:
+- builtin discovery
+- global skill folder discovery
+- project skill folder discovery
+- same short name in global/project produces distinct IDs
+- sorted IDs stable
+- Resolver:
+- unqualified unique name resolves
+- unqualified ambiguous name errors
+- scoped name resolves exactly
+- missing name errors
+Tool tests:
+- load_skill("foo.md") strips suffix.
+- load_skill("project/foo") loads canonical ID.
+- ambiguous name returns error.
+- missing name returns error.
+- unload_skill unloads canonical ID.
+Prompt tests:
+- available list includes scoped skills.
+- active skill injects behavior.
+- active skill injects data.
+- active skill with both renders both.
+- no memories section remains.
+- prompt order remains deterministic.
+Runtime tests:
+- no memory active list.
+- no memory tools registered.
+- reset clears active skills.
+- Build() signature updated.
+Platform tests:
+- app_home README deployment updated.
+- memories/ README expectation removed or revised.
+11. Specs And Documentation Updates
+Update specs to match implementation:
+- specs.md
+- specs/02-core-runtime.md
+- specs/01-product-scope.md
+- specs/04-platform-ops.md
+Key spec changes:
+Skills are the single reusable prompt-extension entity.
+A skill has DESCRIPTION plus optional BEHAVIOR and DATA.
+At least one of BEHAVIOR or DATA is required.
+Skills can be builtin, global, or project-scoped.
+Memories are retired as a runtime entity.
+No fallback loading between scopes.
+Ambiguous unqualified names error.
+Update skill docs:
+- skill-manager now owns both behavior and data authoring rules.
+- Remove memory-bank language or rename it as “data section”.
+12. Validation Plan
+Run:
+go test ./...
+Also inspect generated prompt/debug behavior through focused tests only. No need for manual full app run unless tests reveal integration risk.
+Expected validation targets:
+- parser correctness
+- discovery correctness
+- prompt content
+- runtime tool registry
+- no stale memory/memories imports
+- no stale {MEMORIES_AVAILABLE} placeholders
+Risks
+- Existing custom user memories will stop appearing unless migrated.
+- Removing load_memory can break sessions where the model previously called it, but active tool schema changes are acceptable for new turns.
+- Builtin memory-manager removal may reduce clarity unless its rules are folded into skill-manager.
+- Unqualified name resolution must be deterministic and must not silently prefer project/global.
+- Prompt wording must stay short, otherwise token savings are lost.
+Open Decisions
+1. Should builtin skills be identified as builtin/name or remain unprefixed as name?
+2. Should old [DETAILS] be rejected immediately, or should we provide an explicit migration command/tool later?
+3. Should app_home/memories/ and app_home/memory/ stop being created for new installs immediately?
+4. Should memory-manager.md be deleted, or kept as a small compatibility guidance skill that tells users to migrate data into skill [DATA] sections?
+My recommendation:
+- Use canonical IDs: builtin/name, global/name, project/name.
+- Reject [DETAILS] in runtime after converting repo skills.
+- Stop creating memories/ and memory/ for new installs, but never delete existing folders.
+- Delete memory-manager.md and fold its useful rules into skill-manager.md.
