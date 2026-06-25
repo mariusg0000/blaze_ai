@@ -9,6 +9,7 @@ package prompt
 import (
 	"errors"
 	"fmt"
+	"html"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -143,7 +144,10 @@ func readFileOptional(path string) (string, error) {
 }
 
 // buildSkillsSection assembles skill data from discovered skills and the active list.
-// Discovers builtin, global, and project-scoped skills. Renders available and active blocks.
+// Discovered skills are rendered as XML for clear boundary handling by the LLM.
+// Available skills: <available_skills><skill><name/><description/></skill></available_skills>
+// Active skills:   <active_skills><skill><name/><behavior/><data/></skill></active_skills>
+// Behavior and data content is wrapped in CDATA to preserve literal text (&&, <, >, etc.).
 func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string, error) {
 	discovered, err := skills.DiscoverAll(b.WorkDir)
 	if err != nil {
@@ -153,36 +157,45 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string,
 		return "", "", nil
 	}
 
-	available := make([]string, 0, len(discovered))
+	// Available skills as XML list.
+	var avail strings.Builder
+	avail.WriteString("<available_skills>\n")
 	for _, id := range skills.SortedNames(discovered) {
 		skill := discovered[id]
 		desc, err := b.injectVariablesForSkill(skill.Description, skill.Dir)
 		if err != nil {
 			return "", "", err
 		}
-		displayName := strings.TrimPrefix(id, "global/") + ".md"
-		available = append(available, fmt.Sprintf("- **%s**: %s", displayName, desc))
+		displayName := strings.TrimPrefix(id, "global/")
+		avail.WriteString("  <skill>\n")
+		avail.WriteString(fmt.Sprintf("    <name>%s</name>\n", html.EscapeString(displayName)))
+		avail.WriteString(fmt.Sprintf("    <description>%s</description>\n", html.EscapeString(desc)))
+		avail.WriteString("  </skill>\n")
 	}
+	avail.WriteString("</available_skills>")
 
+	// Active skills as XML with CDATA content blocks.
 	activeNames := active.List()
 	activeContent := ""
 	if len(activeNames) > 0 {
 		var sb strings.Builder
+		sb.WriteString("<active_skills>\n")
 		for _, id := range activeNames {
 			skill, ok := discovered[id]
 			if !ok {
 				continue
 			}
-			sb.WriteString(fmt.Sprintf("### %s\n\n", strings.TrimPrefix(id, "global/")))
+			name := strings.TrimPrefix(id, "global/")
+			sb.WriteString(fmt.Sprintf("  <skill>\n    <name>%s</name>\n", html.EscapeString(name)))
 
 			if skill.Behavior != "" {
 				behavior, err := b.injectVariablesForSkill(skill.Behavior, skill.Dir)
 				if err != nil {
 					return "", "", err
 				}
-				sb.WriteString("#### Behavior\n\n")
+				sb.WriteString("    <behavior><![CDATA[")
 				sb.WriteString(behavior)
-				sb.WriteString("\n\n")
+				sb.WriteString("]]></behavior>\n")
 			}
 
 			if skill.Data != "" {
@@ -190,18 +203,22 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string,
 				if err != nil {
 					return "", "", err
 				}
-				sb.WriteString("#### Data\n\n")
+				sb.WriteString("    <data><![CDATA[")
 				sb.WriteString(data)
-				sb.WriteString("\n\n")
+				sb.WriteString("]]></data>\n")
 			}
+
+			sb.WriteString("  </skill>\n")
 		}
-		activeContent = strings.TrimSpace(sb.String())
+		sb.WriteString("</active_skills>")
+		activeContent = sb.String()
 	}
 
-	return strings.Join(available, "\n"), activeContent, nil
+	return avail.String(), activeContent, nil
 }
 
 // buildHostHelpersSection assembles the host helpers data from live detection.
+// Returns XML-wrapped strings for injection into the prompt template.
 func (b *Builder) buildHostHelpersSection(statuses []helpers.Status) (string, string, error) {
 	available := helpers.Available(statuses, b.WorkDir)
 	missingCore := helpers.MissingCore(statuses, b.HelperSetup)
@@ -215,37 +232,41 @@ func (b *Builder) buildHostHelpersSection(statuses []helpers.Status) (string, st
 
 	optionalSection := ""
 	if len(missingCore) > 0 && !b.HelperSetup.Dismissed {
-		missingLines := make([]string, 0, len(missingCore))
+		var sb strings.Builder
+		sb.WriteString("<host_helpers_optional>\n")
+		sb.WriteString("Some useful cross-platform host utilities are missing:\n")
 		for _, s := range missingCore {
-			missingLines = append(missingLines, fmt.Sprintf("- **%s**: %s", s.Name, s.Description))
+			sb.WriteString(fmt.Sprintf("- **%s**: %s\n", html.EscapeString(s.Name), html.EscapeString(s.Description)))
 		}
-		optionalSection = strings.Join([]string{
-			"Some useful cross-platform host utilities are missing:",
-			strings.Join(missingLines, "\n"),
-			"If one would materially help the current task, explain the benefit and ask the user before installing anything.",
-			"For installation guidance, load the `setup_helpers` skill.",
-		}, "\n\n")
+		sb.WriteString("If one would materially help the current task, explain the benefit and ask the user before installing anything.\n")
+		sb.WriteString("For installation guidance, load the `setup_helpers` skill.\n")
+		sb.WriteString("</host_helpers_optional>")
+		optionalSection = sb.String()
 	}
 	if len(available) == 0 {
 		if optionalSection == "" {
 			return "", "", nil
 		}
-		return "", strings.TrimSpace(optionalSection), nil
+		return "", optionalSection, nil
 	}
 
-	availableLines := make([]string, 0, len(available))
+	var sb strings.Builder
+	sb.WriteString("<host_helpers_available>\n")
 	for _, s := range available {
-		availableLines = append(availableLines, fmt.Sprintf("- **%s**: %s", s.Name, s.Description))
+		sb.WriteString(fmt.Sprintf("  <helper><name>%s</name><description>%s</description></helper>\n",
+			html.EscapeString(s.Name), html.EscapeString(s.Description)))
 	}
-	return strings.Join(availableLines, "\n"), strings.TrimSpace(optionalSection), nil
+	sb.WriteString("</host_helpers_available>")
+	return sb.String(), optionalSection, nil
 }
 
-// buildHostHelpersAdvisory returns an advisory message about host helper verification.
+// buildHostHelpersAdvisory returns an XML-wrapped advisory message about host helper verification.
 func (b *Builder) buildHostHelpersAdvisory() string {
 	if b.HelperSetup.Dismissed {
 		return ""
 	}
-	return "Host environment helpers have not been verified yet. When a task could benefit from faster file search, data processing, or other system tools, suggest to the user that you can check and set them up. Load the `setup_helpers` skill for guidance. Once all helpers are verified or the user declines, this reminder will stop appearing."
+	msg := "Host environment helpers have not been verified yet. When a task could benefit from faster file search, data processing, or other system tools, suggest to the user that you can check and set them up. Load the `setup_helpers` skill for guidance. Once all helpers are verified or the user declines, this reminder will stop appearing."
+	return fmt.Sprintf("<host_helpers_advisory>%s</host_helpers_advisory>", html.EscapeString(msg))
 }
 
 // BuildRuntimePart assembles the runtime prompt part from all disk sources.
@@ -296,6 +317,7 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 		if err != nil {
 			return "", err
 		}
+		agents = fmt.Sprintf("<agents_content><![CDATA[\n%s\n]]></agents_content>", agents)
 	}
 
 	rendered, err := b.injectTemplateVariables(universal, map[string]string{
