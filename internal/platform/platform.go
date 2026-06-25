@@ -151,10 +151,10 @@ func ProjectDir(workDir string) (string, error) {
 	return filepath.Join(home, "projects", ProjectFolderName(workDir)), nil
 }
 
-// EnsureProjectDir creates the project folder and its sessions subfolder if missing.
+// EnsureProjectDir creates the project folder with sessions/ and skills/ subfolders if missing.
 //
 // WHAT:  Ensures the project-specific directory structure exists on disk.
-// WHY:   New sessions need a project folder with a sessions/ subfolder.
+// WHY:   Sessions and project-scoped skills both live under app_home/projects/<project>/.
 // PARAMS: workDir — absolute working directory path.
 // RETURNS: string — absolute path to the project sessions directory; error if creation fails.
 func EnsureProjectDir(workDir string) (string, error) {
@@ -165,6 +165,10 @@ func EnsureProjectDir(workDir string) (string, error) {
 	sessionsDir := filepath.Join(projectDir, "sessions")
 	if err := os.MkdirAll(sessionsDir, 0755); err != nil {
 		return "", fmt.Errorf("cannot create project sessions dir %s: %w", sessionsDir, err)
+	}
+	skillsDir := filepath.Join(projectDir, "skills")
+	if err := os.MkdirAll(skillsDir, 0755); err != nil {
+		return "", fmt.Errorf("cannot create project skills dir %s: %w", skillsDir, err)
 	}
 	return sessionsDir, nil
 }

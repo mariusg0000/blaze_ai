@@ -1,8 +1,8 @@
 // skills.go — skill discovery, parsing, validation, scoping, active skills list, and seeding.
 // At startup, embedded builtin skill templates are seeded into app_home/skills/ if missing.
-// At runtime, skills are discovered from two scopes only: global (app_home/skills/) and
-// project (workdir/.blazeai/skills/). Both use subdirectory layout: <scope>/<name>/skill.md.
-// Skills are keyed with scope prefix: global/name, project/name.
+// At runtime, skills are discovered from two scopes: global (app_home/skills/) and
+// project (app_home/projects/<project>/skills/). Both use subdirectory layout:
+// <scope>/<name>/skill.md. Skills are keyed with scope prefix: global/name, project/name.
 // Parses [DESCRIPTION] (required), [BEHAVIOR] (optional), [DATA] (optional).
 // At least one of Behavior or Data must be present.
 // Resolution: unqualified names resolve if unique across scopes; ambiguous names error.
@@ -219,25 +219,29 @@ func SeedBuiltins(templatesFS fs.FS, appHomeSkillsDir string) error {
 	return nil
 }
 
-// DiscoverProject discovers project-scoped skills from workdir/.blazeai/skills/.
+// DiscoverProject discovers project-scoped skills from app_home/projects/<project>/skills/.
 // Keys use project/ prefix.
 //
-// WHAT:  Scans project skill directory.
-// WHY:   Project skills are separate from global, keyed with project/ prefix.
+// WHAT:  Scans project skill directory under the app-home project folder.
+// WHY:   Project skills are stored alongside sessions under app_home/projects/.
 // PARAMS: workDir — the current working directory (project root).
 // RETURNS: map[string]*Skill — project skills keyed as project/name; error on read failure.
 func DiscoverProject(workDir string) (map[string]*Skill, error) {
-	projectDir := filepath.Join(workDir, ".blazeai", "skills")
-	skills := make(map[string]*Skill)
-	if err := discoverFromSubdirs(projectDir, skills, ScopeProject); err != nil {
+	projectDir, err := platform.ProjectDir(workDir)
+	if err != nil {
+		return nil, err
+	}
+	skillsDir := filepath.Join(projectDir, "skills")
+	sk := make(map[string]*Skill)
+	if err := discoverFromSubdirs(skillsDir, sk, ScopeProject); err != nil {
 		return nil, fmt.Errorf("project skills: %w", err)
 	}
-	return skills, nil
+	return sk, nil
 }
 
 // DiscoverAll discovers skills from both runtime scopes and returns a merged map.
 // Global skills are read from app_home/skills/ (via platform.AppHome).
-// Project skills are read from workdir/.blazeai/skills/.
+// Project skills are read from app_home/projects/<project>/skills/ (via platform.ProjectDir).
 // Keys use global/ or project/ prefix.
 //
 // WHAT:  Full discovery across global and project.

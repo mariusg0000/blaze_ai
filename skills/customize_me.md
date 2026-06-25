@@ -146,5 +146,30 @@ Builtin skills (skill-manager, customize_me, setup_helpers) are seeded into the 
 
 **Rules:**
 - Only edit skills in `{APP_HOME}/skills/` — never modify embedded files (they are read-only templates).
+
+## Skill Locations
+
+Skills live in two scopes, each with a specific directory layout:
+
+- **Global:** `{APP_HOME}/skills/<name>/skill.md` — shared across all projects. Use for general-purpose skills (network info, backup scripts, personal preferences, cross-project tooling).
+- **Project:** `{APP_HOME}/projects/<project>/skills/<name>/skill.md` — scoped to the current project. Use for project-specific build rules, architecture, deploy scripts, or skills with paths/names tied to one codebase.
+
+### Creating or Editing a Skill
+
+When the user asks to create or modify a skill, determine the scope:
+
+- **100% certain it's global** (generic, no project-specific references) → write to global path.
+- **100% certain it's project** (references the current project by name, paths, or conventions) → write to project path.
+- **Ambiguous** → ask the user: "Should this be global (reusable across projects) or project (specific to <current project>)?"
+
+### Generalizing a Skill for Global Use
+
+If the user wants a project-specific skill to become global, or if you determine a skill should be global:
+
+- Remove absolute paths — use `{SKILL_DIR}`, `{APP_HOME}`, or generic paths.
+- Remove project names, branch names, or project-specific conventions.
+- Replace OS-specific commands with cross-platform alternatives when possible.
+- Write examples in a generic form that applies to any project.
+- If after generalizing the skill loses all meaningful content, it cannot be global — keep it project.
 - After editing a skill, the changes take effect on the next prompt build (no restart needed for content changes).
 - If you break a skill's format (delete [DESCRIPTION] etc.), the skill simply won't appear in the available list. Delete the folder to restore.

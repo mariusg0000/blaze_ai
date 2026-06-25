@@ -79,7 +79,7 @@ You are BlazeAI, a fast AI terminal agent.
 
 ## Skills
 
-Each skill is a reusable context module. Skills have a `[DESCRIPTION]` (required) and at least one of `[BEHAVIOR]` (workflow rules) or `[DATA]` (persistent facts). Skills live in two scopes: global (`{APP_HOME}/skills/<name>/skill.md`) and project (`<workdir>/.blazeai/skills/<name>/skill.md`).
+Each skill is a reusable context module. Skills have a `[DESCRIPTION]` (required) and at least one of `[BEHAVIOR]` (workflow rules) or `[DATA]` (persistent facts). Skills live in two scopes: global (`{APP_HOME}/skills/<name>/skill.md`) and project (`{APP_HOME}/projects/<project>/skills/<name>/skill.md`).
 
 Available skills:
 {SKILLS_AVAILABLE}
