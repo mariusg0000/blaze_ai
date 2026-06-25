@@ -136,42 +136,4 @@ The directive is appended to the last message of the payload sent to the LLM on 
 
 **CRITICAL: Write the directive in English only. Never include translations, dual-language content, separator labels like `[MODE DIRECTIVE]`, or non-English text. The directive is read by the LLM — it is not for the user. Even if the user speaks another language, the directive must be a single block of English text.**
 
-## Customizing Builtin Skills
-
-Builtin skills (skill-manager, customize_me, setup_helpers) are seeded into the global skills directory at startup: `\{GLOBAL_SKILLS_DIR\}/<name>/skill.md`. The embedded template is copied only if the file does not already exist — existing files are never overwritten.
-
-**To customize a builtin skill:** edit `\{GLOBAL_SKILLS_DIR\}/<name>/skill.md` directly. Changes persist across restarts.
-
-**To restore a builtin skill to its original:** delete the folder `\{GLOBAL_SKILLS_DIR\}/<name>/` and restart BlazeAI. The original template will be re-seeded on next startup.
-
-**Rules:**
-- Only edit skills in `\{GLOBAL_SKILLS_DIR\}/` — never modify embedded files (they are read-only templates).
-
-## Skill Locations
-
-Skills live in two scopes, each with a specific directory layout:
-
-- **Global:** `\{GLOBAL_SKILLS_DIR\}/<name>/skill.md` — shared across all projects. Use for general-purpose skills (network info, backup scripts, personal preferences, cross-project tooling).
-- **Project:** `\{PROJECT_SKILLS_DIR\}/<name>/skill.md` — scoped to the current project. Use for project-specific build rules, architecture, deploy scripts, or skills with paths/names tied to one codebase.
-
-### Creating or Editing a Skill
-
-When the user asks to create or modify a skill, determine the scope.
-
-Skills are always stored as a folder containing `skill.md`: `<skills_dir>/<name>/skill.md`. Never use a flat `.md` file directly under the skills directory — flat files are not discovered.
-
-- **100% certain it's global** (generic, no project-specific references) → write to global path.
-- **100% certain it's project** (references the current project by name, paths, or conventions) → write to project path.
-- **Ambiguous** → ask the user: "Should this be global (reusable across projects) or project (specific to <current project>)?"
-
-### Generalizing a Skill for Global Use
-
-If the user wants a project-specific skill to become global, or if you determine a skill should be global:
-
-- Remove absolute paths — use `\{SKILL_DIR\}`, `\{APP_HOME\}`, `\{GLOBAL_SKILLS_DIR\}`, `\{PROJECT_SKILLS_DIR\}`, or generic paths.
-- Remove project names, branch names, or project-specific conventions.
-- Replace OS-specific commands with cross-platform alternatives when possible.
-- Write examples in a generic form that applies to any project.
-- If after generalizing the skill loses all meaningful content, it cannot be global — keep it project.
-- After editing a skill, the changes take effect on the next prompt build (no restart needed for content changes).
-- If you break a skill's format (delete [DESCRIPTION] etc.), the skill simply won't appear in the available list. Delete the folder to restore.
+For skill creation, editing, scoping, or restoration, load the `skill-manager` skill. Customize the skill-manager itself via `skill-manager` too.
