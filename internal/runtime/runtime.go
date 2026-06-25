@@ -77,13 +77,11 @@ type Agent struct {
 // WHAT:  Constructs the runtime agent with all dependencies wired.
 // WHY:   The main entrypoint calls this to assemble the agent before starting the REPL.
 // PARAMS: cfg — loaded config; sess — session (new or resumed); os — detected platform;
-//
-//	builtinSkillsFS — filesystem with builtin skill .md files;
 //	promptsFS — filesystem with sysprompt.md and sysprompt.<os>.md;
 //	workDir — initial work folder; handler — transport implementation.
 //
 // RETURNS: *Agent — ready to run; error if provider client cannot be created.
-func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtinSkillsFS, promptsFS fs.FS, workDir string, handler Handler) (*Agent, error) {
+func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, promptsFS fs.FS, workDir string, handler Handler) (*Agent, error) {
 	modelID := cfg.Roles.Default
 
 	// Try migration first: extract modes from config.json if they exist there.
@@ -126,12 +124,11 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 	active := skills.NewActiveList()
 
 	builder := &prompt.Builder{
-		PromptsFS:       promptsFS,
-		BuiltinSkillsFS: builtinSkillsFS,
-		WorkDir:         workDir,
-		OS:              os,
-		OSInfo:          platform.OSInfo(),
-		HelperSetup:     cfg.HelperSetup,
+		PromptsFS:   promptsFS,
+		WorkDir:     workDir,
+		OS:          os,
+		OSInfo:      platform.OSInfo(),
+		HelperSetup: cfg.HelperSetup,
 	}
 
 	agent := &Agent{
@@ -151,7 +148,7 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtin
 
 	// Build resolver for skill tools: resolves names against current discovery.
 	skillResolver := func(name string) (string, error) {
-		all, err := skills.DiscoverAll(builtinSkillsFS, agent.WorkDir)
+		all, err := skills.DiscoverAll(agent.WorkDir)
 		if err != nil {
 			return "", fmt.Errorf("skill discovery failed: %w", err)
 		}

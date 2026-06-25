@@ -36,8 +36,6 @@ var variablePattern = regexp.MustCompile(`\{([A-Z_][A-Z0-9_]*)\}`)
 // WHAT:  Holds configuration for prompt building and assembles prompts on every LLM call.
 // WHY:   The prompt is rebuilt fresh from disk every time per spec — nothing is reused.
 // PARAMS: PromptsFS — filesystem containing sysprompt.md and sysprompt.<os>.md;
-//
-//	BuiltinSkillsFS — filesystem containing builtin skill .md files;
 //	WorkDir — current work folder for AGENTS.md and project skill discovery;
 //	OS — the detected operating system for selecting the OS-specific prompt;
 //	OSInfo — human-readable OS description injected as {OS_INFO};
@@ -45,7 +43,6 @@ var variablePattern = regexp.MustCompile(`\{([A-Z_][A-Z0-9_]*)\}`)
 //	HelperLookup — binary lookup function for helper detection (injectable for tests).
 type Builder struct {
 	PromptsFS       fs.FS
-	BuiltinSkillsFS fs.FS
 	WorkDir         string
 	OS              platform.OS
 	OSInfo          string
@@ -140,7 +137,7 @@ func readFileOptional(path string) (string, error) {
 // buildSkillsSection assembles skill data from discovered skills and the active list.
 // Discovers builtin, global, and project-scoped skills. Renders available and active blocks.
 func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string, error) {
-	discovered, err := skills.DiscoverAll(b.BuiltinSkillsFS, b.WorkDir)
+	discovered, err := skills.DiscoverAll(b.WorkDir)
 	if err != nil {
 		return "", "", fmt.Errorf("skills discovery: %w", err)
 	}

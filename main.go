@@ -16,6 +16,7 @@ import (
 	"blazeai/internal/platform"
 	"blazeai/internal/runtime"
 	"blazeai/internal/session"
+	"blazeai/internal/skills"
 )
 
 func main() {
@@ -99,13 +100,23 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("cannot resolve embedded prompts: %w", err)
 	}
-	builtinSkillsFS, err := fs.Sub(embeddedBuiltinSkills, "skills")
+	templatesFS, err := fs.Sub(embeddedBuiltinSkills, "skills")
 	if err != nil {
-		return fmt.Errorf("cannot resolve embedded skills: %w", err)
+		return fmt.Errorf("cannot resolve embedded skill templates: %w", err)
+	}
+
+	// Seed builtin skill templates into app_home/skills/ if missing.
+	home, err := platform.AppHome()
+	if err != nil {
+		return fmt.Errorf("cannot resolve app home: %w", err)
+	}
+	skillsDir := home + "/skills"
+	if err := skills.SeedBuiltins(templatesFS, skillsDir); err != nil {
+		return fmt.Errorf("cannot seed builtin skills: %w", err)
 	}
 
 	// Create agent and console.
-	agent, err := runtime.NewAgent(cfg, sess, osType, builtinSkillsFS, promptsFS, workDir, nil)
+	agent, err := runtime.NewAgent(cfg, sess, osType, promptsFS, workDir, nil)
 	if err != nil {
 		return fmt.Errorf("cannot create agent: %w", err)
 	}

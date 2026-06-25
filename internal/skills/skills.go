@@ -1,10 +1,11 @@
-// skills.go — skill discovery, parsing, validation, scoping, and active skills list.
-// Discovers skill files from builtin (embedded skills/), global (app_home/skills/),
-// and project (workdir/.blazeai/skills/) locations. Parses [DESCRIPTION] (required),
-// [BEHAVIOR] (optional), and [DATA] (optional) sections. At least one of Behavior
-// or Data must be present. All skills use scoped canonical IDs: builtin/name,
-// global/name, project/name. Resolution: unqualified names resolve if unique
-// across scopes; ambiguous names error. No silent override between scopes.
+// skills.go — skill discovery, parsing, validation, scoping, active skills list, and seeding.
+// At startup, embedded builtin skill templates are seeded into app_home/skills/ if missing.
+// At runtime, skills are discovered from two scopes only: global (app_home/skills/) and
+// project (workdir/.blazeai/skills/). Both use subdirectory layout: <scope>/<name>/skill.md.
+// Skills are keyed with scope prefix: global/name, project/name.
+// Parses [DESCRIPTION] (required), [BEHAVIOR] (optional), [DATA] (optional).
+// At least one of Behavior or Data must be present.
+// Resolution: unqualified names resolve if unique across scopes; ambiguous names error.
 // Layer: skill management. Dependencies: internal/platform.
 package skills
 
@@ -24,7 +25,6 @@ import (
 type Scope string
 
 const (
-	ScopeBuiltin Scope = "builtin"
 	ScopeGlobal  Scope = "global"
 	ScopeProject Scope = "project"
 )
@@ -39,10 +39,10 @@ var ErrMissingBehaviorOrData = errors.New("skill missing [BEHAVIOR] and [DATA]: 
 //
 // WHAT:  Holds the parsed content of a single skill file with optional behavior and data.
 // WHY:   The prompt builder needs description (available skills), behavior, and data (active skills).
-// Fields: Name — file/dir name without extension; Description — [DESCRIPTION] content;
+// Fields: Name — folder name; Description — [DESCRIPTION] content;
 //
 //	Behavior — [BEHAVIOR] content (optional); Data — [DATA] content (optional);
-//	Dir — folder path for custom skills (empty for builtin); Scope — global or project.
+//	Dir — folder path; Scope — global or project.
 type Skill struct {
 	Name        string
 	Description string
@@ -113,7 +113,7 @@ func (a *ActiveList) List() []string {
 // [DESCRIPTION] is required. At least one of [BEHAVIOR] or [DATA] must be present.
 //
 // WHAT:  Parses raw Markdown content into a Skill.
-// PARAMS: name — the skill name (file name without extension); content — raw file content.
+// PARAMS: name — the skill name (folder name); content — raw file content.
 // RETURNS: *Skill — parsed skill; error if required sections are missing.
 func Parse(name, content string) (*Skill, error) {
 	desc, err := extractSection(content, "DESCRIPTION")
@@ -165,35 +165,62 @@ func extractOptionalSection(content, sectionName string) (string, error) {
 	return result, nil
 }
 
-// DiscoverFromFS discovers skills from builtin (embedded FS) and global (app_home/skills/).
-// Builtin skills are read from builtinFS; global custom skills from disk override builtin by name.
-// Project skills are NOT loaded here — use DiscoverProject for workdir-scoped skills.
+// SeedBuiltins copies embedded builtin skill templates into app_home/skills/ if they do not
+// already exist. Each embedded .md file becomes app_home/skills/<name>/skill.md.
+// Existing files are never overwritten — the user can delete a seeded skill to restore the
+// original on the next restart.
 //
-// WHAT:  Scans builtin and global skill sources.
-// WHY:   The prompt builder needs all available non-project skills.
-// PARAMS: builtinFS — filesystem containing builtin skill .md files.
-// RETURNS: map[string]*Skill — discovered skills keyed by ID; error on read failure.
-func DiscoverFromFS(builtinFS fs.FS) (map[string]*Skill, error) {
-	skills := make(map[string]*Skill)
-
-	if err := discoverFromFS(builtinFS, skills); err != nil {
-		return nil, fmt.Errorf("builtin skills: %w", err)
-	}
-
-	home, err := platform.AppHome()
+// WHAT:  One-time seeding of embedded skill templates into the global skills directory.
+// WHY:   Builtins are templates, not a runtime scope. They become editable global skills
+//
+//	after seeding. Deletion + restart restores the original.
+//
+// PARAMS: templatesFS — filesystem with embedded .md skill templates (e.g., read from
+//
+//	embed.FS); appHomeSkillsDir — path to app_home/skills/.
+//
+// RETURNS: error if a read or write operation fails.
+func SeedBuiltins(templatesFS fs.FS, appHomeSkillsDir string) error {
+	entries, err := fs.ReadDir(templatesFS, ".")
 	if err != nil {
-		return nil, err
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
 	}
-	globalDir := filepath.Join(home, "skills")
-	if err := discoverGlobalFromDir(globalDir, skills); err != nil {
-		return nil, fmt.Errorf("global skills: %w", err)
-	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		skillName := strings.TrimSuffix(name, ".md")
+		skillDir := filepath.Join(appHomeSkillsDir, skillName)
+		skillFile := filepath.Join(skillDir, "skill.md")
 
-	return skills, nil
+		if _, err := os.Stat(skillFile); err == nil {
+			continue // already exists, user may have customised it
+		}
+
+		data, err := fs.ReadFile(templatesFS, name)
+		if err != nil {
+			return fmt.Errorf("cannot read builtin template %s: %w", name, err)
+		}
+
+		if err := os.MkdirAll(skillDir, 0755); err != nil {
+			return fmt.Errorf("cannot create skill directory %s: %w", skillDir, err)
+		}
+		if err := os.WriteFile(skillFile, data, 0644); err != nil {
+			return fmt.Errorf("cannot write skill file %s: %w", skillFile, err)
+		}
+	}
+	return nil
 }
 
 // DiscoverProject discovers project-scoped skills from workdir/.blazeai/skills/.
-// Keys use project/ prefix to avoid collision with global skills.
+// Keys use project/ prefix.
 //
 // WHAT:  Scans project skill directory.
 // WHY:   Project skills are separate from global, keyed with project/ prefix.
@@ -208,31 +235,40 @@ func DiscoverProject(workDir string) (map[string]*Skill, error) {
 	return skills, nil
 }
 
-// DiscoverAll discovers skills from all scopes and returns a merged map.
-// Project skills have project/ prefix keys; global/builtin have bare name keys.
+// DiscoverAll discovers skills from both runtime scopes and returns a merged map.
+// Global skills are read from app_home/skills/ (via platform.AppHome).
+// Project skills are read from workdir/.blazeai/skills/.
+// Keys use global/ or project/ prefix.
 //
-// WHAT:  Full discovery across builtin, global, and project.
+// WHAT:  Full discovery across global and project.
 // WHY:   Prompt building and skill resolution need all available skills.
-// PARAMS: builtinFS — builtin skill filesystem; workDir — current working directory.
+// PARAMS: workDir — current working directory.
 // RETURNS: map[string]*Skill — all skills; error on discovery failure.
-func DiscoverAll(builtinFS fs.FS, workDir string) (map[string]*Skill, error) {
-	all, err := DiscoverFromFS(builtinFS)
+func DiscoverAll(workDir string) (map[string]*Skill, error) {
+	home, err := platform.AppHome()
 	if err != nil {
 		return nil, err
 	}
+	globalDir := filepath.Join(home, "skills")
+
+	skills := make(map[string]*Skill)
+	if err := discoverFromSubdirs(globalDir, skills, ScopeGlobal); err != nil {
+		return nil, fmt.Errorf("global skills: %w", err)
+	}
+
 	project, err := DiscoverProject(workDir)
 	if err != nil {
 		return nil, err
 	}
 	for k, v := range project {
-		all[k] = v
+		skills[k] = v
 	}
-	return all, nil
+	return skills, nil
 }
 
 // Resolve finds the canonical skill ID for a given name.
 // If name contains / (already scoped like global/foo or project/foo), exact lookup.
-// If name has no prefix, it searches all scopes (builtin/name, global/name, project/name):
+// If name has no prefix, it searches both scopes (global/name, project/name):
 //   - single match → returns that canonical ID
 //   - multiple matches → error with all candidates
 //   - no match → error
@@ -252,8 +288,8 @@ func Resolve(name string, skills map[string]*Skill) (string, error) {
 		return "", fmt.Errorf("skill not found: %s", name)
 	}
 
-	// Unqualified: check all three scopes.
-	candidates := []string{"builtin/" + name, "global/" + name, "project/" + name}
+	// Unqualified: check both scopes.
+	candidates := []string{"global/" + name, "project/" + name}
 	var matches []string
 	for _, c := range candidates {
 		if _, ok := skills[c]; ok {
@@ -282,42 +318,19 @@ func SortedNames(skills map[string]*Skill) []string {
 	return names
 }
 
-// discoverFromFS reads .md files from an fs.FS and adds valid builtin skills to the map.
-// Skills are stored with builtin/ prefix as canonical ID.
-func discoverFromFS(fsys fs.FS, skills map[string]*Skill) error {
-	entries, err := fs.ReadDir(fsys, ".")
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		return err
+// DiscoverGlobalFromDir discovers global-scoped skills from a directory with
+// subdirectory layout: <dir>/<name>/skill.md. Keys use global/ prefix.
+//
+// WHAT:  Test-friendly discovery from an explicit global skills directory.
+// WHY:   Tests can point to a temp directory without setting HOME.
+// PARAMS: dir — path to the skills directory containing skill subdirectories.
+// RETURNS: map[string]*Skill — discovered skills keyed as global/name; error on read failure.
+func DiscoverGlobalFromDir(dir string) (map[string]*Skill, error) {
+	skills := make(map[string]*Skill)
+	if err := discoverFromSubdirs(dir, skills, ScopeGlobal); err != nil {
+		return nil, err
 	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".md") {
-			continue
-		}
-		skillName := strings.TrimSuffix(name, ".md")
-		data, err := fs.ReadFile(fsys, name)
-		if err != nil {
-			return fmt.Errorf("cannot read skill %s: %w", name, err)
-		}
-		skill, err := Parse(skillName, string(data))
-		if err != nil {
-			continue
-		}
-		skill.Scope = ScopeBuiltin
-		skills["builtin/"+skillName] = skill
-	}
-	return nil
-}
-
-// discoverGlobalFromDir reads global custom skills from app_home/skills/<name>/skill.md.
-func discoverGlobalFromDir(dir string, skills map[string]*Skill) error {
-	return discoverFromSubdirs(dir, skills, ScopeGlobal)
+	return skills, nil
 }
 
 // discoverFromSubdirs reads skills from subdirectory layout: <dir>/<name>/skill.md.
@@ -355,62 +368,10 @@ func discoverFromSubdirs(root string, skills map[string]*Skill, scope Scope) err
 		switch scope {
 		case ScopeProject:
 			prefix = "project/"
-		case ScopeGlobal:
-			prefix = "global/"
 		default:
-			prefix = ""
+			prefix = "global/"
 		}
 		skills[prefix+name] = skill
-	}
-	return nil
-}
-
-// DiscoverFromDirs is a test-friendly variant accepting explicit directories.
-// Builtin skills are flat .md files; custom skills are folder/<name>/skill.md layout.
-// Skills are stored with scope prefix keys.
-func DiscoverFromDirs(builtinDir, customDir string) (map[string]*Skill, error) {
-	skills := make(map[string]*Skill)
-
-	if err := discoverBuiltinFromDir(builtinDir, skills); err != nil {
-		return nil, fmt.Errorf("builtin skills: %w", err)
-	}
-	if err := discoverFromSubdirs(customDir, skills, ScopeGlobal); err != nil {
-		return nil, fmt.Errorf("custom skills: %w", err)
-	}
-
-	return skills, nil
-}
-
-// discoverBuiltinFromDir reads flat .md files from a directory (like embedded builtin layout).
-// Skills are stored with builtin/ prefix as canonical ID.
-func discoverBuiltinFromDir(dir string, skills map[string]*Skill) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".md") {
-			continue
-		}
-		skillName := strings.TrimSuffix(name, ".md")
-		path := filepath.Join(dir, name)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("cannot read skill %s: %w", path, err)
-		}
-		skill, err := Parse(skillName, string(data))
-		if err != nil {
-			continue
-		}
-		skill.Scope = ScopeBuiltin
-		skills["builtin/"+skillName] = skill
 	}
 	return nil
 }

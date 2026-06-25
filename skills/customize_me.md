@@ -5,6 +5,7 @@ Load when the user wants to configure BlazeAI models, providers, API keys, favor
 # Customize Me
 
 ## Config Location
+* **Application home (`/home/marius/blazeai`):** Contains `backups`, `config`, `projects`, `scripts`, `skills`. Each top-level folder has a `README.md` that documents its structure, use, and rules. **When a task involves any of these folders, you MUST read its `README.md` first** before inspecting or modifying any other file in that folder.
 - Runtime configuration lives at `{APP_HOME}/config/config.json` — providers, models, roles, compaction, reasoning.
 - Work modes live separately at `{APP_HOME}/config/modes.json` — mode definitions and last active mode.
 - API keys are stored in config.json. Modes reference provider/model names but never contain keys.
@@ -134,3 +135,16 @@ Modes.json is a standalone JSON file (not embedded in config.json):
 The directive is appended to the last message of the payload sent to the LLM on every LLM call while the mode is active. It is not stored in session.json. Use it to constrain agent behavior for the current task (e.g. read-only, quick/cheap, verbose, etc.). Keep directives short and imperative.
 
 **CRITICAL: Write the directive in English only. Never include translations, dual-language content, separator labels like `[MODE DIRECTIVE]`, or non-English text. The directive is read by the LLM — it is not for the user. Even if the user speaks another language, the directive must be a single block of English text.**
+
+## Customizing Builtin Skills
+
+Builtin skills (skill-manager, customize_me, setup_helpers) are seeded into the global skills directory at startup: `{APP_HOME}/skills/<name>/skill.md`. The embedded template is copied only if the file does not already exist — existing files are never overwritten.
+
+**To customize a builtin skill:** edit `{APP_HOME}/skills/<name>/skill.md` directly. Changes persist across restarts.
+
+**To restore a builtin skill to its original:** delete the folder `{APP_HOME}/skills/<name>/` and restart BlazeAI. The original template will be re-seeded on next startup.
+
+**Rules:**
+- Only edit skills in `{APP_HOME}/skills/` — never modify embedded files (they are read-only templates).
+- After editing a skill, the changes take effect on the next prompt build (no restart needed for content changes).
+- If you break a skill's format (delete [DESCRIPTION] etc.), the skill simply won't appear in the available list. Delete the folder to restore.

@@ -102,9 +102,9 @@ Do not force this structure if the skill is very small. For small skills, concis
 [DATA]
 skill.format.behavior=rules for how to work
 skill.format.data=persistent facts in key=value format
-skill.scopes=builtin, global (app_home/skills/), project (workdir/.blazeai/skills/)
-skill.canonical_ids=builtin/name, global/name, project/name
+skill.scopes=two runtime scopes: global (app_home/skills/) and project (workdir/.blazeai/skills/)
+skill.ids=global/name and project/name for canonical IDs; builtin skills are templates seeded to global at startup
+skill.seeding=embedded builtin skills are copied to app_home/skills/ on first start; delete folder+restart to restore originals
 skill.global_layout=app_home/skills/<name>/skill.md
 skill.project_layout=workdir/.blazeai/skills/<name>/skill.md
 skill.resolution=unqualified name resolves if unique across scopes; ambiguous names error listing candidates; scoped names (global/x, project/x) resolve exactly
-skill.naming=always use scoped IDs for load/unload: builtin/name, global/name, project/name
