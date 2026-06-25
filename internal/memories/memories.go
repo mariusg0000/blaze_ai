@@ -200,6 +200,9 @@ func DiscoverFromDir(dir string) (map[string]*Memory, error) {
 		if !strings.HasSuffix(name, ".md") {
 			continue
 		}
+		if strings.EqualFold(name, "README.md") {
+			continue
+		}
 		memoryName := strings.TrimSuffix(name, ".md")
 		path := filepath.Join(dir, name)
 		data, err := os.ReadFile(path)

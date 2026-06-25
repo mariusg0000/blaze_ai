@@ -111,3 +111,24 @@ func TestDiscoverFromDirSkipsInvalid(t *testing.T) {
 		t.Fatal("invalid memory should have been skipped")
 	}
 }
+
+// TestDiscoverFromDirIgnoresReadme verifies folder documentation is never treated as a memory.
+func TestDiscoverFromDirIgnoresReadme(t *testing.T) {
+	root := t.TempDir()
+	writeMemory(t, root, "README.md", "[DESCRIPTION]\nFolder docs.\n\n[DETAILS]\nThis should not load.")
+	writeMemory(t, root, "real-memory.md", "[DESCRIPTION]\nReal memory.\n\n[DETAILS]\nReal details.")
+
+	banks, err := DiscoverFromDir(root)
+	if err != nil {
+		t.Fatalf("DiscoverFromDir() unexpected error: %v", err)
+	}
+	if len(banks) != 1 {
+		t.Fatalf("discovered %d memories, want 1", len(banks))
+	}
+	if banks["README"] != nil || banks["readme"] != nil {
+		t.Fatal("README.md should have been ignored explicitly")
+	}
+	if banks["real-memory"] == nil {
+		t.Fatal("real memory not found")
+	}
+}

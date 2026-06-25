@@ -88,15 +88,12 @@ type Agent struct {
 //
 // RETURNS: *Agent — ready to run; error if provider client cannot be created.
 func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, builtinSkillsFS, promptsFS fs.FS, workDir string, handler Handler) (*Agent, error) {
-	modelID := cfg.LastModel
-	if modelID == "" {
-		modelID = cfg.Roles.Default
-	}
+	modelID := cfg.Roles.Default
 
 	// Try migration first: extract modes from config.json if they exist there.
 	_ = config.MigrateFromConfig()
 
-	// Load modes from modes.json with fallback to default.
+	// Load modes from modes.json with fallback to the configured default role model.
 	modes, err := config.LoadModes(modelID)
 	if err != nil {
 		return nil, fmt.Errorf("cannot load modes: %w", err)
@@ -426,13 +423,16 @@ func (a *Agent) SetModel(modelID string) error {
 	}
 	a.Provider = client
 	a.ModelID = modelID
-	a.Config.LastModel = modelID
 	if a.CurrentMode != nil {
 		a.CurrentMode.Model = modelID
-		_ = a.Modes.Save()
+		if err := a.Modes.Save(); err != nil {
+			return fmt.Errorf("cannot persist mode model selection: %w", err)
+		}
+		return nil
 	}
+	a.Config.LastModel = modelID
 	if err := a.Config.Save(); err != nil {
-		return fmt.Errorf("cannot persist model selection: %w", err)
+		return fmt.Errorf("cannot persist legacy model selection: %w", err)
 	}
 	return nil
 }
@@ -503,7 +503,6 @@ func (a *Agent) SetMode(name string) error {
 			a.ModelID = mode.Model
 			a.CurrentMode = mode
 			a.Modes.LastMode = name
-			a.Config.LastModel = mode.Model
 			if err := a.Modes.Save(); err != nil {
 				return fmt.Errorf("cannot persist mode switch: %w", err)
 			}

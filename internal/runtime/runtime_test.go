@@ -553,6 +553,13 @@ func TestSetMode(t *testing.T) {
 	if agent.Modes.LastMode != "planning" {
 		t.Errorf("LastMode = %q, want 'planning'", agent.Modes.LastMode)
 	}
+	loaded, err := config.LoadModes("test/test-model")
+	if err != nil {
+		t.Fatalf("LoadModes() error: %v", err)
+	}
+	if loaded.LastMode != "planning" {
+		t.Errorf("persisted LastMode = %q, want 'planning'", loaded.LastMode)
+	}
 }
 
 // TestSetModeNotFound verifies error for non-existent mode.
@@ -623,14 +630,72 @@ func TestSetModelUpdatesMode(t *testing.T) {
 	agent.Modes.Modes = []config.Mode{
 		{Name: "default", Model: "test/test-model"},
 	}
+	agent.Modes.LastMode = "default"
+	if err := agent.Modes.Save(); err != nil {
+		t.Fatalf("Save() modes failed: %v", err)
+	}
 	agent.CurrentMode = &agent.Modes.Modes[0]
 
-	err := agent.SetModel("test/test-model")
+	err := agent.SetModel("test/other-model")
 	if err != nil {
 		t.Fatalf("SetModel() error: %v", err)
 	}
-	if agent.CurrentMode.Model != "test/test-model" {
-		t.Errorf("CurrentMode.Model = %q, want 'test/test-model'", agent.CurrentMode.Model)
+	if agent.CurrentMode.Model != "test/other-model" {
+		t.Errorf("CurrentMode.Model = %q, want 'test/other-model'", agent.CurrentMode.Model)
+	}
+	loaded, err := config.LoadModes("test/test-model")
+	if err != nil {
+		t.Fatalf("LoadModes() error: %v", err)
+	}
+	if loaded.Modes[0].Model != "test/other-model" {
+		t.Errorf("persisted mode model = %q, want 'test/other-model'", loaded.Modes[0].Model)
+	}
+	if loaded.LastMode != "default" {
+		t.Errorf("persisted LastMode = %q, want 'default'", loaded.LastMode)
+	}
+}
+
+// TestNewAgentIgnoresLastModelWhenLastModeExists verifies that the active mode wins over legacy last_model.
+func TestNewAgentIgnoresLastModelWhenLastModeExists(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Providers:      []config.Provider{{Name: "test", Endpoint: server.URL, APIKey: "sk-test"}},
+		Roles:          config.Roles{Default: "test/model-a"},
+		FavoriteModels: []string{"test/model-a", "test/model-b", "test/model-c"},
+		Compaction:     config.DefaultCompaction(),
+		StripReasoning: config.DefaultStripReasoning(),
+		LastModel:      "test/model-c",
+	}
+	modes := &config.ModesConfig{
+		Modes: []config.Mode{
+			{Name: "default", Model: "test/model-a"},
+			{Name: "planning", Model: "test/model-b"},
+		},
+		LastMode: "planning",
+	}
+	if err := modes.Save(); err != nil {
+		t.Fatalf("Save() modes failed: %v", err)
+	}
+
+	dir := t.TempDir()
+	sess, _ := session.CreateInDir(dir)
+	promptsDir := filepath.Join(dir, "prompts")
+	os.MkdirAll(promptsDir, 0755)
+	writePromptFixtures(t, promptsDir)
+
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(filepath.Join(dir, "skills")), os.DirFS(promptsDir), dir, &mockHandler{})
+	if err != nil {
+		t.Fatalf("NewAgent() error: %v", err)
+	}
+	if agent.CurrentMode == nil || agent.CurrentMode.Name != "planning" {
+		t.Fatalf("CurrentMode = %#v, want planning", agent.CurrentMode)
+	}
+	if agent.ModelID != "test/model-b" {
+		t.Errorf("ModelID = %q, want 'test/model-b'", agent.ModelID)
 	}
 }
 
