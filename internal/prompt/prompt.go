@@ -340,6 +340,22 @@ func (b *Builder) buildHostHelpersSection(statuses []helpers.Status) (string, st
 	return strings.Join(availableLines, "\n"), strings.TrimSpace(optionalSection), nil
 }
 
+// buildHostHelpersAdvisory returns an advisory message to remind the LLM to verify host helpers
+// when helper setup has not been dismissed. Returns an empty string when dismissed is true.
+//
+// WHAT:  Builds a persistent reminder to verify host helpers until the user dismisses it.
+// WHY:   The LLM should proactively suggest helper verification; the reminder disappears
+//
+//	only when the setup_helpers skill marks it complete.
+//
+// RETURNS: string — advisory text or empty string when dismissed.
+func (b *Builder) buildHostHelpersAdvisory() string {
+	if b.HelperSetup.Dismissed {
+		return ""
+	}
+	return "Host environment helpers have not been verified yet. When a task could benefit from faster file search, data processing, or other system tools, suggest to the user that you can check and set them up. Load the `setup_helpers` skill for guidance. Once all helpers are verified or the user declines, this reminder will stop appearing."
+}
+
 // BuildRuntimePart assembles the runtime prompt part from all disk sources.
 // Order: universal sysprompt → OS sysprompt → host helpers → skills section → memories → AGENTS.md.
 // Variable injection is applied to every source. Required sources error if missing.
@@ -372,6 +388,7 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList, activeMemori
 	if lookup == nil {
 		lookup = helpers.DefaultLookup
 	}
+	helperAdvisory := b.buildHostHelpersAdvisory()
 	helperStatuses := helpers.Detect(lookup)
 	helperAvailable, helperOptional, err := b.buildHostHelpersSection(helperStatuses)
 	if err != nil {
@@ -404,6 +421,7 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList, activeMemori
 
 	rendered, err := b.injectTemplateVariables(universal, map[string]string{
 		"OS_PROMPT":              strings.TrimSpace(osPrompt),
+		"HOST_HELPERS_ADVISORY":  strings.TrimSpace(helperAdvisory),
 		"HOST_HELPERS_AVAILABLE": strings.TrimSpace(helperAvailable),
 		"HOST_HELPERS_OPTIONAL":  strings.TrimSpace(helperOptional),
 		"SKILLS_AVAILABLE":       strings.TrimSpace(skillsAvailable),

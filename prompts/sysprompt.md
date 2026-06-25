@@ -136,6 +136,9 @@ Active memories:
 * **Layout:** Simple, line-oriented, plain text lists for structured data.
 
 ## Host Environment Helpers
+
+{HOST_HELPERS_ADVISORY}
+
 Available helpers:
 {HOST_HELPERS_AVAILABLE}
 

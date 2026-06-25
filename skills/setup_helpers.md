@@ -66,16 +66,18 @@ Get-Command sqlite3 -ErrorAction SilentlyContinue | Select-Object -ExpandPropert
 - If the helper still does not resolve, report failure and continue with available alternatives.
 - Do not loop or retry without user instruction.
 
-## Config Preferences (Optional)
-- Only update `helperSetup.dismissed` or `helperSetup.declined` in `{APP_HOME}/config/config.json` if the user explicitly asks you to remember their preference.
-- Example config snippet for declined helpers:
+## Dismissing The Helper Reminder
+- After all core helpers are installed and verified, edit `{APP_HOME}/config/config.json` and set `helperSetup.dismissed` to `true`.
+- If the user says they do not need remaining helpers and want to stop the reminder, also set `helperSetup.dismissed` to `true`.
+- If the user wants to skip specific helpers permanently, add them to `helperSetup.declined` instead.
+- Example when done or user declines:
 ```json
 "helperSetup": {
-  "dismissed": false,
+  "dismissed": true,
   "declined": ["fd"]
 }
 ```
-- `dismissed: true` suppresses all future automatic helper installation suggestions.
+- After `dismissed` is set to `true`, the advisory reminder will not appear in future prompts.
 
 ## Python Environment
 - Python is NOT a host helper — it is a restricted runtime.
