@@ -6,6 +6,7 @@
 package session
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -130,16 +131,25 @@ func Load(folder string) (*Session, error) {
 	return &s, nil
 }
 
-// save writes the session to session.json in its folder.
+// save writes the session to session.json in its folder without HTML-escaping characters.
 //
-// WHAT:  Persists the session state to disk.
-// WHY:   The session is updated as the conversation progresses.
-// RETURNS: error if marshaling or writing fails.
+// WHAT:  Persists the session state to disk with raw characters preserved.
+// WHY:   Default json.Marshal escapes <, >, & to Unicode sequences, making XML
+//	injected prompt content unreadable in the on-disk JSON. The LLM receives
+//	the correct data regardless (unescape on read), but on-disk readability matters.
+// RETURNS: error if encoding or writing fails.
 func (s *Session) save() error {
 	path := filepath.Join(s.Folder, sessionJSONName)
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(s); err != nil {
 		return fmt.Errorf("cannot marshal session: %w", err)
+	}
+	data := buf.Bytes()
+	if len(data) > 0 && data[len(data)-1] == '\n' {
+		data = data[:len(data)-1]
 	}
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("cannot write session file %s: %w", path, err)

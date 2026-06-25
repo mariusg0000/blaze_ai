@@ -6,6 +6,7 @@
 package compaction
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -50,6 +51,15 @@ func (m *Manager) ShouldCompact(usage *provider.Usage) bool {
 	return usage.PromptTokens >= m.Config.Compaction.MaxContextTokens
 }
 
+// serializeToolCalls marshals tool calls to JSON without HTML-escaping <, >, &.
+func serializeToolCalls(calls interface{}) string {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(calls)
+	return strings.TrimRight(buf.String(), "\n")
+}
+
 // estimateTokens estimates the token count of a message using the local estimator.
 // Stripped reasoning parts count as 0 tokens.
 //
@@ -77,7 +87,7 @@ func (m *Manager) estimateTokens(msg session.Message, willStripReasoning bool) i
 
 	// Tool calls part.
 	if msg.ToolCalls != nil {
-		data, _ := json.Marshal(msg.ToolCalls)
+		data := serializeToolCalls(msg.ToolCalls)
 		totalChars += len(data)
 	}
 
@@ -318,7 +328,7 @@ func (m *Manager) buildTranscript(pruned []session.Message) string {
 		}
 
 		if msg.ToolCalls != nil {
-			data, _ := json.Marshal(msg.ToolCalls)
+			data := serializeToolCalls(msg.ToolCalls)
 			parts = append(parts, fmt.Sprintf("[TOOL_CALLS] %s", string(data)))
 		}
 

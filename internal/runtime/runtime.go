@@ -7,6 +7,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -214,9 +215,12 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 
 		// Write full built prompt to session folder for debugging.
 		promptPath := filepath.Join(a.Session.Folder, "prompt.json")
-		data, err := json.MarshalIndent(messages, "", "  ")
-		if err == nil {
-			raw := strings.ReplaceAll(string(data), "\\n", "\n")
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(messages); err == nil {
+			raw := strings.ReplaceAll(buf.String(), "\\n", "\n")
 			_ = os.WriteFile(promptPath, []byte(raw), 0644)
 		}
 
