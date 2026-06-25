@@ -289,7 +289,7 @@ func TestOnToolCallEmptyArgs(t *testing.T) {
 	c.OnToolCall("shell", "")
 	c.OnToolResult("shell", "ok")
 	output := out.String()
-	if !strings.Contains(output, "🔧") {
+	if !strings.Contains(output, "💻") {
 		t.Errorf("output missing wrench icon: %q", output)
 	}
 }
@@ -301,7 +301,7 @@ func TestOnToolCallAfterContent(t *testing.T) {
 	c.OnToolCall("shell", "ls")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nok\n")
 	output := out.String()
-	if !strings.Contains(output, "hello\ntools ------------------------------------------------------\n🔧") {
+	if !strings.Contains(output, "hello\ntools ------------------------------------------------------\n💻") {
 		t.Errorf("output missing newline before tool call block: %q", output)
 	}
 }
@@ -312,7 +312,7 @@ func TestOnToolResultSuccess(t *testing.T) {
 	c.OnToolCall("shell", "inspect package.json scripts")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nhi\n")
 	output := out.String()
-	if !strings.Contains(output, "🔧 inspect package.json scripts ✓") {
+	if !strings.Contains(output, "💻 inspect package.json scripts ✓") {
 		t.Errorf("output missing success line: %q", output)
 	}
 	if strings.Contains(output, "exit_code") {
@@ -368,10 +368,10 @@ func TestOnToolRoundTripAfterContent(t *testing.T) {
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nok\n")
 	c.closeToolGroup()
 	output := out.String()
-	if !strings.Contains(output, "hello\ntools ------------------------------------------------------\n🔧") {
+	if !strings.Contains(output, "hello\ntools ------------------------------------------------------\n💻") {
 		t.Errorf("tool call block not separated from content: %q", output)
 	}
-	if !strings.Contains(output, "🔧 inspect package.json scripts ✓") {
+	if !strings.Contains(output, "💻 inspect package.json scripts ✓") {
 		t.Errorf("tool response formatting unexpected: %q", output)
 	}
 	if !strings.Contains(output, "✓\nctx 11k") {
@@ -395,10 +395,10 @@ func TestToolGroupConsecutive(t *testing.T) {
 	if strings.Count(output, "ctx 11k") != 1 {
 		t.Errorf("expected one ctx separator, got %d: %q", strings.Count(output, "ctx 11k"), output)
 	}
-	if !strings.Contains(output, "🔧 list root ✓") {
+	if !strings.Contains(output, "💻 list root ✓") {
 		t.Errorf("first tool call missing: %q", output)
 	}
-	if !strings.Contains(output, "🔧 inspect config ✓") {
+	if !strings.Contains(output, "💻 inspect config ✓") {
 		t.Errorf("second tool call missing: %q", output)
 	}
 }

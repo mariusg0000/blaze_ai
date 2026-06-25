@@ -341,7 +341,6 @@ func (c *Console) OnContent(delta string) {
 // WHAT:  Buffers tool call args and handles tool group header.
 // PARAMS: name — tool name; args — formatted arguments (purpose text).
 func (c *Console) OnToolCall(name string, args string) {
-	_ = name
 	if c.turnAborting.Load() {
 		return
 	}
@@ -355,20 +354,42 @@ func (c *Console) OnToolCall(name string, args string) {
 	c.lastToolArgs = args
 }
 
+// toolEmoji returns a tool-specific emoji for display in the console UI.
+//
+// WHAT:  Maps tool names to representative emoji characters.
+// RETURNS: string — the emoji character for the given tool.
+func toolEmoji(name string) string {
+	switch name {
+	case "shell":
+		return "💻"
+	case "task_write":
+		return "📋"
+	case "task_read":
+		return "📖"
+	case "load_skill":
+		return "📥"
+	case "unload_skill":
+		return "📤"
+	case "replace_block":
+		return "📝"
+	default:
+		return "🔧"
+	}
+}
+
 // OnToolResult is called after a tool has finished.
-// Prints a single line: wrench icon + purpose + status symbol.
+// Prints a single line: tool emoji + purpose + status symbol.
 // Success: ✓. Error: ✗ <message>. Timeout: ⏱ <message>.
 //
 // WHAT:  Displays tool result inline with the deferred tool call line.
 // PARAMS: name — tool name; result — the raw tool output.
 func (c *Console) OnToolResult(name string, result string) {
-	_ = name
 	if c.turnAborting.Load() {
 		c.lastToolArgs = ""
 		return
 	}
 	badge, content, colorCode := parseToolResult(result)
-	icon := c.color(colorGreen, c.bold("🔧"))
+	icon := c.color(colorGreen, toolEmoji(name))
 	args := c.lastToolArgs
 	c.lastToolArgs = ""
 
