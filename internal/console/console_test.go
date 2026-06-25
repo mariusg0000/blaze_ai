@@ -270,29 +270,27 @@ func TestOnContentTable(t *testing.T) {
 	}
 }
 
-// TestOnToolCall verifies tool call display.
+// TestOnToolCall verifies tool args are buffered and printed on result.
 func TestOnToolCall(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolCall("shell", "inspect package.json scripts")
+	if c.lastToolArgs != "inspect package.json scripts" {
+		t.Errorf("lastToolArgs = %q, want 'inspect package.json scripts'", c.lastToolArgs)
+	}
 	output := out.String()
-	if !strings.Contains(output, "[>>> shell]") {
-		t.Errorf("output missing [>>> shell]: %q", output)
-	}
-	if !strings.Contains(output, "inspect package.json scripts") {
-		t.Errorf("output missing formatted args: %q", output)
-	}
 	if !strings.Contains(output, "tools ") {
 		t.Errorf("output missing tools divider header: %q", output)
 	}
 }
 
-// TestOnToolCallEmptyArgs verifies no dash when args are empty.
+// TestOnToolCallEmptyArgs verifies tool group header appears even with empty args.
 func TestOnToolCallEmptyArgs(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolCall("shell", "")
+	c.OnToolResult("shell", "ok")
 	output := out.String()
-	if !strings.Contains(output, "[>>> shell]\n") {
-		t.Errorf("output missing compact empty call line: %q", output)
+	if !strings.Contains(output, "🔧") {
+		t.Errorf("output missing wrench icon: %q", output)
 	}
 }
 
@@ -301,65 +299,67 @@ func TestOnToolCallAfterContent(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnContent("hello")
 	c.OnToolCall("shell", "ls")
+	c.OnToolResult("shell", "exit_code: 0\nstdout:\nok\n")
 	output := out.String()
-	if !strings.Contains(output, "hello\ntools ------------------------------------------------------\n[>>> shell]") {
+	if !strings.Contains(output, "hello\ntools ------------------------------------------------------\n🔧") {
 		t.Errorf("output missing newline before tool call block: %q", output)
 	}
 }
 
-// TestOnToolResultSuccess verifies successful shell result display.
+// TestOnToolResultSuccess verifies successful tool results display checkmark.
 func TestOnToolResultSuccess(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
+	c.OnToolCall("shell", "inspect package.json scripts")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nhi\n")
 	output := out.String()
-	if !strings.Contains(output, "[<<< shell]") {
-		t.Errorf("output missing compact tool result: %q", output)
-	}
-	if !strings.Contains(output, "[<<< shell] ok: hi") {
-		t.Errorf("output missing compact content: %q", output)
+	if !strings.Contains(output, "🔧 inspect package.json scripts ✓") {
+		t.Errorf("output missing success line: %q", output)
 	}
 	if strings.Contains(output, "exit_code") {
 		t.Errorf("output should not contain raw exit_code: %q", output)
 	}
 }
 
-// TestOnToolResultErrorExitCode verifies non-zero shell exit is displayed as ERROR.
+// TestOnToolResultErrorExitCode verifies non-zero shell exit shows ✗ with message.
 func TestOnToolResultErrorExitCode(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
+	c.OnToolCall("shell", "inspect config")
 	c.OnToolResult("shell", "exit_code: 1\nstderr:\nfile not found\n")
 	output := out.String()
-	if !strings.Contains(output, "[<<< shell] error:") {
-		t.Errorf("output missing error status: %q", output)
+	if !strings.Contains(output, "✗") {
+		t.Errorf("output missing ✗ badge: %q", output)
 	}
 	if !strings.Contains(output, "file not found") {
 		t.Errorf("output missing stderr content: %q", output)
 	}
 }
 
-// TestOnToolResultTimeout verifies timeout messages display TIMEOUT badge.
+// TestOnToolResultTimeout verifies timeout messages display ⏱ badge.
 func TestOnToolResultTimeout(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
+	c.OnToolCall("shell", "list large directory")
 	c.OnToolResult("shell", "timeout 1s exceeded")
 	output := out.String()
-	if !strings.Contains(output, "[<<< shell] timeout:") {
-		t.Errorf("output missing timeout status: %q", output)
+	if !strings.Contains(output, "⏱") {
+		t.Errorf("output missing ⏱ badge: %q", output)
 	}
 }
 
-// TestOnToolResultGenericError verifies non-shell error messages display ERROR badge.
+// TestOnToolResultGenericError verifies error messages display ✗ badge.
 func TestOnToolResultGenericError(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
+	c.OnToolCall("shell", "run unknown command")
 	c.OnToolResult("shell", "error: unknown tool: x")
 	output := out.String()
-	if !strings.Contains(output, "[<<< shell] error:") {
-		t.Errorf("output missing error status: %q", output)
+	if !strings.Contains(output, "✗") {
+		t.Errorf("output missing ✗ badge: %q", output)
 	}
 	if !strings.Contains(output, "unknown tool") {
 		t.Errorf("output missing error content: %q", output)
 	}
 }
 
-// TestOnToolRoundTripAfterContent verifies the full tool block stays on separate lines.
+// TestOnToolRoundTripAfterContent verifies the full tool block on single line.
 func TestOnToolRoundTripAfterContent(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnContent("hello")
@@ -368,13 +368,13 @@ func TestOnToolRoundTripAfterContent(t *testing.T) {
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nok\n")
 	c.closeToolGroup()
 	output := out.String()
-	if !strings.Contains(output, "hello\ntools ------------------------------------------------------\n[>>> shell]") {
+	if !strings.Contains(output, "hello\ntools ------------------------------------------------------\n🔧") {
 		t.Errorf("tool call block not separated from content: %q", output)
 	}
-	if !strings.Contains(output, "[>>> shell] inspect package.json scripts\n[<<< shell] ok: ok") {
+	if !strings.Contains(output, "🔧 inspect package.json scripts ✓") {
 		t.Errorf("tool response formatting unexpected: %q", output)
 	}
-	if !strings.Contains(output, "[<<< shell] ok: ok\nctx 11k") {
+	if !strings.Contains(output, "✓\nctx 11k") {
 		t.Errorf("tool group not closed with ctx separator: %q", output)
 	}
 }
@@ -395,10 +395,10 @@ func TestToolGroupConsecutive(t *testing.T) {
 	if strings.Count(output, "ctx 11k") != 1 {
 		t.Errorf("expected one ctx separator, got %d: %q", strings.Count(output, "ctx 11k"), output)
 	}
-	if !strings.Contains(output, "[>>> shell] list root\n[<<< shell] ok: a") {
+	if !strings.Contains(output, "🔧 list root ✓") {
 		t.Errorf("first tool call missing: %q", output)
 	}
-	if !strings.Contains(output, "[>>> shell] inspect config\n[<<< shell] ok: b") {
+	if !strings.Contains(output, "🔧 inspect config ✓") {
 		t.Errorf("second tool call missing: %q", output)
 	}
 }

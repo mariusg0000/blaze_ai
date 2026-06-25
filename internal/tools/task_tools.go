@@ -52,7 +52,7 @@ func (t *TaskWriteTool) Parameters() json.RawMessage {
 		"properties": {
 			"purpose": {
 				"type": "string",
-				"description": "Human-readable one-line reason for writing the task list."
+				"description": "A concise summary of this write, up to 3 sentences. First sentence: what structural changes or progress updates this write records in tasks.md, the file being overwritten. Second sentence: why this update is needed — e.g. new task discovered, task completed, task blocked, plan revised. Third sentence (optional): any dependencies or next-phase context captured in the update."
 			},
 			"tasks": {
 				"type": "string",
@@ -129,7 +129,7 @@ func (t *TaskReadTool) Parameters() json.RawMessage {
 		"properties": {
 			"purpose": {
 				"type": "string",
-				"description": "Human-readable one-line reason for reading the task list."
+				"description": "A concise summary of why the task list is being read, up to 3 sentences. First sentence: what triggered this read — e.g. session start, resume with -c, directory change, or pre-decision checkpoint. Second sentence: what specific information or status the read is expected to surface. Third sentence (optional): what action will follow based on the read result."
 			}
 		},
 		"required": ["purpose"]
@@ -155,12 +155,12 @@ func (t *TaskReadTool) Execute(ctx context.Context, args json.RawMessage) string
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "no tasks"
+			return "ok no tasks"
 		}
 		return fmt.Sprintf("error: cannot read tasks: %v", err)
 	}
 	if len(data) == 0 {
-		return "no tasks"
+		return "ok no tasks"
 	}
-	return string(data)
+	return "ok\n" + string(data)
 }

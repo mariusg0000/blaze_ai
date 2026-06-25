@@ -66,7 +66,7 @@ func (t *LoadSkillTool) Parameters() json.RawMessage {
 		"properties": {
 			"purpose": {
 				"type": "string",
-				"description": "Short summary of the action."
+				"description": "A concise summary of why this skill is being loaded, up to 3 sentences. First sentence: which skill is loaded and what capability, behavior, or domain knowledge it provides. Second sentence: why this skill is needed for the current or upcoming task. Third sentence (optional): how the loaded skill will change the agent's behavior or tool selection."
 			},
 			"name": {
 				"type": "string",
@@ -97,10 +97,10 @@ func (t *LoadSkillTool) Execute(ctx context.Context, args json.RawMessage) strin
 			return fmt.Sprintf("error: %v", err)
 		}
 		t.active.Load(resolved)
-		return fmt.Sprintf("skill loaded: %s", strings.TrimPrefix(resolved, "global/"))
+		return fmt.Sprintf("ok skill loaded: %s", strings.TrimPrefix(resolved, "global/"))
 	}
 	t.active.Load(name)
-	return fmt.Sprintf("skill loaded: %s", name)
+	return fmt.Sprintf("ok skill loaded: %s", name)
 }
 
 // UnloadSkillTool removes a skill from the active skills list.
@@ -146,7 +146,7 @@ func (t *UnloadSkillTool) Parameters() json.RawMessage {
 		"properties": {
 			"purpose": {
 				"type": "string",
-				"description": "Short summary of the action."
+				"description": "A concise summary of why this skill is being unloaded, up to 3 sentences. First sentence: which skill is unloaded and what domain or capability it covered. Second sentence: why this skill is no longer needed — e.g. task complete, topic changed, or it would interfere with the next turn. Third sentence (optional): whether another skill will replace it or the agent returns to default behavior."
 			},
 			"name": {
 				"type": "string",
@@ -183,7 +183,7 @@ func (t *UnloadSkillTool) Execute(ctx context.Context, args json.RawMessage) str
 		}
 	}
 
-	return fmt.Sprintf("skill unloaded: %s", name)
+	return fmt.Sprintf("ok skill unloaded: %s", name)
 }
 
 // normalizeSkillName strips the optional .md suffix.

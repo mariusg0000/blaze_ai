@@ -61,6 +61,7 @@ type Console struct {
 	lastPromptTokens int
 	lineOpen         bool
 	turnAborting     atomic.Bool
+	lastToolArgs     string
 }
 
 // inputEvent carries one console input line or a terminal read error.
@@ -335,11 +336,12 @@ func (c *Console) OnContent(delta string) {
 }
 
 // OnToolCall is called before a tool is executed.
-// Stops the spinner on first event, prints a compact one-line tool call marker.
+// Stores args for deferred single-line display in OnToolResult.
 //
-// WHAT:  Displays a tool call notification.
-// PARAMS: name — tool name; args — raw JSON arguments.
+// WHAT:  Buffers tool call args and handles tool group header.
+// PARAMS: name — tool name; args — formatted arguments (purpose text).
 func (c *Console) OnToolCall(name string, args string) {
+	_ = name
 	if c.turnAborting.Load() {
 		return
 	}
@@ -350,57 +352,85 @@ func (c *Console) OnToolCall(name string, args string) {
 	if !c.inToolGroup {
 		c.openToolGroup()
 	}
-	argStr := args
-	if argStr != "" {
-		fmt.Fprintf(c.Out, "%s %s\n",
-			c.color(colorGreen, c.bold("[>>> "+name+"]")),
-			argStr,
-		)
-	} else {
-		fmt.Fprintf(c.Out, "%s\n",
-			c.color(colorGreen, c.bold("[>>> "+name+"]")),
-		)
-	}
-	c.lineOpen = false
+	c.lastToolArgs = args
 }
 
 // OnToolResult is called after a tool has finished.
-// Prints a compact one-line tool result marker with a status badge and useful preview.
+// Prints a single line: wrench icon + purpose + status symbol.
+// Success: ✓. Error: ✗ <message>. Timeout: ⏱ <message>.
 //
-// WHAT:  Displays tool result status and the most relevant output line.
+// WHAT:  Displays tool result inline with the deferred tool call line.
 // PARAMS: name — tool name; result — the raw tool output.
 func (c *Console) OnToolResult(name string, result string) {
+	_ = name
 	if c.turnAborting.Load() {
+		c.lastToolArgs = ""
 		return
 	}
 	badge, content, colorCode := parseToolResult(result)
-	status := strings.ToLower(badge)
-	if content != "" {
-		content = strings.ReplaceAll(content, "\n", " ")
-		if len(content) > 100 {
-			content = content[:97] + "..."
+	icon := c.color(colorGreen, c.bold("🔧"))
+	args := c.lastToolArgs
+	c.lastToolArgs = ""
+
+	switch badge {
+	case "DONE":
+		if args != "" {
+			fmt.Fprintf(c.Out, "%s %s %s\n",
+				icon, args,
+				c.color(colorBrightGreen, "✓"),
+			)
+		} else {
+			fmt.Fprintf(c.Out, "%s %s\n",
+				icon,
+				c.color(colorBrightGreen, "✓"),
+			)
 		}
-	}
-	if content != "" {
-		fmt.Fprintf(c.Out, "%s %s %s\n",
-			c.color(colorBlue, c.bold("[<<< "+name+"]")),
-			c.color(colorCode, status+":"),
-			content,
-		)
-	} else {
-		fmt.Fprintf(c.Out, "%s %s\n",
-			c.color(colorBlue, c.bold("[<<< "+name+"]")),
-			c.color(colorCode, status),
-		)
+	case "ERROR":
+		if content != "" {
+			content = strings.ReplaceAll(content, "\n", " ")
+			if len(content) > 200 {
+				content = content[:197] + "..."
+			}
+		}
+		if args != "" {
+			fmt.Fprintf(c.Out, "%s %s %s %s\n",
+				icon, args,
+				c.color(colorCode, "✗"),
+				c.color(colorCode, content),
+			)
+		} else {
+			fmt.Fprintf(c.Out, "%s %s %s\n",
+				icon,
+				c.color(colorCode, "✗"),
+				c.color(colorCode, content),
+			)
+		}
+	case "TIMEOUT":
+		if content != "" {
+			content = strings.ReplaceAll(content, "\n", " ")
+		}
+		if args != "" {
+			fmt.Fprintf(c.Out, "%s %s %s %s\n",
+				icon, args,
+				c.color(colorCode, "⏱"),
+				c.color(colorCode, content),
+			)
+		} else {
+			fmt.Fprintf(c.Out, "%s %s %s\n",
+				icon,
+				c.color(colorCode, "⏱"),
+				c.color(colorCode, content),
+			)
+		}
 	}
 	c.lineOpen = false
 }
 
 // parseToolResult extracts a display badge, useful content, and color from raw tool output.
 //
-// WHAT:  Normalizes shell and generic tool results into a compact status badge.
-// WHY:   Raw tool output contains redundant labels like "exit_code:" and "stdout:".
-// RETURNS: badge — OK/ERROR/TIMEOUT; content — the most relevant output text; colorCode — ANSI color.
+// WHAT:  Normalizes tool results into DONE/ERROR/TIMEOUT badges using prefix conventions.
+// WHY:   Raw tool output follows conventions: ok/ok <msg>, error: <msg>, timeout <msg>.
+// RETURNS: badge — DONE/ERROR/TIMEOUT; content — the most relevant output text; colorCode — ANSI color.
 func parseToolResult(result string) (badge, content, colorCode string) {
 	result = strings.TrimSpace(result)
 
@@ -408,11 +438,19 @@ func parseToolResult(result string) (badge, content, colorCode string) {
 		return "TIMEOUT", strings.TrimSpace(strings.TrimPrefix(result, "timeout")), colorOrange
 	}
 
+	if strings.HasPrefix(result, "error:") {
+		msg := strings.TrimSpace(strings.TrimPrefix(result, "error:"))
+		if idx := strings.Index(msg, "\n"); idx >= 0 {
+			msg = strings.TrimSpace(msg[:idx])
+		}
+		return "ERROR", msg, colorRed
+	}
+
 	if strings.HasPrefix(result, "exit_code:") {
 		rest := strings.TrimSpace(strings.TrimPrefix(result, "exit_code:"))
 		newlineIdx := strings.Index(rest, "\n")
 		if newlineIdx < 0 {
-			return "OK", rest, colorBrightGreen
+			return "DONE", "", colorBrightGreen
 		}
 
 		exitCodeStr := strings.TrimSpace(rest[:newlineIdx])
@@ -431,21 +469,14 @@ func parseToolResult(result string) (badge, content, colorCode string) {
 			}
 			return "ERROR", "exit code " + exitCodeStr, colorRed
 		}
-		if stdout != "" {
-			return "OK", stdout, colorBrightGreen
-		}
-		return "OK", "", colorBrightGreen
+		return "DONE", "", colorBrightGreen
 	}
 
-	if strings.HasPrefix(result, "error:") {
-		msg := strings.TrimSpace(strings.TrimPrefix(result, "error:"))
-		if idx := strings.Index(msg, "\n"); idx >= 0 {
-			msg = strings.TrimSpace(msg[:idx])
-		}
-		return "ERROR", msg, colorRed
+	if strings.HasPrefix(result, "ok") {
+		return "DONE", "", colorBrightGreen
 	}
 
-	return "OK", result, colorBrightGreen
+	return "DONE", "", colorBrightGreen
 }
 
 // extractToolSection extracts the content of a labeled section such as "stdout:" or "stderr:".

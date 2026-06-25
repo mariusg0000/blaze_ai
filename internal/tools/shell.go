@@ -79,7 +79,7 @@ func (s *ShellTool) Parameters() json.RawMessage {
 		"properties": {
 			"purpose": {
 				"type": "string",
-				"description": "A concise 1-2 sentence summary of this shell call. State what it does, why it is needed, the exact command it uses, and the file or files or folders it inspects or changes when relevant."
+				"description": "A concise summary of this shell call, up to 3 sentences. First sentence: what this command does, the exact command executed, and which files or folders it reads, writes, modifies, or deletes. Second sentence: why this step is needed in the context of the current task. Third sentence (optional): any important constraints, risks, or expected output."
 			},
 			"command": {
 				"type": "string",

@@ -67,7 +67,7 @@ func (t *ReplaceBlockTool) Parameters() json.RawMessage {
 		"properties": {
 			"purpose": {
 				"type": "string",
-				"description": "A concise 1-2 sentence summary of this edit. State the intent and the file being changed."
+				"description": "A concise summary of this edit, up to 3 sentences. First sentence: what is changed in which file — state the file path and the nature of the modification (add, replace, remove, fix, update, refactor). Second sentence: why this edit is needed — e.g. implement a feature, fix a bug, update documentation, follow a convention. Third sentence (optional): any side effects, dependencies, or follow-up changes this edit enables or requires."
 			},
 			"file_path": {
 				"type": "string",
@@ -123,5 +123,5 @@ func (t *ReplaceBlockTool) Execute(ctx context.Context, args json.RawMessage) st
 		return fmt.Sprintf("error: cannot write file %s: %v", parsed.FilePath, err)
 	}
 
-	return fmt.Sprintf("block replaced in %s", parsed.FilePath)
+	return fmt.Sprintf("ok block replaced in %s", parsed.FilePath)
 }
