@@ -1,6 +1,6 @@
 // prompt.go — prompt assembly from disk sources on every LLM call.
 // Rebuilds the runtime prompt part in spec order: universal sysprompt, OS sysprompt,
-// host helpers, skills section, AGENTS.md.
+// host helpers, skills section, project-map.md, AGENTS.md.
 // Replaces {VARIABLE_NAME} placeholders at build time.
 // The conversation part (session message history) is appended after the runtime part.
 // Layer: prompt construction. Dependencies: internal/skills, internal/platform.
@@ -37,7 +37,7 @@ var variablePattern = regexp.MustCompile(`\{([A-Z_][A-Z0-9_]*)\}`)
 // WHY:   The prompt is rebuilt fresh from disk every time per spec — nothing is reused.
 // PARAMS: PromptsFS — filesystem containing sysprompt.md and sysprompt.<os>.md;
 //
-//	WorkDir — current work folder for AGENTS.md and project skill discovery;
+//	WorkDir — current work folder for project-map.md, AGENTS.md, and project skill discovery;
 //	OS — the detected operating system for selecting the OS-specific prompt;
 //	OSInfo — human-readable OS description injected as {OS_INFO};
 //	HelperSetup — user UX preferences for host helper installation prompts;
@@ -268,7 +268,7 @@ func (b *Builder) buildHostHelpersAdvisory() string {
 }
 
 // BuildRuntimePart assembles the runtime prompt part from all disk sources.
-// Order: universal → OS → helpers → skills → AGENTS.md.
+// Order: universal → OS → helpers → skills → project-map.md → AGENTS.md.
 func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, error) {
 	// 1. Universal system prompt (required).
 	universal, err := readFileRequiredFS(b.PromptsFS, "sysprompt.md", ErrUniversalPromptMissing)
@@ -305,7 +305,16 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 		return "", err
 	}
 
-	// 5. AGENTS.md from work folder (optional).
+	// 5. project-map.md from work folder (optional).
+	projectMap, err := readFileOptional(filepath.Join(b.WorkDir, "project-map.md"))
+	if err != nil {
+		return "", err
+	}
+	if projectMap != "" {
+		projectMap = fmt.Sprintf("---\nproject-map.md:\n\n%s\n---", projectMap)
+	}
+
+	// 6. AGENTS.md from work folder (optional).
 	agents, err := readFileOptional(filepath.Join(b.WorkDir, "AGENTS.md"))
 	if err != nil {
 		return "", err
@@ -325,6 +334,7 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 		"HOST_HELPERS_OPTIONAL":  strings.TrimSpace(helperOptional),
 		"SKILLS_AVAILABLE":       strings.TrimSpace(skillsAvailable),
 		"SKILLS_ACTIVE":          strings.TrimSpace(skillsActive),
+		"PROJECT_MAP_CONTENT":    strings.TrimSpace(projectMap),
 		"AGENTS_CONTENT":         strings.TrimSpace(agents),
 	}, "")
 	if err != nil {

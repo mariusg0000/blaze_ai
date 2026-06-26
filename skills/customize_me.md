@@ -5,7 +5,9 @@ Load when the user wants to configure BlazeAI models, providers, API keys, favor
 # Customize Me
 
 ## Config Location
-* **Application home (`/home/marius/blazeai`):** Contains `backups`, `config`, `projects`, `scripts`, `skills`. Each top-level folder has a `README.md` that documents its structure, use, and rules. **When a task involves any of these folders, you MUST read its `README.md` first** before inspecting or modifying any other file in that folder.
+- **Application home (`/home/marius/blazeai`)** contains `backups`, `config`, `projects`, `scripts`, `skills`.
+- Each top-level folder has a `README.md` that documents its structure, use, and rules.
+- Before inspecting or modifying any other file in one of those folders, read that folder's `README.md` first.
 - Runtime configuration lives at `{APP_HOME}/config/config.json` — providers, models, roles, compaction, reasoning.
 - Work modes live separately at `{APP_HOME}/config/modes.json` — mode definitions and last active mode.
 - API keys are stored in config.json. Modes reference provider/model names but never contain keys.
@@ -63,7 +65,7 @@ Load when the user wants to configure BlazeAI models, providers, API keys, favor
 
 ## Fetching Models from Providers
 
-When the user asks to browse models (e.g. "show deepseek models"), follow this process.
+When the user asks to browse models, follow this process.
 
 ### Algorithm
 1. Check if a helper script already exists at `{APP_HOME}/scripts/fetch_models`. Reuse it if present.
@@ -76,7 +78,7 @@ When the user asks to browse models (e.g. "show deepseek models"), follow this p
 ### Creation guidelines
 - Write the script to `{APP_HOME}/scripts/fetch_models` with OS-appropriate extension (.sh, .ps1, .py).
 - Accept two arguments: `<provider_name>` and `[filter]`.
-- API keys must be read from disk — never hardcoded in the script.
+- Read API keys from disk. Never hardcode them in the script.
 - Make it executable (`chmod +x` on Unix).
 
 ### Usage
@@ -89,13 +91,10 @@ Call per provider: `fetch_models <provider_name> <filter>`.
 4. Use the selected ID directly — it is already in `provider/model` format.
 
 ## Work Modes (modes.json)
-Modes are stored in `{APP_HOME}/config/modes.json` — separate from config.json to isolate
-frequently-edited mode data from critical provider/API key configuration. Each mode
-binds a model and an optional directive that is injected into the last message
-sent to the LLM (volatile — not stored in session history).
+Modes are stored in `{APP_HOME}/config/modes.json`, separate from config.json so frequently edited mode data stays isolated from critical provider and API key configuration. Each mode binds a model and an optional directive injected into the last message sent to the LLM. The directive is volatile and is not stored in session history.
 
 ### Structure
-Modes.json is a standalone JSON file (not embedded in config.json):
+`modes.json` is a standalone JSON file. It is not embedded in `config.json`:
 ```json
 {
   "modes": [
@@ -129,11 +128,11 @@ Modes.json is a standalone JSON file (not embedded in config.json):
 - Switch active mode at runtime: the user presses Tab to cycle through modes loaded at startup. Do NOT suggest `/model modename` — that command does not switch modes.
 - After any edit to modes.json, validate integrity (unique names, valid models, provider references).
 
-**After creating or editing a mode:** remind the user that mode changes take effect only after restarting BlazeAI. Suggest restarting with the `-c` flag to continue the current session.
+After creating or editing a mode, remind the user that mode changes take effect only after restarting BlazeAI. Suggest restarting with the `-c` flag to continue the current session.
 
 ### Directive behavior
-The directive is appended to the last message of the payload sent to the LLM on every LLM call while the mode is active. It is not stored in session.json. Use it to constrain agent behavior for the current task (e.g. read-only, quick/cheap, verbose, etc.). Keep directives short and imperative.
+The directive is appended to the last message of the payload sent to the LLM on every call while the mode is active. It is not stored in `session.json`. Use it to constrain agent behavior for the current task. Keep directives short and imperative.
 
-**CRITICAL: Write the directive in English only. Never include translations, dual-language content, separator labels like `[MODE DIRECTIVE]`, or non-English text. The directive is read by the LLM — it is not for the user. Even if the user speaks another language, the directive must be a single block of English text.**
+Write the directive in English only. Never include translations, dual-language content, separator labels like `[MODE DIRECTIVE]`, or non-English text. The directive is for the LLM, not the user. Even if the user speaks another language, the directive must be a single block of English text.
 
 For skill creation, editing, scoping, or restoration, load the `skill-manager` skill. Customize the skill-manager itself via `skill-manager` too.

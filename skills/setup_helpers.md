@@ -45,13 +45,13 @@ Get-Command sqlite3 -ErrorAction SilentlyContinue | Select-Object -ExpandPropert
 ### Linux
 1. Detect package manager first: `which apt || which dnf || which pacman || which zypper || which apk`
 2. Ask user which helper(s) to install and confirm.
-3. If sudo is required, ask separately — never batch sudo commands without approval.
+3. If `sudo` is required, ask separately. Never batch `sudo` commands without approval.
 4. Example: `sudo apt update && sudo apt install -y ripgrep fd-find jq pandoc sqlite3`
 
 ### macOS
 1. Check for Homebrew: `command -v brew`
 2. If brew exists and user approves: `brew install ripgrep fd jq pandoc sqlite3`
-3. If brew missing, suggest installing brew first (ask user).
+3. If brew is missing, suggest installing it first and ask the user.
 
 ### Windows
 1. Check for package manager: `winget --version` or `scoop` or `choco`
@@ -70,7 +70,7 @@ Get-Command sqlite3 -ErrorAction SilentlyContinue | Select-Object -ExpandPropert
 - After all core helpers are installed and verified, edit `{APP_HOME}/config/config.json` and set `helperSetup.dismissed` to `true`.
 - If the user says they do not need remaining helpers and want to stop the reminder, also set `helperSetup.dismissed` to `true`.
 - If the user wants to skip specific helpers permanently, add them to `helperSetup.declined` instead.
-- Example when done or user declines:
+- Example:
 ```json
 "helperSetup": {
   "dismissed": true,
@@ -80,7 +80,7 @@ Get-Command sqlite3 -ErrorAction SilentlyContinue | Select-Object -ExpandPropert
 - After `dismissed` is set to `true`, the advisory reminder will not appear in future prompts.
 
 ## Python Environment
-- Python is NOT a host helper — it is a restricted runtime.
+- Python is not a host helper. It is a restricted runtime.
 - If Python is truly necessary and the BlazeAI venv does not exist yet at `{APP_HOME}/scripts/venv/`:
   - Ask the user before creating the venv.
   - Create it lazily with the system Python: `python3 -m venv {APP_HOME}/scripts/venv`
