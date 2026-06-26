@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 
 	"blazeai/internal/config"
+	"blazeai/internal/helpers"
 	"blazeai/internal/runtime"
 	"blazeai/internal/skills"
 )
@@ -350,7 +351,7 @@ func (c *Console) showStartupSplash() {
 	fmt.Fprintln(c.Out)
 
 	// Skills section.
-	c.sectionLabel("Skills", colorGreen)
+	c.sectionLabel("Skills", colorPurple)
 	all, err := skills.DiscoverAll(c.Agent.WorkDir)
 	if err != nil {
 		fmt.Fprintf(c.Out, "  unavailable: %v\n", err)
@@ -383,8 +384,38 @@ func (c *Console) showStartupSplash() {
 	}
 	fmt.Fprintln(c.Out)
 
+	// Helpers section.
+	c.sectionLabel("Helpers", colorOrange)
+	helperStatuses := helpers.Detect(helpers.DefaultLookup)
+	availableHelpers := helpers.Available(helperStatuses, c.Agent.WorkDir)
+	if len(availableHelpers) == 0 {
+		fmt.Fprintln(c.Out, "  (none)")
+	} else {
+		maxName := 0
+		for _, helper := range availableHelpers {
+			if len(helper.Name) > maxName {
+				maxName = len(helper.Name)
+			}
+		}
+		colWidth := maxName + 3
+		if colWidth < 18 {
+			colWidth = 18
+		}
+		cols := 3
+		for i, helper := range availableHelpers {
+			fmt.Fprintf(c.Out, "  %-*s", colWidth, helper.Name)
+			if (i+1)%cols == 0 {
+				fmt.Fprintln(c.Out)
+			}
+		}
+		if len(availableHelpers)%cols != 0 {
+			fmt.Fprintln(c.Out)
+		}
+	}
+	fmt.Fprintln(c.Out)
+
 	// Session section.
-	c.sectionLabel("Session", colorOrange)
+	c.sectionLabel("Session", colorGreen)
 	fmt.Fprintf(c.Out, "  %-6s  %s\n", c.bold("Model"), c.Agent.ModelID)
 	fmt.Fprintf(c.Out, "  %-6s %s\n", c.bold("Folder"), c.Agent.WorkDir)
 	fmt.Fprintln(c.Out)

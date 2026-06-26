@@ -41,6 +41,7 @@ func copyMissingAppHomeReadmes(home string) error {
 		{embedded: "apphome_readmes/projects/README.md", target: filepath.Join(home, "projects", "README.md")},
 		{embedded: "apphome_readmes/scripts/README.md", target: filepath.Join(home, "scripts", "README.md")},
 		{embedded: "apphome_readmes/skills/README.md", target: filepath.Join(home, "skills", "README.md")},
+		{embedded: "apphome_readmes/telegram/README.md", target: filepath.Join(home, "telegram", "README.md")},
 	}
 
 	for _, entry := range entries {

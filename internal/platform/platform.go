@@ -41,6 +41,7 @@ var subfolders = []string{
 	"backups",
 	"projects",
 	"config",
+	"telegram",
 }
 
 // Detect returns the current operating system based on runtime.GOOS.

@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -17,6 +18,7 @@ import (
 	"blazeai/internal/runtime"
 	"blazeai/internal/session"
 	"blazeai/internal/skills"
+	"blazeai/internal/telegram"
 )
 
 type resumeOptions struct {
@@ -41,6 +43,7 @@ func main() {
 func run() error {
 	continueFlag := flag.Bool("c", false, "continue last cleanly closed session")
 	resumeFlag := flag.Bool("r", false, "resume most recent session (interrupted or clean)")
+	telegramFlag := flag.String("telegram", "", "run Telegram bridge instance")
 	flag.Parse()
 
 	// Detect OS.
@@ -60,6 +63,15 @@ func run() error {
 		return err
 	}
 
+	promptsFS, err := prepareBuiltinAssets()
+	if err != nil {
+		return err
+	}
+
+	if *telegramFlag != "" {
+		return telegram.Run(context.Background(), cfg, osType, promptsFS, *telegramFlag)
+	}
+
 	// Get work directory (needed for project-based session storage).
 	workDir, err := os.Getwd()
 	if err != nil {
@@ -68,11 +80,6 @@ func run() error {
 
 	resume := resumeOptions{continueLastClean: *continueFlag, resumeLast: *resumeFlag}
 	sess, err := openSession(workDir, resume)
-	if err != nil {
-		return err
-	}
-
-	promptsFS, err := prepareBuiltinAssets()
 	if err != nil {
 		return err
 	}

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"blazeai/internal/config"
+	"blazeai/internal/helpers"
 	"blazeai/internal/platform"
 	"blazeai/internal/runtime"
 	"blazeai/internal/session"
@@ -757,6 +758,19 @@ func writeSkillDir(t *testing.T, root, name, content string) {
 // TestStartupSplashTTY verifies the full splash output in TTY mode with skills.
 func TestStartupSplashTTY(t *testing.T) {
 	agent := mockAgent(t)
+	originalLookup := helpers.DefaultLookup
+	helpers.DefaultLookup = func(name string) (string, error) {
+		switch name {
+		case "rg", "git", "curl":
+			return "/usr/bin/" + name, nil
+		default:
+			return "", errors.New("not found")
+		}
+	}
+	t.Cleanup(func() {
+		helpers.DefaultLookup = originalLookup
+	})
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatalf("UserHomeDir: %v", err)
@@ -809,6 +823,24 @@ func TestStartupSplashTTY(t *testing.T) {
 	}
 	if strings.Contains(output, "global/") {
 		t.Error("output contains global/ prefix on skill names")
+	}
+	if !strings.Contains(output, "Helpers") {
+		t.Error("output missing Helpers section")
+	}
+	if !strings.Contains(output, "rg") {
+		t.Error("output missing rg helper")
+	}
+	if !strings.Contains(output, "git") {
+		t.Error("output missing git helper")
+	}
+	if strings.Contains(output, "fd") {
+		t.Error("output should not include unavailable helper fd")
+	}
+	if strings.Index(output, "Skills") > strings.Index(output, "Helpers") {
+		t.Error("Helpers section should appear after Skills")
+	}
+	if strings.Index(output, "Helpers") > strings.Index(output, "Session") {
+		t.Error("Helpers section should appear before Session")
 	}
 	if !strings.Contains(output, "Model") {
 		t.Error("output missing Model line")
