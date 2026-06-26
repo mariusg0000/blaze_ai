@@ -1,5 +1,5 @@
 [DESCRIPTION]
-Load when the user wants to configure BlazeAI models, providers, API keys, favorite models, role assignments, or work modes. Use for any config.json or modes.json changes including creating, editing, or deleting modes.
+Load when the user wants to configure BlazeAI models, providers, API keys, favorite models, role assignments, or work modes. Use for any config.json or modes.json changes including creating, editing, or deleting modes. For Telegram bridge instance files under `{APP_HOME}/telegram/`, load `telegram_bridge` instead.
 
 [BEHAVIOR]
 # Customize Me
@@ -136,3 +136,4 @@ The directive is appended to the last message of the payload sent to the LLM on 
 Write the directive in English only. Never include translations, dual-language content, separator labels like `[MODE DIRECTIVE]`, or non-English text. The directive is for the LLM, not the user. Even if the user speaks another language, the directive must be a single block of English text.
 
 For skill creation, editing, scoping, or restoration, load the `skill-manager` skill. Customize the skill-manager itself via `skill-manager` too.
+For Telegram bridge instance creation or editing, load `telegram_bridge` instead of modifying `{APP_HOME}/config/` guidance here.
