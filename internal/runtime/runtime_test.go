@@ -73,7 +73,7 @@ func setupAgent(t *testing.T, handler http.HandlerFunc) (*Agent, *mockHandler, *
 	writePromptFixtures(t, promptsDir)
 
 	h := &mockHandler{}
-	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(filepath.Join(dir, "skills")), os.DirFS(promptsDir), dir, h)
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, h)
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
@@ -326,6 +326,43 @@ func TestSetModel(t *testing.T) {
 	if agent.ModelID != "test/test-model" {
 		t.Errorf("ModelID = %q, want 'test/test-model'", agent.ModelID)
 	}
+	if agent.Compactor == nil || agent.Compactor.Provider != agent.Provider {
+		t.Fatal("compactor provider not synced with agent provider")
+	}
+}
+
+// TestSetModelLocal verifies local model switching without global persistence.
+func TestSetModelLocal(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	agent.Modes.Modes = []config.Mode{{Name: "default", Model: "test/test-model"}}
+	agent.Modes.LastMode = "default"
+	agent.CurrentMode = &agent.Modes.Modes[0]
+	if err := agent.Modes.Save(); err != nil {
+		t.Fatalf("Save() modes failed: %v", err)
+	}
+
+	err := agent.SetModelLocal("test/other-model")
+	if err != nil {
+		t.Fatalf("SetModelLocal() error: %v", err)
+	}
+	if agent.ModelID != "test/other-model" {
+		t.Errorf("ModelID = %q, want 'test/other-model'", agent.ModelID)
+	}
+	if agent.CurrentMode.Model != "test/test-model" {
+		t.Errorf("CurrentMode.Model = %q, want unchanged 'test/test-model'", agent.CurrentMode.Model)
+	}
+	loaded, err := config.LoadModes("test/test-model")
+	if err != nil {
+		t.Fatalf("LoadModes() error: %v", err)
+	}
+	if loaded.Modes[0].Model != "test/test-model" {
+		t.Errorf("persisted mode model = %q, want unchanged 'test/test-model'", loaded.Modes[0].Model)
+	}
+	if agent.Compactor == nil || agent.Compactor.Provider != agent.Provider {
+		t.Fatal("compactor provider not synced after local model switch")
+	}
 }
 
 // TestSetModelInvalid verifies error for unknown provider.
@@ -430,7 +467,7 @@ func TestNewAgentBadModel(t *testing.T) {
 
 	dir := t.TempDir()
 	sess, _ := session.CreateInDir(dir)
-	_, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(dir), os.DirFS(dir), dir, &mockHandler{})
+	_, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(dir), dir, &mockHandler{})
 	if err == nil {
 		t.Fatal("NewAgent() expected error for missing provider, got nil")
 	}
@@ -471,7 +508,7 @@ func TestNewAgentWithMode(t *testing.T) {
 	os.MkdirAll(promptsDir, 0755)
 	writePromptFixtures(t, promptsDir)
 
-	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(filepath.Join(dir, "skills")), os.DirFS(promptsDir), dir, &mockHandler{})
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{})
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
@@ -518,7 +555,7 @@ func TestNewAgentWithModeFallbackToFirstMode(t *testing.T) {
 	os.MkdirAll(promptsDir, 0755)
 	writePromptFixtures(t, promptsDir)
 
-	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(filepath.Join(dir, "skills")), os.DirFS(promptsDir), dir, &mockHandler{})
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{})
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
@@ -559,6 +596,9 @@ func TestSetMode(t *testing.T) {
 	}
 	if loaded.LastMode != "planning" {
 		t.Errorf("persisted LastMode = %q, want 'planning'", loaded.LastMode)
+	}
+	if agent.Compactor == nil || agent.Compactor.Provider != agent.Provider {
+		t.Fatal("compactor provider not synced after mode switch")
 	}
 }
 
@@ -687,7 +727,7 @@ func TestNewAgentIgnoresLastModelWhenLastModeExists(t *testing.T) {
 	os.MkdirAll(promptsDir, 0755)
 	writePromptFixtures(t, promptsDir)
 
-	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(filepath.Join(dir, "skills")), os.DirFS(promptsDir), dir, &mockHandler{})
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{})
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
@@ -760,7 +800,7 @@ func TestNewAgentAutoCreatesDefaultMode(t *testing.T) {
 	os.MkdirAll(promptsDir, 0755)
 	writePromptFixtures(t, promptsDir)
 
-	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(filepath.Join(dir, "skills")), os.DirFS(promptsDir), dir, &mockHandler{})
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{})
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}

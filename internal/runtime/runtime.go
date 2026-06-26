@@ -78,6 +78,7 @@ type Agent struct {
 // WHAT:  Constructs the runtime agent with all dependencies wired.
 // WHY:   The main entrypoint calls this to assemble the agent before starting the REPL.
 // PARAMS: cfg — loaded config; sess — session (new or resumed); os — detected platform;
+//
 //	promptsFS — filesystem with sysprompt.md and sysprompt.<os>.md;
 //	workDir — initial work folder; handler — transport implementation.
 //
@@ -395,8 +396,13 @@ func (a *Agent) sanitizeSession() error {
 	return nil
 }
 
-// SetModel changes the current model and recreates the provider client.
-func (a *Agent) SetModel(modelID string) error {
+// applyModel validates a model ID, recreates the provider client, and updates in-memory runtime state.
+//
+// WHAT:  Applies a model change to the running agent without any persistence side effects.
+// WHY:   Console persists globally, while future transports like Telegram need local-only switching.
+// PARAMS: modelID — provider/model_name identifier to activate.
+// RETURNS: error if model validation or provider client creation fails.
+func (a *Agent) applyModel(modelID string) error {
 	if err := validateModelInConfig(a.Config, modelID); err != nil {
 		return err
 	}
@@ -406,6 +412,17 @@ func (a *Agent) SetModel(modelID string) error {
 	}
 	a.Provider = client
 	a.ModelID = modelID
+	if a.Compactor != nil {
+		a.Compactor.Provider = client
+	}
+	return nil
+}
+
+// SetModel changes the current model, recreates the provider client, and persists the selection globally.
+func (a *Agent) SetModel(modelID string) error {
+	if err := a.applyModel(modelID); err != nil {
+		return err
+	}
 	if a.CurrentMode != nil {
 		a.CurrentMode.Model = modelID
 		if err := a.Modes.Save(); err != nil {
@@ -418,6 +435,16 @@ func (a *Agent) SetModel(modelID string) error {
 		return fmt.Errorf("cannot persist legacy model selection: %w", err)
 	}
 	return nil
+}
+
+// SetModelLocal changes the current model only in runtime memory.
+//
+// WHAT:  Applies a model switch without writing to global config or modes state.
+// WHY:   Non-console transports can persist model selection in their own instance state.
+// PARAMS: modelID — provider/model_name identifier to activate.
+// RETURNS: error if model validation or provider client creation fails.
+func (a *Agent) SetModelLocal(modelID string) error {
+	return a.applyModel(modelID)
 }
 
 // SetWorkDir changes the current work folder and updates the prompt builder.
@@ -449,12 +476,9 @@ func (a *Agent) SetMode(name string) error {
 	for i := range a.Modes.Modes {
 		if a.Modes.Modes[i].Name == name {
 			mode := &a.Modes.Modes[i]
-			client, err := provider.NewClient(a.Config, mode.Model)
-			if err != nil {
-				return fmt.Errorf("cannot create provider client for mode %q: %w", name, err)
+			if err := a.applyModel(mode.Model); err != nil {
+				return fmt.Errorf("cannot apply provider client for mode %q: %w", name, err)
 			}
-			a.Provider = client
-			a.ModelID = mode.Model
 			a.CurrentMode = mode
 			a.Modes.LastMode = name
 			if err := a.Modes.Save(); err != nil {

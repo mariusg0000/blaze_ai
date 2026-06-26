@@ -35,6 +35,26 @@ func writeCustomSkill(t *testing.T, root, name, content string) string {
 	return path
 }
 
+// discoverFromRoots merges two explicit global-scope skill directories for test coverage.
+func discoverFromRoots(primaryRoot, overrideRoot string) (map[string]*Skill, error) {
+	merged := make(map[string]*Skill)
+	primary, err := DiscoverGlobalFromDir(primaryRoot)
+	if err != nil {
+		return nil, err
+	}
+	for id, skill := range primary {
+		merged[id] = skill
+	}
+	override, err := DiscoverGlobalFromDir(overrideRoot)
+	if err != nil {
+		return nil, err
+	}
+	for id, skill := range override {
+		merged[id] = skill
+	}
+	return merged, nil
+}
+
 // TestParseValid verifies that a well-formed skill file parses correctly.
 func TestParseValid(t *testing.T) {
 	content := `[DESCRIPTION]
@@ -188,24 +208,24 @@ func TestDiscoverFromDirs(t *testing.T) {
 	builtin := filepath.Join(t.TempDir(), "builtin")
 	custom := filepath.Join(t.TempDir(), "custom")
 
-	writeSkill(t, builtin, "memory-manager.md", "[DESCRIPTION]\nBuiltin memory manager.\n\n[BEHAVIOR]\nBuiltin details.")
-	writeSkill(t, builtin, "skill-manager.md", "[DESCRIPTION]\nBuiltin skill manager.\n\n[BEHAVIOR]\nBuiltin skill manager details.")
+	writeCustomSkill(t, builtin, "memory-manager", "[DESCRIPTION]\nBuiltin memory manager.\n\n[BEHAVIOR]\nBuiltin details.")
+	writeCustomSkill(t, builtin, "skill-manager", "[DESCRIPTION]\nBuiltin skill manager.\n\n[BEHAVIOR]\nBuiltin skill manager details.")
 	writeCustomSkill(t, custom, "my_skill", "[DESCRIPTION]\nCustom skill.\n\n[BEHAVIOR]\nCustom details.")
 
-	skills, err := DiscoverFromDirs(builtin, custom)
+	skills, err := discoverFromRoots(builtin, custom)
 	if err != nil {
-		t.Fatalf("DiscoverFromDirs() unexpected error: %v", err)
+		t.Fatalf("discoverFromRoots() unexpected error: %v", err)
 	}
 	if len(skills) != 3 {
 		t.Fatalf("discovered %d skills, want 3", len(skills))
 	}
-	if skills["memory-manager"] == nil {
+	if skills["global/memory-manager"] == nil {
 		t.Error("memory-manager skill not found")
 	}
-	if skills["skill-manager"] == nil {
+	if skills["global/skill-manager"] == nil {
 		t.Error("skill-manager skill not found")
 	}
-	if skills["my_skill"] == nil {
+	if skills["global/my_skill"] == nil {
 		t.Error("my_skill skill not found")
 	}
 }
@@ -215,18 +235,18 @@ func TestDiscoverCollisionCustomWins(t *testing.T) {
 	builtin := filepath.Join(t.TempDir(), "builtin")
 	custom := filepath.Join(t.TempDir(), "custom")
 
-	writeSkill(t, builtin, "memory-manager.md", "[DESCRIPTION]\nBuiltin memory manager.\n\n[BEHAVIOR]\nBuiltin details.")
+	writeCustomSkill(t, builtin, "memory-manager", "[DESCRIPTION]\nBuiltin memory manager.\n\n[BEHAVIOR]\nBuiltin details.")
 	writeCustomSkill(t, custom, "memory-manager", "[DESCRIPTION]\nCustom memory manager.\n\n[BEHAVIOR]\nCustom details.")
 
-	skills, err := DiscoverFromDirs(builtin, custom)
+	skills, err := discoverFromRoots(builtin, custom)
 	if err != nil {
-		t.Fatalf("DiscoverFromDirs() unexpected error: %v", err)
+		t.Fatalf("discoverFromRoots() unexpected error: %v", err)
 	}
 	if len(skills) != 1 {
 		t.Fatalf("discovered %d skills, want 1 (collision resolved)", len(skills))
 	}
-	if skills["memory-manager"].Description != "Custom memory manager." {
-		t.Errorf("collision: Description = %q, want 'Custom memory manager.'", skills["memory-manager"].Description)
+	if skills["global/memory-manager"].Description != "Custom memory manager." {
+		t.Errorf("collision: Description = %q, want 'Custom memory manager.'", skills["global/memory-manager"].Description)
 	}
 }
 
@@ -235,20 +255,20 @@ func TestDiscoverSkipsInvalid(t *testing.T) {
 	builtin := filepath.Join(t.TempDir(), "builtin")
 	custom := filepath.Join(t.TempDir(), "custom")
 
-	writeSkill(t, builtin, "valid.md", "[DESCRIPTION]\nValid.\n\n[BEHAVIOR]\nValid details.")
-	writeSkill(t, builtin, "invalid.md", "no sections here")
+	writeCustomSkill(t, builtin, "valid", "[DESCRIPTION]\nValid.\n\n[BEHAVIOR]\nValid details.")
+	writeCustomSkill(t, builtin, "invalid", "no sections here")
 
-	skills, err := DiscoverFromDirs(builtin, custom)
+	skills, err := discoverFromRoots(builtin, custom)
 	if err != nil {
-		t.Fatalf("DiscoverFromDirs() unexpected error: %v", err)
+		t.Fatalf("discoverFromRoots() unexpected error: %v", err)
 	}
 	if len(skills) != 1 {
 		t.Fatalf("discovered %d skills, want 1 (invalid skipped)", len(skills))
 	}
-	if skills["valid"] == nil {
+	if skills["global/valid"] == nil {
 		t.Error("valid skill not found")
 	}
-	if skills["invalid"] != nil {
+	if skills["global/invalid"] != nil {
 		t.Error("invalid skill should have been skipped")
 	}
 }
@@ -260,11 +280,11 @@ func TestDiscoverCustomSkillFolder(t *testing.T) {
 
 	writeCustomSkill(t, custom, "project_hub", "[DESCRIPTION]\nFolder custom skill.\n\n[BEHAVIOR]\nFolder details.")
 
-	discovered, err := DiscoverFromDirs(builtin, custom)
+	discovered, err := discoverFromRoots(builtin, custom)
 	if err != nil {
-		t.Fatalf("DiscoverFromDirs() unexpected error: %v", err)
+		t.Fatalf("discoverFromRoots() unexpected error: %v", err)
 	}
-	skill := discovered["project_hub"]
+	skill := discovered["global/project_hub"]
 	if skill == nil {
 		t.Fatal("project_hub skill not found")
 	}
@@ -281,9 +301,9 @@ func TestDiscoverCustomSkillFolderMissingMainFile(t *testing.T) {
 		t.Fatalf("cannot create broken skill dir: %v", err)
 	}
 
-	discovered, err := DiscoverFromDirs(builtin, custom)
+	discovered, err := discoverFromRoots(builtin, custom)
 	if err != nil {
-		t.Fatalf("DiscoverFromDirs() unexpected error: %v", err)
+		t.Fatalf("discoverFromRoots() unexpected error: %v", err)
 	}
 	if len(discovered) != 0 {
 		t.Fatalf("discovered %d skills, want 0", len(discovered))
@@ -295,9 +315,9 @@ func TestDiscoverMissingDir(t *testing.T) {
 	builtin := filepath.Join(t.TempDir(), "nonexistent_builtin")
 	custom := filepath.Join(t.TempDir(), "nonexistent_custom")
 
-	skills, err := DiscoverFromDirs(builtin, custom)
+	skills, err := discoverFromRoots(builtin, custom)
 	if err != nil {
-		t.Fatalf("DiscoverFromDirs() unexpected error: %v", err)
+		t.Fatalf("discoverFromRoots() unexpected error: %v", err)
 	}
 	if len(skills) != 0 {
 		t.Errorf("discovered %d skills from missing dirs, want 0", len(skills))
@@ -309,12 +329,12 @@ func TestDiscoverSkipsNonMd(t *testing.T) {
 	builtin := filepath.Join(t.TempDir(), "builtin")
 	custom := filepath.Join(t.TempDir(), "custom")
 
-	writeSkill(t, builtin, "valid.md", "[DESCRIPTION]\nValid.\n\n[BEHAVIOR]\nValid details.")
+	writeCustomSkill(t, builtin, "valid", "[DESCRIPTION]\nValid.\n\n[BEHAVIOR]\nValid details.")
 	writeSkill(t, builtin, "readme.txt", "not a skill")
 
-	skills, err := DiscoverFromDirs(builtin, custom)
+	skills, err := discoverFromRoots(builtin, custom)
 	if err != nil {
-		t.Fatalf("DiscoverFromDirs() unexpected error: %v", err)
+		t.Fatalf("discoverFromRoots() unexpected error: %v", err)
 	}
 	if len(skills) != 1 {
 		t.Errorf("discovered %d skills, want 1 (txt skipped)", len(skills))
@@ -326,15 +346,15 @@ func TestDiscoverSkipsDirs(t *testing.T) {
 	builtin := filepath.Join(t.TempDir(), "builtin")
 	custom := filepath.Join(t.TempDir(), "custom")
 
-	writeSkill(t, builtin, "valid.md", "[DESCRIPTION]\nValid.\n\n[BEHAVIOR]\nValid details.")
+	writeCustomSkill(t, builtin, "valid", "[DESCRIPTION]\nValid.\n\n[BEHAVIOR]\nValid details.")
 	subdir := filepath.Join(builtin, "subdir")
 	if err := os.MkdirAll(subdir, 0755); err != nil {
 		t.Fatalf("cannot create subdir: %v", err)
 	}
 
-	skills, err := DiscoverFromDirs(builtin, custom)
+	skills, err := discoverFromRoots(builtin, custom)
 	if err != nil {
-		t.Fatalf("DiscoverFromDirs() unexpected error: %v", err)
+		t.Fatalf("discoverFromRoots() unexpected error: %v", err)
 	}
 	if len(skills) != 1 {
 		t.Errorf("discovered %d skills, want 1 (subdir skipped)", len(skills))
