@@ -37,6 +37,7 @@ const (
 	colorBlue        = "\033[34m"
 	colorPurple      = "\033[35m"
 	colorOrange      = "\033[33m"
+	colorBrightBlue  = "\033[1;34m"
 )
 
 // slashCmd holds a slash command and its description for the startup splash.
@@ -258,15 +259,15 @@ func (c *Console) responseSeparator() {
 	}
 
 	if c.IsTTY {
-		fmt.Fprintln(c.Out, c.color(colorOrange, topLine))
-		fmt.Fprint(c.Out, c.color(colorOrange, vChar))
-		fmt.Fprint(c.Out, c.color(colorBlue, cell1))
-		fmt.Fprint(c.Out, c.color(colorOrange, vChar))
-		fmt.Fprint(c.Out, c.color(colorBlue, cell2))
-		fmt.Fprint(c.Out, c.color(colorOrange, vChar))
-		fmt.Fprint(c.Out, c.color(colorBlue, cell3))
-		fmt.Fprintln(c.Out, c.color(colorOrange, vChar))
-		fmt.Fprintln(c.Out, c.color(colorOrange, botLine))
+		fmt.Fprintln(c.Out, c.color(colorBrightBlue, topLine))
+		fmt.Fprint(c.Out, c.color(colorBrightBlue, vChar))
+		fmt.Fprint(c.Out, c.color(colorOrange, cell1))
+		fmt.Fprint(c.Out, c.color(colorBrightBlue, vChar))
+		fmt.Fprint(c.Out, c.color(colorOrange, cell2))
+		fmt.Fprint(c.Out, c.color(colorBrightBlue, vChar))
+		fmt.Fprint(c.Out, c.color(colorOrange, cell3))
+		fmt.Fprintln(c.Out, c.color(colorBrightBlue, vChar))
+		fmt.Fprintln(c.Out, c.color(colorBrightBlue, botLine))
 		return
 	}
 	fmt.Fprintln(c.Out, topLine)
@@ -328,11 +329,11 @@ func (c *Console) showStartupSplash() {
 	char := "─"
 	topLine := "┌" + strings.Repeat(char, width) + "┐"
 	botLine := "└" + strings.Repeat(char, width) + "┘"
-	fmt.Fprintln(c.Out, c.color(colorOrange, topLine))
-	fmt.Fprint(c.Out, c.color(colorOrange, "│ "))
-	fmt.Fprint(c.Out, c.color(colorBlue, title))
-	fmt.Fprintln(c.Out, c.color(colorOrange, "   │"))
-	fmt.Fprintln(c.Out, c.color(colorOrange, botLine))
+	fmt.Fprintln(c.Out, c.color(colorBrightBlue, topLine))
+	fmt.Fprint(c.Out, c.color(colorBrightBlue, "│ "))
+	fmt.Fprint(c.Out, c.color(colorOrange, title))
+	fmt.Fprintln(c.Out, c.color(colorBrightBlue, "   │"))
+	fmt.Fprintln(c.Out, c.color(colorBrightBlue, botLine))
 	fmt.Fprintln(c.Out)
 
 	// Commands section.
@@ -366,10 +367,10 @@ func (c *Console) showStartupSplash() {
 			}
 		}
 		colWidth := maxName + 3
-		if colWidth < 22 {
-			colWidth = 22
+		if colWidth < 30 {
+			colWidth = 30
 		}
-		cols := 3
+		cols := 2
 		for i, name := range displayNames {
 			fmt.Fprintf(c.Out, "  %-*s", colWidth, name)
 			if (i+1)%cols == 0 {
