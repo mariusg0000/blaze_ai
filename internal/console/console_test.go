@@ -33,7 +33,7 @@ func mockAgent(t *testing.T) *runtime.Agent {
 	os.MkdirAll(promptsDir, 0755)
 	writePromptFixtures(t, promptsDir)
 
-	agent, err := runtime.NewAgent(cfg, sess, platform.Linux, os.DirFS(filepath.Join(dir, "skills")), os.DirFS(promptsDir), dir, &mockHandler{})
+	agent, err := runtime.NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{})
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
@@ -83,7 +83,7 @@ func setupStreamingConsole(t *testing.T, handler http.HandlerFunc) (*Console, *b
 	promptsDir := filepath.Join(dir, "prompts")
 	os.MkdirAll(promptsDir, 0755)
 	writePromptFixtures(t, promptsDir)
-	agent, err := runtime.NewAgent(cfg, sess, platform.Linux, os.DirFS(filepath.Join(dir, "skills")), os.DirFS(promptsDir), dir, &mockHandler{})
+	agent, err := runtime.NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{})
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
@@ -738,5 +738,121 @@ func TestReadEventNonTTYEOF(t *testing.T) {
 	_, _, err := r.ReadEvent()
 	if err == nil {
 		t.Error("ReadEvent() expected EOF, got nil")
+	}
+}
+
+// writeSkillDir creates a skill folder with skill.md under a skills root.
+func writeSkillDir(t *testing.T, root, name, content string) {
+	t.Helper()
+	skillDir := filepath.Join(root, name)
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("cannot create skill dir %s: %v", skillDir, err)
+	}
+	path := filepath.Join(skillDir, "skill.md")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("cannot write skill %s: %v", path, err)
+	}
+}
+
+// TestStartupSplashTTY verifies the full splash output in TTY mode with skills.
+func TestStartupSplashTTY(t *testing.T) {
+	agent := mockAgent(t)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("UserHomeDir: %v", err)
+	}
+	skillsDir := filepath.Join(home, "blazeai", "skills")
+	writeSkillDir(t, skillsDir, "music_player", "[DESCRIPTION]\nMusic player skill.\n[DATA]\nk=v\n")
+	writeSkillDir(t, skillsDir, "my-network", "[DESCRIPTION]\nNetwork info.\n[DATA]\nip=1.2.3.4\n")
+
+	out := &bytes.Buffer{}
+	c := &Console{
+		Out:   out,
+		IsTTY: true,
+		Agent: agent,
+	}
+	c.showStartupSplash()
+
+	output := out.String()
+	if !strings.Contains(output, "BlazeAI") {
+		t.Error("output missing title")
+	}
+	if !strings.Contains(output, "blazing-fast AI terminal agent") {
+		t.Error("output missing subtitle")
+	}
+	if !strings.Contains(output, "Commands") {
+		t.Error("output missing Commands section")
+	}
+	if !strings.Contains(output, "/model [model]") {
+		t.Error("output missing /model command")
+	}
+	if !strings.Contains(output, "/cd <path>") {
+		t.Error("output missing /cd command")
+	}
+	if !strings.Contains(output, "/clear") {
+		t.Error("output missing /clear command")
+	}
+	if !strings.Contains(output, "/new") {
+		t.Error("output missing /new command")
+	}
+	if !strings.Contains(output, "/exit") {
+		t.Error("output missing /exit command")
+	}
+	if !strings.Contains(output, "Skills") {
+		t.Error("output missing Skills section")
+	}
+	if !strings.Contains(output, "music_player") {
+		t.Error("output missing music_player skill")
+	}
+	if !strings.Contains(output, "my-network") {
+		t.Error("output missing my-network skill")
+	}
+	if strings.Contains(output, "global/") {
+		t.Error("output contains global/ prefix on skill names")
+	}
+	if !strings.Contains(output, "Model") {
+		t.Error("output missing Model line")
+	}
+	if !strings.Contains(output, "Folder") {
+		t.Error("output missing Folder line")
+	}
+	if !strings.Contains(output, "Session") {
+		t.Error("output missing Session section")
+	}
+}
+
+// TestStartupSplashNonTTY verifies splash produces no output in non-TTY mode.
+func TestStartupSplashNonTTY(t *testing.T) {
+	agent := mockAgent(t)
+	out := &bytes.Buffer{}
+	c := &Console{
+		Out:   out,
+		IsTTY: false,
+		Agent: agent,
+	}
+	c.showStartupSplash()
+
+	output := out.String()
+	if output != "" {
+		t.Errorf("non-TTY splash should be empty, got: %q", output)
+	}
+}
+
+// TestStartupSplashSkillsEmpty verifies splash shows (none) when no skills exist.
+func TestStartupSplashSkillsEmpty(t *testing.T) {
+	agent := mockAgent(t)
+	// mockAgent sets HOME to a temp dir with no blazeai/skills/.
+	// DiscoverAll returns empty map, not an error.
+	out := &bytes.Buffer{}
+	c := &Console{
+		Out:   out,
+		IsTTY: true,
+		Agent: agent,
+	}
+	c.showStartupSplash()
+
+	output := out.String()
+	if !strings.Contains(output, "(none)") {
+		t.Errorf("expected (none) for empty skills, got: %q", output)
 	}
 }

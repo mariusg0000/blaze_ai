@@ -20,6 +20,7 @@ import (
 
 	"blazeai/internal/config"
 	"blazeai/internal/runtime"
+	"blazeai/internal/skills"
 )
 
 // ANSI color codes for TTY output.
@@ -37,6 +38,21 @@ const (
 	colorPurple      = "\033[35m"
 	colorOrange      = "\033[33m"
 )
+
+// slashCmd holds a slash command and its description for the startup splash.
+type slashCmd struct {
+	cmd  string
+	desc string
+}
+
+// slashCommands lists all available slash commands for the startup splash.
+var slashCommands = []slashCmd{
+	{"/model [model]", "list or switch model"},
+	{"/cd <path>", "change working folder"},
+	{"/clear", "clear current session"},
+	{"/new", "start a clean session"},
+	{"/exit", "close session cleanly"},
+}
 
 // Console is the console transport implementing runtime.Handler.
 //
@@ -242,9 +258,15 @@ func (c *Console) responseSeparator() {
 	}
 
 	if c.IsTTY {
-		fmt.Fprintln(c.Out, c.color(colorPurple, topLine))
-		fmt.Fprintln(c.Out, c.color(colorPurple, midLine))
-		fmt.Fprintln(c.Out, c.color(colorPurple, botLine))
+		fmt.Fprintln(c.Out, c.color(colorOrange, topLine))
+		fmt.Fprint(c.Out, c.color(colorOrange, vChar))
+		fmt.Fprint(c.Out, c.color(colorBlue, cell1))
+		fmt.Fprint(c.Out, c.color(colorOrange, vChar))
+		fmt.Fprint(c.Out, c.color(colorBlue, cell2))
+		fmt.Fprint(c.Out, c.color(colorOrange, vChar))
+		fmt.Fprint(c.Out, c.color(colorBlue, cell3))
+		fmt.Fprintln(c.Out, c.color(colorOrange, vChar))
+		fmt.Fprintln(c.Out, c.color(colorOrange, botLine))
 		return
 	}
 	fmt.Fprintln(c.Out, topLine)
@@ -288,6 +310,99 @@ func truncatePathTail(path string, maxLen int) string {
 		return path
 	}
 	return "..." + path[len(path)-maxLen+3:]
+}
+
+// showStartupSplash prints the welcome screen with title, commands, skills, model and work folder.
+//
+// WHAT:  Renders the startup welcome screen once at session start.
+// WHY:   Gives the user an immediate overview of available commands, skills, and current state.
+// HOW:   Boxed title, section labels with muted separators, columnar skill names, session info.
+func (c *Console) showStartupSplash() {
+	if !c.IsTTY {
+		return
+	}
+
+	// Title box.
+	title := "BlazeAI — blazing-fast AI terminal agent"
+	width := len(title) + 2
+	char := "─"
+	topLine := "┌" + strings.Repeat(char, width) + "┐"
+	botLine := "└" + strings.Repeat(char, width) + "┘"
+	fmt.Fprintln(c.Out, c.color(colorOrange, topLine))
+	fmt.Fprint(c.Out, c.color(colorOrange, "│ "))
+	fmt.Fprint(c.Out, c.color(colorBlue, title))
+	fmt.Fprintln(c.Out, c.color(colorOrange, "   │"))
+	fmt.Fprintln(c.Out, c.color(colorOrange, botLine))
+	fmt.Fprintln(c.Out)
+
+	// Commands section.
+	c.sectionLabel("Commands", colorBlue)
+	maxCmd := 0
+	for _, sc := range slashCommands {
+		if len(sc.cmd) > maxCmd {
+			maxCmd = len(sc.cmd)
+		}
+	}
+	for _, sc := range slashCommands {
+		fmt.Fprintf(c.Out, "  %-*s  %s\n", maxCmd, sc.cmd, sc.desc)
+	}
+	fmt.Fprintln(c.Out)
+
+	// Skills section.
+	c.sectionLabel("Skills", colorGreen)
+	all, err := skills.DiscoverAll(c.Agent.WorkDir)
+	if err != nil {
+		fmt.Fprintf(c.Out, "  unavailable: %v\n", err)
+	} else if len(all) == 0 {
+		fmt.Fprintln(c.Out, "  (none)")
+	} else {
+		names := skills.SortedNames(all)
+		displayNames := make([]string, len(names))
+		maxName := 0
+		for i, name := range names {
+			displayNames[i] = formatSkillName(name)
+			if len(displayNames[i]) > maxName {
+				maxName = len(displayNames[i])
+			}
+		}
+		colWidth := maxName + 3
+		if colWidth < 22 {
+			colWidth = 22
+		}
+		cols := 3
+		for i, name := range displayNames {
+			fmt.Fprintf(c.Out, "  %-*s", colWidth, name)
+			if (i+1)%cols == 0 {
+				fmt.Fprintln(c.Out)
+			}
+		}
+		if len(displayNames)%cols != 0 {
+			fmt.Fprintln(c.Out)
+		}
+	}
+	fmt.Fprintln(c.Out)
+
+	// Session section.
+	c.sectionLabel("Session", colorOrange)
+	fmt.Fprintf(c.Out, "  %-6s  %s\n", c.bold("Model"), c.Agent.ModelID)
+	fmt.Fprintf(c.Out, "  %-6s %s\n", c.bold("Folder"), c.Agent.WorkDir)
+	fmt.Fprintln(c.Out)
+}
+
+// sectionLabel prints a colored bold section label followed by a light gray dash separator to dividerWidth.
+//
+// WHAT:  Renders a section header with accent color on the label and subtle separator line.
+// PARAMS: label — section name; labelColor — ANSI color for the label.
+func (c *Console) sectionLabel(label string, labelColor string) {
+	fill := strings.Repeat("─", dividerWidth-len(label)-1)
+	fmt.Fprint(c.Out, c.color(labelColor, c.bold(label+" ")))
+	fmt.Fprintln(c.Out, c.color(colorLightGray, fill))
+}
+
+// formatSkillName strips the scope prefix from a skill ID for display.
+// global/name becomes name; project/name is kept as-is.
+func formatSkillName(name string) string {
+	return strings.TrimPrefix(name, "global/")
 }
 
 // OnUsage records the prompt token count from the latest provider response.
@@ -801,6 +916,7 @@ func (c *Console) promptLabel() string {
 // On non-TTY: uses buffered input with a background goroutine.
 // RETURNS: error if a fatal error occurs.
 func (c *Console) Run() error {
+	c.showStartupSplash()
 	if c.IsTTY {
 		return c.runTTY()
 	}
