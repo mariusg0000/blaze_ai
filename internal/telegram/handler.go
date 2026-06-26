@@ -17,9 +17,12 @@ const (
 	maxTelegramTextSize  = 3500
 )
 
+var typingActionInterval = 4 * time.Second
+
 type messenger interface {
 	SendMessage(ctx context.Context, chatID int64, text string) (int, error)
 	EditMessage(ctx context.Context, chatID int64, messageID int, text string) error
+	SendChatAction(ctx context.Context, chatID int64, action string) error
 }
 
 // Handler adapts runtime streaming callbacks to Telegram messages.
@@ -51,7 +54,6 @@ func NewHandler(client messenger, chatID int64) *Handler {
 // BeginTurn resets the streaming state and starts periodic flushing.
 func (h *Handler) BeginTurn(ctx context.Context) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.ctx = ctx
 	h.content.Reset()
 	h.sentIDs = nil
@@ -60,7 +62,10 @@ func (h *Handler) BeginTurn(ctx context.Context) {
 	h.lastErr = nil
 	h.stopFlush = make(chan struct{})
 	h.flushDone = make(chan struct{})
+	h.mu.Unlock()
+	h.sendTypingNow()
 	go h.flushLoop()
+	go h.typingLoop()
 }
 
 // FinishTurn stops periodic flushing and sends the final buffered content.
@@ -125,6 +130,35 @@ func (h *Handler) flushLoop() {
 			return
 		}
 	}
+}
+
+func (h *Handler) typingLoop() {
+	ticker := time.NewTicker(typingActionInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			h.sendTypingNow()
+		case <-h.stopFlush:
+			return
+		}
+	}
+}
+
+func (h *Handler) sendTypingNow() {
+	h.mu.Lock()
+	client := h.client
+	chatID := h.chatID
+	ctx := h.ctx
+	active := h.active
+	h.mu.Unlock()
+	if !active || client == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_ = client.SendChatAction(ctx, chatID, "typing")
 }
 
 func (h *Handler) flushNow() {

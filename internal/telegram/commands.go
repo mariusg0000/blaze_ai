@@ -13,6 +13,11 @@ import (
 	"blazeai/internal/runtime"
 )
 
+type botCommand struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}
+
 // HandleCommand processes a Telegram slash command.
 //
 // WHAT:  Executes bridge-local command behavior for Telegram.
@@ -76,6 +81,16 @@ func telegramHelpText() string {
 		"/exit - close the current session cleanly without stopping the bot",
 		"This bot accepts messages only from its configured Telegram chat.",
 	}, "\n")
+}
+
+func telegramBotCommands() []botCommand {
+	return []botCommand{
+		{Command: "help", Description: "show supported commands"},
+		{Command: "model", Description: "show or change the instance model"},
+		{Command: "clear", Description: "clear the current conversation"},
+		{Command: "new", Description: "clear the current conversation"},
+		{Command: "exit", Description: "close the current session cleanly"},
+	}
 }
 
 func formatModelInfo(agent *runtime.Agent, cfg *config.Config) string {

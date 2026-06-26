@@ -31,6 +31,8 @@ type telegramClient interface {
 	GetUpdates(ctx context.Context, offset int, timeoutSeconds int) ([]Update, error)
 	SendMessage(ctx context.Context, chatID int64, text string) (int, error)
 	EditMessage(ctx context.Context, chatID int64, messageID int, text string) error
+	SetCommands(ctx context.Context, commands []botCommand) error
+	SendChatAction(ctx context.Context, chatID int64, action string) error
 }
 
 // Run starts one Telegram bridge instance and blocks in the polling loop.
@@ -78,9 +80,19 @@ Keep replies concise for chat and avoid unnecessary tool chatter.`, instance))
 		return fmt.Errorf("cannot apply telegram instance model: %w", err)
 	}
 	client := NewBotClient(bridgeCfg.BotToken)
+	if err := publishTelegramCommands(ctx, client); err != nil {
+		return err
+	}
 	handler := NewHandler(client, bridgeCfg.AllowedChatID)
 	agent.Handler = handler
 	return runPolling(ctx, client, bridgeCfg, state, statePath, agent, cfg, handler)
+}
+
+func publishTelegramCommands(ctx context.Context, client telegramClient) error {
+	if err := client.SetCommands(ctx, telegramBotCommands()); err != nil {
+		return fmt.Errorf("cannot publish telegram bot commands: %w", err)
+	}
+	return nil
 }
 
 func openTelegramSession(sessionDir string) (*session.Session, bool, error) {
@@ -230,6 +242,10 @@ type apiResponse struct {
 	Description string `json:"description,omitempty"`
 }
 
+type setCommandsRequest struct {
+	Commands []botCommand `json:"commands"`
+}
+
 // GetUpdates fetches long-poll updates from Telegram.
 func (c *BotClient) GetUpdates(ctx context.Context, offset int, timeoutSeconds int) ([]Update, error) {
 	values := url.Values{}
@@ -284,6 +300,47 @@ func (c *BotClient) EditMessage(ctx context.Context, chatID int64, messageID int
 	}
 	if !resp.OK {
 		return fmt.Errorf("telegram editMessageText failed: %s", resp.Description)
+	}
+	return nil
+}
+
+// SetCommands publishes the Telegram bot command menu.
+func (c *BotClient) SetCommands(ctx context.Context, commands []botCommand) error {
+	payload, err := json.Marshal(setCommandsRequest{Commands: commands})
+	if err != nil {
+		return fmt.Errorf("cannot marshal setMyCommands request: %w", err)
+	}
+	values := url.Values{}
+	values.Set("commands", string(payload))
+	body, err := c.doJSONRequest(ctx, "setMyCommands", values)
+	if err != nil {
+		return err
+	}
+	var resp apiResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return fmt.Errorf("cannot parse setMyCommands response: %w", err)
+	}
+	if !resp.OK {
+		return fmt.Errorf("telegram setMyCommands failed: %s", resp.Description)
+	}
+	return nil
+}
+
+// SendChatAction publishes a transient activity indicator like typing.
+func (c *BotClient) SendChatAction(ctx context.Context, chatID int64, action string) error {
+	values := url.Values{}
+	values.Set("chat_id", fmt.Sprintf("%d", chatID))
+	values.Set("action", action)
+	body, err := c.doJSONRequest(ctx, "sendChatAction", values)
+	if err != nil {
+		return err
+	}
+	var resp apiResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return fmt.Errorf("cannot parse sendChatAction response: %w", err)
+	}
+	if !resp.OK {
+		return fmt.Errorf("telegram sendChatAction failed: %s", resp.Description)
 	}
 	return nil
 }

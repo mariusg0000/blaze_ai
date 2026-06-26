@@ -15,8 +15,9 @@ type mockUpdateClient struct {
 		offset  int
 		timeout int
 	}
-	updates []Update
-	err     error
+	updates  []Update
+	err      error
+	commands [][]botCommand
 }
 
 func (m *mockUpdateClient) GetUpdates(_ context.Context, offset int, timeoutSeconds int) ([]Update, error) {
@@ -32,6 +33,16 @@ func (m *mockUpdateClient) SendMessage(_ context.Context, _ int64, _ string) (in
 }
 
 func (m *mockUpdateClient) EditMessage(_ context.Context, _ int64, _ int, _ string) error {
+	return nil
+}
+
+func (m *mockUpdateClient) SetCommands(_ context.Context, commands []botCommand) error {
+	copyCommands := append([]botCommand(nil), commands...)
+	m.commands = append(m.commands, copyCommands)
+	return nil
+}
+
+func (m *mockUpdateClient) SendChatAction(_ context.Context, _ int64, _ string) error {
 	return nil
 }
 
@@ -67,6 +78,22 @@ func TestNextOffsetFromUpdatesKeepsHigherInitialOffset(t *testing.T) {
 	offset := nextOffsetFromUpdates([]Update{{UpdateID: 10}, {UpdateID: 11}}, 20)
 	if offset != 20 {
 		t.Fatalf("offset = %d, want 20", offset)
+	}
+}
+
+func TestPublishTelegramCommandsUsesSupportedCommandList(t *testing.T) {
+	client := &mockUpdateClient{}
+	if err := publishTelegramCommands(context.Background(), client); err != nil {
+		t.Fatalf("publishTelegramCommands() error: %v", err)
+	}
+	if len(client.commands) != 1 {
+		t.Fatalf("SetCommands calls = %d, want 1", len(client.commands))
+	}
+	if len(client.commands[0]) != len(telegramBotCommands()) {
+		t.Fatalf("published commands = %d, want %d", len(client.commands[0]), len(telegramBotCommands()))
+	}
+	if client.commands[0][0].Command != "help" {
+		t.Fatalf("first published command = %q, want help", client.commands[0][0].Command)
 	}
 }
 

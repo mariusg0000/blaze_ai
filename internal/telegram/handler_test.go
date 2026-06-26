@@ -10,10 +10,11 @@ import (
 )
 
 type mockMessenger struct {
-	nextID int
-	sent   []string
-	edits  []string
-	ids    []int
+	nextID  int
+	sent    []string
+	edits   []string
+	ids     []int
+	actions []string
 }
 
 func (m *mockMessenger) SendMessage(_ context.Context, _ int64, text string) (int, error) {
@@ -25,6 +26,11 @@ func (m *mockMessenger) SendMessage(_ context.Context, _ int64, text string) (in
 
 func (m *mockMessenger) EditMessage(_ context.Context, _ int64, messageID int, text string) error {
 	m.edits = append(m.edits, fmt.Sprintf("%d:%s", messageID, text))
+	return nil
+}
+
+func (m *mockMessenger) SendChatAction(_ context.Context, _ int64, action string) error {
+	m.actions = append(m.actions, action)
 	return nil
 }
 
@@ -42,6 +48,9 @@ func TestHandlerFinishTurnSendsBufferedContent(t *testing.T) {
 	}
 	if m.sent[0] != "Hello world" {
 		t.Fatalf("sent text = %q", m.sent[0])
+	}
+	if len(m.actions) == 0 || m.actions[0] != "typing" {
+		t.Fatalf("typing actions = %v, want first action typing", m.actions)
 	}
 }
 

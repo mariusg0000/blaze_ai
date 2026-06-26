@@ -139,4 +139,17 @@ func TestHandleCommandStartReturnsHelp(t *testing.T) {
 	}
 }
 
+func TestTelegramBotCommandsIncludeSupportedMenuEntries(t *testing.T) {
+	commands := telegramBotCommands()
+	if len(commands) != 5 {
+		t.Fatalf("commands = %d, want 5", len(commands))
+	}
+	if commands[0].Command != "help" || commands[1].Command != "model" {
+		t.Fatalf("unexpected leading commands: %#v", commands[:2])
+	}
+	if commands[len(commands)-1].Command != "exit" {
+		t.Fatalf("last command = %q, want exit", commands[len(commands)-1].Command)
+	}
+}
+
 var _ = http.MethodGet
