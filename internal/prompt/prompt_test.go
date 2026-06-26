@@ -70,7 +70,7 @@ func writeFile(t *testing.T, path, content string) {
 // writePromptFixtures creates the prompt templates required by runtime prompt assembly.
 func writePromptFixtures(t *testing.T, promptsDir string) {
 	t.Helper()
-	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n{OS_PROMPT}\n\n## Host Environment Helpers\n{HOST_HELPERS_ADVISORY}\n\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n")
+	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n{OS_PROMPT}\n\n## Transport\n{TRANSPORT_CONTEXT}\n\n## Host Environment Helpers\n{HOST_HELPERS_ADVISORY}\n\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n")
 	writeFile(t, filepath.Join(promptsDir, "sysprompt.linux.md"), "# Linux System Prompt\n\nScripts at {APP_HOME}/scripts/.\n")
 }
 
@@ -311,6 +311,28 @@ func TestBuildRuntimePartActiveSkills(t *testing.T) {
 	}
 	if !strings.Contains(result, "api.url") {
 		t.Error("runtime part missing active skill data")
+	}
+}
+
+// TestBuildRuntimePartTransportContext verifies optional transport guidance injection.
+func TestBuildRuntimePartTransportContext(t *testing.T) {
+	promptsFS, workDir := setupTestDirs(t)
+
+	b := &Builder{
+		PromptsFS:        promptsFS,
+		WorkDir:          workDir,
+		OS:               platform.Linux,
+		TransportContext: "Telegram bridge active.",
+	}
+	result, err := b.BuildRuntimePart(skills.NewActiveList())
+	if err != nil {
+		t.Fatalf("BuildRuntimePart() error: %v", err)
+	}
+	if !strings.Contains(result, "## Transport") {
+		t.Fatal("runtime part missing transport section")
+	}
+	if !strings.Contains(result, "Telegram bridge active.") {
+		t.Fatal("runtime part missing injected transport context")
 	}
 }
 

@@ -40,15 +40,17 @@ var variablePattern = regexp.MustCompile(`\{([A-Z_][A-Z0-9_]*)\}`)
 //	WorkDir — current work folder for project-map.md, AGENTS.md, and project skill discovery;
 //	OS — the detected operating system for selecting the OS-specific prompt;
 //	OSInfo — human-readable OS description injected as {OS_INFO};
+//	TransportContext — optional transport-specific guidance injected as {TRANSPORT_CONTEXT};
 //	HelperSetup — user UX preferences for host helper installation prompts;
 //	HelperLookup — binary lookup function for helper detection (injectable for tests).
 type Builder struct {
-	PromptsFS    fs.FS
-	WorkDir      string
-	OS           platform.OS
-	OSInfo       string
-	HelperSetup  config.HelperSetup
-	HelperLookup helpers.LookupFunc
+	PromptsFS        fs.FS
+	WorkDir          string
+	OS               platform.OS
+	OSInfo           string
+	TransportContext string
+	HelperSetup      config.HelperSetup
+	HelperLookup     helpers.LookupFunc
 }
 
 // injectVariables replaces known variable placeholders in text with resolved values.
@@ -114,6 +116,8 @@ func (b *Builder) injectTemplateVariables(text string, extra map[string]string, 
 				return "NULL"
 			}
 			return b.OSInfo
+		case "TRANSPORT_CONTEXT":
+			return b.TransportContext
 		case "SKILL_DIR":
 			if skillDir != "" {
 				return skillDir

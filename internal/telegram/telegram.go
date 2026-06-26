@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -52,7 +53,7 @@ func Run(ctx context.Context, cfg *config.Config, osType platform.OS, promptsFS 
 	if err != nil {
 		return err
 	}
-	sessDir := filepath.Join(instanceDir, "sessions")
+	sessDir := filepath.Join(instanceDir, "session")
 	sess, resumed, err := openTelegramSession(sessDir)
 	if err != nil {
 		return err
@@ -61,6 +62,13 @@ func Run(ctx context.Context, cfg *config.Config, osType platform.OS, promptsFS 
 	if err != nil {
 		return fmt.Errorf("cannot create telegram agent: %w", err)
 	}
+	agent.Builder.TransportContext = strings.TrimSpace(fmt.Sprintf(`Telegram bridge transport is active.
+Telegram instance: %s
+Replies are sent into a Telegram chat, not an interactive terminal.
+Exactly one configured chat can reach this instance.
+Do not start, restart, or duplicate BlazeAI or Telegram bridge processes unless the user explicitly asks.
+Do not treat generic greetings or /start as setup instructions.
+Keep replies concise for chat and avoid unnecessary tool chatter.`, instance))
 	if resumed && agent.Compactor != nil {
 		if err := agent.Compactor.RebuildForResume(sess); err != nil {
 			return fmt.Errorf("cannot rebuild summaries for telegram resume: %w", err)
@@ -75,16 +83,23 @@ func Run(ctx context.Context, cfg *config.Config, osType platform.OS, promptsFS 
 	return runPolling(ctx, client, bridgeCfg, state, statePath, agent, cfg, handler)
 }
 
-func openTelegramSession(sessionsDir string) (*session.Session, bool, error) {
-	sess, err := session.LastInDir(sessionsDir)
+func openTelegramSession(sessionDir string) (*session.Session, bool, error) {
+	sess, err := session.Load(sessionDir)
 	if err == nil {
 		return sess, true, nil
 	}
-	if !errors.Is(err, session.ErrNoSessions) {
+	if !errors.Is(err, session.ErrSessionNotFound) {
 		return nil, false, fmt.Errorf("cannot load telegram session: %w", err)
 	}
-	sess, err = session.CreateInDir(sessionsDir)
-	if err != nil {
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		return nil, false, fmt.Errorf("cannot create telegram session folder: %w", err)
+	}
+	sess = &session.Session{
+		Messages:      []session.Message{},
+		ClosedCleanly: false,
+		Folder:        sessionDir,
+	}
+	if err := sess.Save(); err != nil {
 		return nil, false, fmt.Errorf("cannot create telegram session: %w", err)
 	}
 	return sess, false, nil

@@ -34,6 +34,10 @@ Direct shell-native for simple tasks; OS-native scripts for complex tasks.
 
 {OS_PROMPT}
 
+[TRANSPORT]
+
+{TRANSPORT_CONTEXT}
+
 [OUTPUT STYLE]
 
 Use compact, visually pleasant Markdown. Supported syntax: headings (`#`), bullet lists (`-`/`*`), numbered lists (`1.`), fenced code blocks, inline `code`, **bold**, *italic*, and links.

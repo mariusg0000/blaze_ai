@@ -81,7 +81,7 @@ https://api.telegram.org/bot<token>/getUpdates
 - Instance directory: `{APP_HOME}/telegram/<instance>/`
 - Static config: `{APP_HOME}/telegram/<instance>/bridge.json`
 - Mutable state: `{APP_HOME}/telegram/<instance>/state.json`
-- Session storage: `{APP_HOME}/telegram/<instance>/sessions/`
+- Session storage: `{APP_HOME}/telegram/<instance>/session/`
 - `workdir` is the project context for the agent. It is not the Telegram instance storage folder and it does not control where Telegram sessions are stored.
 
 ### bridge.json

@@ -70,7 +70,7 @@ func TestNextOffsetFromUpdatesKeepsHigherInitialOffset(t *testing.T) {
 	}
 }
 
-func TestOpenTelegramSessionUsesInstanceSessionsDir(t *testing.T) {
+func TestOpenTelegramSessionUsesFixedInstanceSessionDir(t *testing.T) {
 	projectSessionsDir := filepath.Join(t.TempDir(), "project-sessions")
 	projectSession, err := session.CreateInDir(projectSessionsDir)
 	if err != nil {
@@ -80,16 +80,16 @@ func TestOpenTelegramSessionUsesInstanceSessionsDir(t *testing.T) {
 		t.Fatalf("project session Append() error: %v", err)
 	}
 
-	instanceSessionsDir := filepath.Join(t.TempDir(), "telegram", "home", "sessions")
-	telegramSession, resumed, err := openTelegramSession(instanceSessionsDir)
+	instanceSessionDir := filepath.Join(t.TempDir(), "telegram", "home", "session")
+	telegramSession, resumed, err := openTelegramSession(instanceSessionDir)
 	if err != nil {
 		t.Fatalf("openTelegramSession() error: %v", err)
 	}
 	if resumed {
 		t.Fatal("resumed = true, want false for a new Telegram instance session")
 	}
-	if filepath.Dir(telegramSession.Folder) != instanceSessionsDir {
-		t.Fatalf("session folder parent = %q, want %q", filepath.Dir(telegramSession.Folder), instanceSessionsDir)
+	if telegramSession.Folder != instanceSessionDir {
+		t.Fatalf("session folder = %q, want %q", telegramSession.Folder, instanceSessionDir)
 	}
 	if telegramSession.Folder == projectSession.Folder {
 		t.Fatal("telegram session reused the project session folder")
@@ -118,11 +118,42 @@ func TestOpenTelegramSessionUsesInstanceSessionsDir(t *testing.T) {
 	if _, err := session.LastInDir(projectSessionsDir); err != nil {
 		t.Fatalf("session.LastInDir(project) error: %v", err)
 	}
-	lastTelegramSession, err := session.LastInDir(instanceSessionsDir)
+	lastTelegramSession, err := session.Load(instanceSessionDir)
 	if err != nil {
-		t.Fatalf("session.LastInDir(telegram) error: %v", err)
+		t.Fatalf("session.Load(telegram) error: %v", err)
 	}
 	if lastTelegramSession.Folder != telegramSession.Folder {
 		t.Fatalf("last telegram session folder = %q, want %q", lastTelegramSession.Folder, telegramSession.Folder)
+	}
+}
+
+func TestOpenTelegramSessionResumesSameFixedSession(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "telegram", "home", "session")
+	created, resumed, err := openTelegramSession(sessionDir)
+	if err != nil {
+		t.Fatalf("openTelegramSession() create error: %v", err)
+	}
+	if resumed {
+		t.Fatal("resumed = true, want false on first open")
+	}
+	if err := created.Append(session.Message{Role: "user", Content: "hello telegram"}); err != nil {
+		t.Fatalf("Append() error: %v", err)
+	}
+
+	loaded, resumed, err := openTelegramSession(sessionDir)
+	if err != nil {
+		t.Fatalf("openTelegramSession() resume error: %v", err)
+	}
+	if !resumed {
+		t.Fatal("resumed = false, want true on second open")
+	}
+	if loaded.Folder != sessionDir {
+		t.Fatalf("loaded folder = %q, want %q", loaded.Folder, sessionDir)
+	}
+	if len(loaded.Messages) != 1 {
+		t.Fatalf("loaded messages = %d, want 1", len(loaded.Messages))
+	}
+	if loaded.Messages[0].Content != "hello telegram" {
+		t.Fatalf("loaded content = %v, want hello telegram", loaded.Messages[0].Content)
 	}
 }
