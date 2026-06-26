@@ -242,10 +242,6 @@ type apiResponse struct {
 	Description string `json:"description,omitempty"`
 }
 
-type setCommandsRequest struct {
-	Commands []botCommand `json:"commands"`
-}
-
 // GetUpdates fetches long-poll updates from Telegram.
 func (c *BotClient) GetUpdates(ctx context.Context, offset int, timeoutSeconds int) ([]Update, error) {
 	values := url.Values{}
@@ -306,7 +302,7 @@ func (c *BotClient) EditMessage(ctx context.Context, chatID int64, messageID int
 
 // SetCommands publishes the Telegram bot command menu.
 func (c *BotClient) SetCommands(ctx context.Context, commands []botCommand) error {
-	payload, err := json.Marshal(setCommandsRequest{Commands: commands})
+	payload, err := json.Marshal(commands)
 	if err != nil {
 		return fmt.Errorf("cannot marshal setMyCommands request: %w", err)
 	}
