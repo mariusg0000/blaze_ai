@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"blazeai/internal/config"
@@ -121,6 +122,20 @@ func TestHandleCommandExitClosesSession(t *testing.T) {
 	}
 	if !loaded.ClosedCleanly {
 		t.Fatal("ClosedCleanly = false, want true")
+	}
+}
+
+func TestHandleCommandStartReturnsHelp(t *testing.T) {
+	agent, cfg, state, statePath := newTelegramAgent(t)
+	handled, response, err := HandleCommand(context.Background(), "/start", agent, cfg, state, statePath)
+	if err != nil {
+		t.Fatalf("HandleCommand() error: %v", err)
+	}
+	if !handled {
+		t.Fatal("HandleCommand() should handle /start")
+	}
+	if !strings.Contains(response, "Supported commands:") {
+		t.Fatalf("response = %q, want help text", response)
 	}
 }
 

@@ -23,6 +23,14 @@ import (
 	"blazeai/internal/session"
 )
 
+const startupDrainTimeoutSeconds = 0
+
+type telegramClient interface {
+	GetUpdates(ctx context.Context, offset int, timeoutSeconds int) ([]Update, error)
+	SendMessage(ctx context.Context, chatID int64, text string) (int, error)
+	EditMessage(ctx context.Context, chatID int64, messageID int, text string) error
+}
+
 // Run starts one Telegram bridge instance and blocks in the polling loop.
 //
 // WHAT:  Boots a Telegram bot instance over the shared runtime agent core.
@@ -76,8 +84,11 @@ func openTelegramSession(workDir string) (*session.Session, bool, error) {
 	return sess, false, nil
 }
 
-func runPolling(ctx context.Context, client *BotClient, bridgeCfg *BridgeConfig, state *State, statePath string, agent *runtime.Agent, cfg *config.Config, handler *Handler) error {
-	offset := 0
+func runPolling(ctx context.Context, client telegramClient, bridgeCfg *BridgeConfig, state *State, statePath string, agent *runtime.Agent, cfg *config.Config, handler *Handler) error {
+	offset, err := drainPendingUpdates(ctx, client)
+	if err != nil {
+		return fmt.Errorf("cannot drain pending telegram updates: %w", err)
+	}
 	for {
 		updates, err := client.GetUpdates(ctx, offset, 30)
 		if err != nil {
@@ -125,6 +136,24 @@ func runPolling(ctx context.Context, client *BotClient, bridgeCfg *BridgeConfig,
 			}
 		}
 	}
+}
+
+func drainPendingUpdates(ctx context.Context, client telegramClient) (int, error) {
+	updates, err := client.GetUpdates(ctx, 0, startupDrainTimeoutSeconds)
+	if err != nil {
+		return 0, err
+	}
+	return nextOffsetFromUpdates(updates, 0), nil
+}
+
+func nextOffsetFromUpdates(updates []Update, initial int) int {
+	offset := initial
+	for _, update := range updates {
+		if update.UpdateID >= offset {
+			offset = update.UpdateID + 1
+		}
+	}
+	return offset
 }
 
 // BotClient is a minimal Telegram Bot API client using long polling and plain text messages.

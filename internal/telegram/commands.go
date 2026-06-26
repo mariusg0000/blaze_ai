@@ -29,7 +29,7 @@ func HandleCommand(_ context.Context, input string, agent *runtime.Agent, cfg *c
 	}
 
 	switch cmd {
-	case "/help":
+	case "/help", "/start":
 		return true, telegramHelpText(), nil
 	case "/model":
 		if arg == "" {
