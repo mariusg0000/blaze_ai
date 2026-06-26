@@ -36,18 +36,19 @@ var variablePattern = regexp.MustCompile(`\{([A-Z_][A-Z0-9_]*)\}`)
 // WHAT:  Holds configuration for prompt building and assembles prompts on every LLM call.
 // WHY:   The prompt is rebuilt fresh from disk every time per spec — nothing is reused.
 // PARAMS: PromptsFS — filesystem containing sysprompt.md and sysprompt.<os>.md;
+//
 //	WorkDir — current work folder for AGENTS.md and project skill discovery;
 //	OS — the detected operating system for selecting the OS-specific prompt;
 //	OSInfo — human-readable OS description injected as {OS_INFO};
 //	HelperSetup — user UX preferences for host helper installation prompts;
 //	HelperLookup — binary lookup function for helper detection (injectable for tests).
 type Builder struct {
-	PromptsFS       fs.FS
-	WorkDir         string
-	OS              platform.OS
-	OSInfo          string
-	HelperSetup     config.HelperSetup
-	HelperLookup    helpers.LookupFunc
+	PromptsFS    fs.FS
+	WorkDir      string
+	OS           platform.OS
+	OSInfo       string
+	HelperSetup  config.HelperSetup
+	HelperLookup helpers.LookupFunc
 }
 
 // injectVariables replaces known variable placeholders in text with resolved values.
@@ -61,16 +62,24 @@ func (b *Builder) injectVariablesForSkill(text, skillDir string) (string, error)
 }
 
 // injectTemplateVariables replaces built-in and template-specific placeholders in text.
+// Escaped braces and brackets remain literal in the rendered prompt text.
 func (b *Builder) injectTemplateVariables(text string, extra map[string]string, skillDir string) (string, error) {
 	home, err := platform.AppHome()
 	if err != nil {
 		return "", err
 	}
 	const (
-		leftBraceEscape  = "__BLAZEAI_ESC_LBRACE__"
-		rightBraceEscape = "__BLAZEAI_ESC_RBRACE__"
+		leftBraceEscape    = "__BLAZEAI_ESC_LBRACE__"
+		rightBraceEscape   = "__BLAZEAI_ESC_RBRACE__"
+		leftBracketEscape  = "__BLAZEAI_ESC_LBRACKET__"
+		rightBracketEscape = "__BLAZEAI_ESC_RBRACKET__"
 	)
-	text = strings.NewReplacer(`\{`, leftBraceEscape, `\}`, rightBraceEscape).Replace(text)
+	text = strings.NewReplacer(
+		`\{`, leftBraceEscape,
+		`\}`, rightBraceEscape,
+		`\[`, leftBracketEscape,
+		`\]`, rightBracketEscape,
+	).Replace(text)
 	result := variablePattern.ReplaceAllStringFunc(text, func(match string) string {
 		name := match[1 : len(match)-1]
 		if extra != nil {
@@ -114,7 +123,12 @@ func (b *Builder) injectTemplateVariables(text string, extra map[string]string, 
 			return match
 		}
 	})
-	result = strings.NewReplacer(leftBraceEscape, `{`, rightBraceEscape, `}`).Replace(result)
+	result = strings.NewReplacer(
+		leftBraceEscape, `{`,
+		rightBraceEscape, `}`,
+		leftBracketEscape, `[`,
+		rightBracketEscape, `]`,
+	).Replace(result)
 	return result, nil
 }
 
@@ -143,9 +157,9 @@ func readFileOptional(path string) (string, error) {
 }
 
 // buildSkillsSection assembles skill data from discovered skills and the active list.
-// Available skills: Markdown bullet list with name and description.
+// Available skills: compact-language bullet list with name = description.
 // Active skills:   Markdown sections with name header followed by BEHAVIOR and DATA blocks.
-// Behavior and data content is rendered as-is inside fenced sections for clear boundaries.
+// Behavior and data content is rendered as-is inside labeled sections for clear boundaries.
 func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string, error) {
 	discovered, err := skills.DiscoverAll(b.WorkDir)
 	if err != nil {
@@ -155,7 +169,7 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string,
 		return "", "", nil
 	}
 
-	// Available skills as Markdown list.
+	// Available skills as compact-language list.
 	var avail strings.Builder
 	avail.WriteString("\n")
 	for _, id := range skills.SortedNames(discovered) {
@@ -165,7 +179,7 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string,
 			return "", "", err
 		}
 		displayName := strings.TrimPrefix(id, "global/")
-		avail.WriteString(fmt.Sprintf("- **%s**: %s\n", displayName, desc))
+		avail.WriteString(fmt.Sprintf("- %s = %s\n", displayName, desc))
 	}
 
 	// Active skills as Markdown sections.
@@ -209,7 +223,7 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string,
 }
 
 // buildHostHelpersSection assembles the host helpers data from live detection.
-// Returns Markdown-formatted strings for injection into the prompt template.
+// Returns compact-language formatted strings for injection into the prompt template.
 func (b *Builder) buildHostHelpersSection(statuses []helpers.Status) (string, string, error) {
 	available := helpers.Available(statuses, b.WorkDir)
 	missingCore := helpers.MissingCore(statuses, b.HelperSetup)
@@ -224,12 +238,11 @@ func (b *Builder) buildHostHelpersSection(statuses []helpers.Status) (string, st
 	optionalSection := ""
 	if len(missingCore) > 0 && !b.HelperSetup.Dismissed {
 		var sb strings.Builder
-		sb.WriteString("Some useful cross-platform host utilities are missing:\n")
 		for _, s := range missingCore {
-			sb.WriteString(fmt.Sprintf("- **%s**: %s\n", s.Name, s.Description))
+			sb.WriteString(fmt.Sprintf("- %s = %s\n", s.Name, s.Description))
 		}
-		sb.WriteString("If one would materially help the current task, explain the benefit and ask the user before installing anything.\n")
-		sb.WriteString("For installation guidance, load the `setup_helpers` skill.\n")
+		sb.WriteString("helper would materially help → explain benefit + ask user before install\n")
+		sb.WriteString("install guidance → load_skill setup_helpers\n")
 		optionalSection = sb.String()
 	}
 	if len(available) == 0 {
@@ -241,7 +254,7 @@ func (b *Builder) buildHostHelpersSection(statuses []helpers.Status) (string, st
 
 	var sb strings.Builder
 	for _, s := range available {
-		sb.WriteString(fmt.Sprintf("- **%s**: %s\n", s.Name, s.Description))
+		sb.WriteString(fmt.Sprintf("- %s = %s\n", s.Name, s.Description))
 	}
 	return sb.String(), optionalSection, nil
 }
@@ -251,7 +264,7 @@ func (b *Builder) buildHostHelpersAdvisory() string {
 	if b.HelperSetup.Dismissed {
 		return ""
 	}
-	return "Host environment helpers have not been verified yet. When a task could benefit from faster file search, data processing, or other system tools, suggest to the user that you can check and set them up. Load the `setup_helpers` skill for guidance. Once all helpers are verified or the user declines, this reminder will stop appearing."
+	return "helper_setup = unverified\ntask could benefit from host helpers → suggest verification_or_setup\nguidance needed → load_skill setup_helpers\nall helpers verified ∨ user declines → reminder stops"
 }
 
 // BuildRuntimePart assembles the runtime prompt part from all disk sources.

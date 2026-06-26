@@ -18,7 +18,7 @@ const tasksFileName = "tasks.md"
 // WHAT:  Parsed arguments for writing the project task list.
 // PARAMS: Tasks — full markdown content to write (overwrite).
 type TaskWriteArgs struct {
-	Tasks   string `json:"tasks"`
+	Tasks string `json:"tasks"`
 }
 
 // TaskWriteTool writes the project task list to disk.
@@ -41,7 +41,7 @@ func NewTaskWriteTool(workDir func() string) *TaskWriteTool {
 func (t *TaskWriteTool) Name() string { return "task_write" }
 
 func (t *TaskWriteTool) Description() string {
-	return "Save the current tasks. Full overwrite."
+	return "tasks.md → overwrite with full task list"
 }
 
 func (t *TaskWriteTool) Parameters() json.RawMessage {
@@ -50,7 +50,7 @@ func (t *TaskWriteTool) Parameters() json.RawMessage {
 		"properties": {
 			"tasks": {
 				"type": "string",
-				"description": "Complete Markdown task list to save."
+				"description": "tasks = full markdown task list; write_mode = overwrite"
 			}
 		},
 		"required": ["tasks"]
@@ -106,7 +106,7 @@ func NewTaskReadTool(workDir func() string) *TaskReadTool {
 func (t *TaskReadTool) Name() string { return "task_read" }
 
 func (t *TaskReadTool) Description() string {
-	return "Load the current tasks."
+	return "tasks.md → read current task list"
 }
 
 func (t *TaskReadTool) Parameters() json.RawMessage {

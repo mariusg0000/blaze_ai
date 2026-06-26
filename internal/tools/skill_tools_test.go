@@ -175,11 +175,11 @@ func TestUnloadSkillParameters(t *testing.T) {
 	}
 }
 
-// TestUnloadSkillDescription verifies unload description stays minimal.
+// TestUnloadSkillDescription verifies unload description stays compact.
 func TestUnloadSkillDescription(t *testing.T) {
 	tool := NewUnloadSkillTool(skills.NewActiveList(), nil)
 	desc := tool.Description()
-	if desc != "Unload a skill from the current session." {
-		t.Fatalf("Description() = %q, want minimal unload description", desc)
+	if desc != "name → unload skill from active session" {
+		t.Fatalf("Description() = %q, want compact unload description", desc)
 	}
 }

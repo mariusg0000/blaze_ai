@@ -69,7 +69,7 @@ func (s *ShellTool) FormatArgs(args json.RawMessage) string {
 
 // Description returns the human-readable description for the LLM.
 func (s *ShellTool) Description() string {
-	return "Execute one or more shell commands on the host. Prefer efficient inline commands and combine small related operations in one call when it improves speed and clarity. Returns stdout, stderr, and exit_code."
+	return "command → execute via host shell; output = stdout + stderr + exit_code"
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -79,15 +79,15 @@ func (s *ShellTool) Parameters() json.RawMessage {
 		"properties": {
 			"purpose": {
 				"type": "string",
-				"description": "A concise summary of this shell call, up to 3 sentences. First sentence: state the shell commands or host helpers used and the files or folders they read, write, modify, or delete. Second sentence: explain why this shell call is needed for the current task. Third sentence: explain how the command is structured, what result it is expected to produce, or any relevant constraints or safety concerns."
+				"description": "purpose = concise call summary; include = action + why + constraints"
 			},
 			"command": {
 				"type": "string",
-				"description": "The shell command to execute. Prefer concise inline commands or safe pipelines when they make the task faster or clearer."
+				"description": "command = shell input; prefer = concise inline command or safe pipeline"
 			},
 			"timeout": {
 				"type": "integer",
-				"description": "Optional timeout in seconds. Default: 60."
+				"description": "timeout = seconds; optional = true; default = 60"
 			}
 		},
 		"required": ["purpose", "command"]

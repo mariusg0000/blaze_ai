@@ -67,7 +67,7 @@ func (t *ReplaceBlockTool) FormatArgs(args json.RawMessage) string {
 
 // Description returns the human-readable description for the LLM.
 func (t *ReplaceBlockTool) Description() string {
-	return "Replace the first exact text block match in a file. The old block must match exactly, including whitespace and newlines."
+	return "file_path + old_block + new_block → replace first exact match; old_block = exact text incl whitespace + newlines"
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -77,19 +77,19 @@ func (t *ReplaceBlockTool) Parameters() json.RawMessage {
 		"properties": {
 			"purpose": {
 				"type": "string",
-				"description": "A concise summary of this edit, up to 2 sentences. First sentence: state what the edit changes. Second sentence: explain why the edit is needed, including any relevant constraint or safety concern."
+				"description": "purpose = concise edit summary; include = change + why + constraints"
 			},
 			"file_path": {
 				"type": "string",
-				"description": "The path to the file to edit."
+				"description": "file_path = target file path"
 			},
 			"old_block": {
 				"type": "string",
-				"description": "The exact existing text block to replace. It must match the file content exactly, including whitespace and newlines."
+				"description": "old_block = exact existing text; match = exact incl whitespace + newlines"
 			},
 			"new_block": {
 				"type": "string",
-				"description": "The replacement text to write in place of old_block. Use an empty string to remove the old block."
+				"description": "new_block = replacement text; empty string → delete old_block"
 			}
 		},
 		"required": ["purpose", "file_path", "old_block", "new_block"]

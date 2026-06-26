@@ -113,6 +113,7 @@ func (a *ActiveList) List() []string {
 // [DESCRIPTION] is required. At least one of [BEHAVIOR] or [DATA] must be present.
 // Section markers must appear at the start of a line (after newline or at position 0).
 // References to [SECTION] names inside body text (e.g., in backticks or prose) are ignored.
+// Escaped markers like \[BEHAVIOR\] and \[DATA\] remain literal text and do not open sections.
 //
 // WHAT:  Parses raw Markdown content into a Skill.
 // PARAMS: name — the skill name (folder name); content — raw file content.
@@ -141,6 +142,7 @@ func Parse(name, content string) (*Skill, error) {
 // extractSection finds a required [SECTION] block and returns its content.
 // The marker must appear at the start of a line (after \n or at position 0).
 // A section ends at the next [SECTION] marker (also at start of line) or EOF.
+// Escaped markers like \[DATA\] are treated as normal content.
 func extractSection(content, sectionName string) (string, error) {
 	marker := "\n[" + sectionName + "]"
 	idx := strings.Index(content, marker)

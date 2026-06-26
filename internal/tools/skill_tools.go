@@ -52,7 +52,7 @@ func (t *LoadSkillTool) FormatArgs(args json.RawMessage) string {
 
 // Description returns the human-readable description for the LLM.
 func (t *LoadSkillTool) Description() string {
-	return "Load a skill into the current session. Use project/ prefix for project-scoped skills."
+	return "name → load skill into active session; project scope → use project/name"
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -62,7 +62,7 @@ func (t *LoadSkillTool) Parameters() json.RawMessage {
 		"properties": {
 			"name": {
 				"type": "string",
-				"description": "The skill name to load. Use project/ prefix for project-scoped skills."
+				"description": "name = skill id; project scope → use project/name"
 			}
 		},
 		"required": ["name"]
@@ -125,7 +125,7 @@ func (t *UnloadSkillTool) FormatArgs(args json.RawMessage) string {
 
 // Description returns the human-readable description for the LLM.
 func (t *UnloadSkillTool) Description() string {
-	return "Unload a skill from the current session."
+	return "name → unload skill from active session"
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -135,7 +135,7 @@ func (t *UnloadSkillTool) Parameters() json.RawMessage {
 		"properties": {
 			"name": {
 				"type": "string",
-				"description": "The skill name to unload."
+				"description": "name = skill id to unload"
 			}
 		},
 		"required": ["name"]
