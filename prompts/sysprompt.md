@@ -94,3 +94,7 @@ Use these helpers with shell tool.
 [PROJECT RULES]
 
 {AGENTS_CONTENT}
+
+[PROJECT MAP]
+
+{PROJECT_MAP_CONTENT}
