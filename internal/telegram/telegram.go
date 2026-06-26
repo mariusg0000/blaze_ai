@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -47,7 +48,12 @@ func Run(ctx context.Context, cfg *config.Config, osType platform.OS, promptsFS 
 	if err != nil {
 		return err
 	}
-	sess, resumed, err := openTelegramSession(bridgeCfg.WorkDir)
+	instanceDir, err := InstanceDir(instance)
+	if err != nil {
+		return err
+	}
+	sessDir := filepath.Join(instanceDir, "sessions")
+	sess, resumed, err := openTelegramSession(sessDir)
 	if err != nil {
 		return err
 	}
@@ -69,15 +75,15 @@ func Run(ctx context.Context, cfg *config.Config, osType platform.OS, promptsFS 
 	return runPolling(ctx, client, bridgeCfg, state, statePath, agent, cfg, handler)
 }
 
-func openTelegramSession(workDir string) (*session.Session, bool, error) {
-	sess, err := session.Last(workDir)
+func openTelegramSession(sessionsDir string) (*session.Session, bool, error) {
+	sess, err := session.LastInDir(sessionsDir)
 	if err == nil {
 		return sess, true, nil
 	}
 	if !errors.Is(err, session.ErrNoSessions) {
 		return nil, false, fmt.Errorf("cannot load telegram session: %w", err)
 	}
-	sess, err = session.Create(workDir)
+	sess, err = session.CreateInDir(sessionsDir)
 	if err != nil {
 		return nil, false, fmt.Errorf("cannot create telegram session: %w", err)
 	}
