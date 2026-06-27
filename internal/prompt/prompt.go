@@ -87,6 +87,9 @@ func (b *Builder) injectTemplateVariables(text string, extra map[string]string, 
 		if extra != nil {
 			if value, ok := extra[name]; ok {
 				if value == "" {
+					if allowsEmptyTemplateValue(name) {
+						return ""
+					}
 					return "NULL"
 				}
 				return value
@@ -136,6 +139,18 @@ func (b *Builder) injectTemplateVariables(text string, extra map[string]string, 
 	return result, nil
 }
 
+// allowsEmptyTemplateValue reports which full-section placeholders should disappear when empty.
+func allowsEmptyTemplateValue(name string) bool {
+	switch name {
+	case "RUNNABLE_SKILLS_SECTION":
+		return true
+	case "SKILLS_ACTIVE":
+		return true
+	default:
+		return false
+	}
+}
+
 // readFileRequiredFS reads a file from an fs.FS. Missing files return the given error.
 func readFileRequiredFS(fsys fs.FS, name string, missingErr error) (string, error) {
 	data, err := fs.ReadFile(fsys, name)
@@ -160,9 +175,9 @@ func readFileOptional(path string) (string, error) {
 	return string(data), nil
 }
 
-// buildSkillsSection assembles loadable skills, runnable skills, and active skill content.
+// buildSkillsSection assembles loadable skills, runnable skill prompt section, and active skill content.
 // Available skills: compact-language bullet list with name = description.
-// Runnable skills: compact-language bullet list with name = syntax.
+// Runnable skills: optional compact-language section with name, args syntax, and description.
 // Active skills:   Markdown sections with name header followed by BEHAVIOR and DATA blocks.
 func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string, string, error) {
 	discovered, err := skills.DiscoverAll(b.WorkDir)
@@ -197,11 +212,16 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string,
 			if err != nil {
 				return "", "", "", err
 			}
+			desc, err := b.injectVariablesForSkill(skill.Description, skill.Dir)
+			if err != nil {
+				return "", "", "", err
+			}
 			if !hasRunnable {
-				runnable.WriteString("\n")
+				runnable.WriteString("[RUNNABLE SKILLS]\n\n")
+				runnable.WriteString("run_skill(name, arguments)\n\n")
 				hasRunnable = true
 			}
-			runnable.WriteString(fmt.Sprintf("- %s = %s\n", displayName, syntax))
+			runnable.WriteString(fmt.Sprintf("- %s | args: %s | %s\n", displayName, syntax, desc))
 		}
 	}
 
@@ -354,15 +374,15 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 	}
 
 	rendered, err := b.injectTemplateVariables(universal, map[string]string{
-		"OS_PROMPT":                 strings.TrimSpace(osPrompt),
-		"HOST_HELPERS_ADVISORY":     strings.TrimSpace(helperAdvisory),
-		"HOST_HELPERS_AVAILABLE":    strings.TrimSpace(helperAvailable),
-		"HOST_HELPERS_OPTIONAL":     strings.TrimSpace(helperOptional),
-		"SKILLS_AVAILABLE":          strings.TrimSpace(skillsAvailable),
-		"RUNNABLE_SKILLS_AVAILABLE": strings.TrimSpace(runnableSkillsAvailable),
-		"SKILLS_ACTIVE":             strings.TrimSpace(skillsActive),
-		"PROJECT_MAP_CONTENT":       strings.TrimSpace(projectMap),
-		"AGENTS_CONTENT":            strings.TrimSpace(agents),
+		"OS_PROMPT":               strings.TrimSpace(osPrompt),
+		"HOST_HELPERS_ADVISORY":   strings.TrimSpace(helperAdvisory),
+		"HOST_HELPERS_AVAILABLE":  strings.TrimSpace(helperAvailable),
+		"HOST_HELPERS_OPTIONAL":   strings.TrimSpace(helperOptional),
+		"SKILLS_AVAILABLE":        strings.TrimSpace(skillsAvailable),
+		"RUNNABLE_SKILLS_SECTION": strings.TrimSpace(runnableSkillsAvailable),
+		"SKILLS_ACTIVE":           strings.TrimSpace(skillsActive),
+		"PROJECT_MAP_CONTENT":     strings.TrimSpace(projectMap),
+		"AGENTS_CONTENT":          strings.TrimSpace(agents),
 	}, "")
 	if err != nil {
 		return "", err

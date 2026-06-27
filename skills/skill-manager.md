@@ -1,5 +1,5 @@
 [DESCRIPTION]
-Load when creating, reviewing, or modifying a skill. Use for designing procedural skill content, authoring data sections, separating behavior from data, and turning user corrections or failed workflows into better skill rules.
+Load when creating, reviewing, or modifying a skill, including runnable skills. Use for designing procedural skill content, authoring runnable `[SYNTAX]` and `[CODE]` sections, separating behavior from data, and turning user corrections or failed workflows into better skill rules.
 
 [BEHAVIOR]
 # Skill Manager
@@ -53,25 +53,41 @@ A skill can become **runnable** by adding two optional sections:
 A skill with both `[SYNTAX]` and valid `[CODE]` appears in the **Runnable Skills** prompt section automatically. The model uses `run_skill` (not `load_skill`) to execute it.
 
 Rules:
+- `[SYNTAX]` describes **arguments only**. Never repeat the skill name in `[SYNTAX]`.
+- If the skill takes no arguments, set `[SYNTAX]` to `""`. Call it with `run_skill(name, "")`.
 - `[CODE]` must be a fenced block with `shell` language. No other languages in v1.
 - The skill body runs with env vars: `BLAZE_SKILL_ARGS` (raw string), `BLAZE_SKILL_DIR`, `BLAZE_SKILL_ID`, `BLAZE_SKILL_NAME`.
 - `[SYNTAX]` is compact, single‑line — the model sees it directly in the prompt.
 - Runnable skills stay visible in the available list; they need not be loaded to run.
 
 Example:
-```
-[SYNTAX]
+````
+\[SYNTAX\]
 <path> [--dry-run]
 
-[CODE]
+\[CODE\]
 ```shell
 rsync -av "$BLAZE_SKILL_ARGS"
-``
 ```
+````
 
-(Single backticks in the actual file; use `\[SYNTAX\]` and `\[CODE\]` to avoid triggering parsing.)
+Zero-argument example:
+
+````
+\[SYNTAX\]
+""
+
+\[CODE\]
+```shell
+df -h
+```
+````
+
+(The outer example fences use four backticks so the inner `shell` fence stays literal.)
 
 Do not add runnable sections unless the skill actually has executable code. Prompt‑only skills use `[BEHAVIOR]` and `[DATA]` as before.
+
+When creating or fixing a skill, load this skill first and use its path rules directly. Do not browse unrelated skills just to rediscover the folder layout.
 
 ### DATA
 
@@ -128,6 +144,8 @@ or
 ```
 mkdir -p {PROJECT_SKILLS_DIR}/<name>
 ```
+
+Use these paths directly. Do not search the filesystem for skills directories when `{GLOBAL_SKILLS_DIR}` or `{PROJECT_SKILLS_DIR}` already gives the exact target path.
 
 The variables above resolve to real paths automatically. Use `{SKILL_DIR}` inside skill content to reference the skill's own folder (e.g., for bundled scripts).
 

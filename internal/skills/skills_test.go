@@ -168,6 +168,39 @@ printf '%s' "$BLAZE_SKILL_ARGS"`
 	}
 }
 
+// TestParseKeepsBehaviorAfterEscapedRunnableExamples verifies that escaped section markers
+// inside examples do not truncate the surrounding [BEHAVIOR] content.
+func TestParseKeepsBehaviorAfterEscapedRunnableExamples(t *testing.T) {
+	content := "[DESCRIPTION]\n" +
+		"Runnable skill authoring help.\n\n" +
+		"[BEHAVIOR]\n" +
+		"Rules for runnable skills.\n\n" +
+		"````\n" +
+		"\\[SYNTAX\\]\n" +
+		"<path> [--dry-run]\n\n" +
+		"\\[CODE\\]\n" +
+		"```shell\n" +
+		"rsync -av \"$BLAZE_SKILL_ARGS\"\n" +
+		"```\n" +
+		"````\n\n" +
+		"This line must remain inside behavior.\n\n" +
+		"[DATA]\n" +
+		"skill.scopes=global,project"
+	skill, err := Parse("skill-manager", content)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if !strings.Contains(skill.Behavior, "This line must remain inside behavior.") {
+		t.Fatalf("Behavior was truncated by escaped runnable example: %q", skill.Behavior)
+	}
+	if strings.TrimSpace(skill.Syntax) != "" {
+		t.Fatalf("Syntax = %q, want empty top-level syntax", skill.Syntax)
+	}
+	if strings.TrimSpace(skill.Code) != "" {
+		t.Fatalf("Code = %q, want empty top-level code", skill.Code)
+	}
+}
+
 // contains is a simple substring check helper.
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsStr(s, sub))

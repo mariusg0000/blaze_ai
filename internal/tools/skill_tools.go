@@ -221,7 +221,7 @@ func (t *RunSkillTool) FormatArgs(args json.RawMessage) string {
 
 // Description returns the human-readable description for the LLM.
 func (t *RunSkillTool) Description() string {
-	return "name + arguments → execute runnable skill; arguments = raw string from [SYNTAX]"
+	return "name + arguments → execute runnable skill"
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -235,7 +235,7 @@ func (t *RunSkillTool) Parameters() json.RawMessage {
 			},
 			"arguments": {
 				"type": "string",
-				"description": "arguments = raw string matching the skill [SYNTAX]"
+				"description": "arguments = raw string"
 			},
 			"timeout": {
 				"type": "integer",

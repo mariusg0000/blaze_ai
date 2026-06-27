@@ -231,3 +231,28 @@ func TestRunSkillExecuteRejectsMalformedCode(t *testing.T) {
 		t.Fatalf("Execute() = %q, want invalid code error", result)
 	}
 }
+
+// TestRunSkillDescription verifies the model-facing description stays minimal.
+func TestRunSkillDescription(t *testing.T) {
+	tool := NewRunSkillTool(platform.Linux, nil, nil)
+	desc := tool.Description()
+	if desc != "name + arguments → execute runnable skill" {
+		t.Fatalf("Description() = %q, want compact runnable description", desc)
+	}
+}
+
+// TestRunSkillParameters verifies arguments schema does not leak skill layout details.
+func TestRunSkillParameters(t *testing.T) {
+	tool := NewRunSkillTool(platform.Linux, nil, nil)
+	params := tool.Parameters()
+	if !json.Valid(params) {
+		t.Fatal("Parameters() is not valid JSON")
+	}
+	text := string(params)
+	if strings.Contains(text, "[SYNTAX]") {
+		t.Fatalf("Parameters() = %s, should not expose [SYNTAX]", text)
+	}
+	if !strings.Contains(text, `"arguments = raw string"`) {
+		t.Fatalf("Parameters() = %s, want raw string description", text)
+	}
+}

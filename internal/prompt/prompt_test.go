@@ -44,6 +44,8 @@ func setupTestDirs(t *testing.T) (promptsFS fs.FS, workDir string) {
 	// Global skill.
 	writeFile(t, filepath.Join(appHome, "skills", "skill-manager", "skill.md"),
 		"[DESCRIPTION]\nLoad when creating, reviewing, or modifying a skill.\n\n[BEHAVIOR]\n# Skill Manager\n\nManage skills at {APP_HOME}/skills/.\n")
+	writeFile(t, filepath.Join(appHome, "skills", "echo-runner", "skill.md"),
+		"[DESCRIPTION]\nEcho raw arguments for smoke tests.\n\n[SYNTAX]\n<text>\n\n[CODE]\n```shell\nprintf '%s' \"$BLAZE_SKILL_ARGS\"\n```\n")
 	customSkillDir := filepath.Join(appHome, "skills", "project_hub")
 	writeFile(t, filepath.Join(customSkillDir, "skill.md"),
 		"[DESCRIPTION]\nProject Hub skill with local scripts at {SKILL_DIR}/scripts/run.py.\n\n[BEHAVIOR]\nUse local helper at {SKILL_DIR}/scripts/run.py.\n[DATA]\napi.url=https://example.com\n")
@@ -70,7 +72,7 @@ func writeFile(t *testing.T, path, content string) {
 // writePromptFixtures creates the prompt templates required by runtime prompt assembly.
 func writePromptFixtures(t *testing.T, promptsDir string) {
 	t.Helper()
-	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n{OS_PROMPT}\n\n## Transport\n{TRANSPORT_CONTEXT}\n\n## Host Environment Helpers\n{HOST_HELPERS_ADVISORY}\n\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n## Runnable Skills\nRunnable skills:\n{RUNNABLE_SKILLS_AVAILABLE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n")
+	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n{OS_PROMPT}\n\n## Transport\n{TRANSPORT_CONTEXT}\n\n## Host Environment Helpers\n{HOST_HELPERS_ADVISORY}\n\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n{RUNNABLE_SKILLS_SECTION}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n")
 	writeFile(t, filepath.Join(promptsDir, "sysprompt.linux.md"), "# Linux System Prompt\n\nScripts at {APP_HOME}/scripts/.\n")
 }
 
@@ -230,8 +232,17 @@ func TestBuildRuntimePartFull(t *testing.T) {
 	if !strings.Contains(result, "skill-manager") {
 		t.Error("runtime part missing skill name")
 	}
-	if !strings.Contains(result, "Runnable skills:") {
+	if !strings.Contains(result, "[RUNNABLE SKILLS]") {
 		t.Error("runtime part missing runnable skills section")
+	}
+	if !strings.Contains(result, "run_skill(name, arguments)") {
+		t.Error("runtime part missing runnable skills call signature")
+	}
+	if !strings.Contains(result, "echo-runner | args: <text> | Echo raw arguments for smoke tests.") {
+		t.Error("runtime part missing runnable skill summary")
+	}
+	if strings.Contains(result, "[SYNTAX]") {
+		t.Error("runtime part should not expose runnable skill layout tags")
 	}
 }
 
@@ -372,8 +383,39 @@ func TestBuildRuntimePartNoSkills(t *testing.T) {
 	if !strings.Contains(result, "Available skills:\nNULL") {
 		t.Error("runtime part should render NULL for missing skills")
 	}
-	if !strings.Contains(result, "Runnable skills:\nNULL") {
-		t.Error("runtime part should render NULL for missing runnable skills")
+	if strings.Contains(result, "[RUNNABLE SKILLS]") {
+		t.Error("runtime part should omit runnable skills section when none exist")
+	}
+	if strings.Contains(result, "\nNULL\n\n## Project Rules") {
+		t.Error("runtime part should not render standalone NULL for missing runnable skills section")
+	}
+}
+
+// TestBuildRuntimePartNoRunnableSkillsSection verifies that a missing runnable section disappears cleanly.
+func TestBuildRuntimePartNoRunnableSkillsSection(t *testing.T) {
+	promptsFS, workDir := setupTestDirs(t)
+	home, err := platform.AppHome()
+	if err != nil {
+		t.Fatalf("platform.AppHome() error: %v", err)
+	}
+	if err := os.RemoveAll(filepath.Join(home, "skills", "echo-runner")); err != nil {
+		t.Fatalf("RemoveAll(echo-runner) error: %v", err)
+	}
+
+	b := &Builder{
+		PromptsFS: promptsFS,
+		WorkDir:   workDir,
+		OS:        platform.Linux,
+	}
+	result, err := b.BuildRuntimePart(skills.NewActiveList())
+	if err != nil {
+		t.Fatalf("BuildRuntimePart() error: %v", err)
+	}
+	if strings.Contains(result, "[RUNNABLE SKILLS]") {
+		t.Fatal("runtime part should omit runnable skills section when no runnable skills exist")
+	}
+	if strings.Contains(result, "\nNULL\n\n## Project Rules") {
+		t.Fatal("runtime part should not leave a NULL placeholder when runnable section is omitted")
 	}
 }
 
