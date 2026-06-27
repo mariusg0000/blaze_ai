@@ -70,7 +70,7 @@ func writeFile(t *testing.T, path, content string) {
 // writePromptFixtures creates the prompt templates required by runtime prompt assembly.
 func writePromptFixtures(t *testing.T, promptsDir string) {
 	t.Helper()
-	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n{OS_PROMPT}\n\n## Transport\n{TRANSPORT_CONTEXT}\n\n## Host Environment Helpers\n{HOST_HELPERS_ADVISORY}\n\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n")
+	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n{OS_PROMPT}\n\n## Transport\n{TRANSPORT_CONTEXT}\n\n## Host Environment Helpers\n{HOST_HELPERS_ADVISORY}\n\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n## Runnable Skills\nRunnable skills:\n{RUNNABLE_SKILLS_AVAILABLE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n")
 	writeFile(t, filepath.Join(promptsDir, "sysprompt.linux.md"), "# Linux System Prompt\n\nScripts at {APP_HOME}/scripts/.\n")
 }
 
@@ -230,6 +230,9 @@ func TestBuildRuntimePartFull(t *testing.T) {
 	if !strings.Contains(result, "skill-manager") {
 		t.Error("runtime part missing skill name")
 	}
+	if !strings.Contains(result, "Runnable skills:") {
+		t.Error("runtime part missing runnable skills section")
+	}
 }
 
 // TestBuildRuntimePartMissingUniversal verifies error when universal prompt is missing.
@@ -368,6 +371,9 @@ func TestBuildRuntimePartNoSkills(t *testing.T) {
 	}
 	if !strings.Contains(result, "Available skills:\nNULL") {
 		t.Error("runtime part should render NULL for missing skills")
+	}
+	if !strings.Contains(result, "Runnable skills:\nNULL") {
+		t.Error("runtime part should render NULL for missing runnable skills")
 	}
 }
 

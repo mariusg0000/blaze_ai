@@ -160,30 +160,49 @@ func readFileOptional(path string) (string, error) {
 	return string(data), nil
 }
 
-// buildSkillsSection assembles skill data from discovered skills and the active list.
+// buildSkillsSection assembles loadable skills, runnable skills, and active skill content.
 // Available skills: compact-language bullet list with name = description.
+// Runnable skills: compact-language bullet list with name = syntax.
 // Active skills:   Markdown sections with name header followed by BEHAVIOR and DATA blocks.
-// Behavior and data content is rendered as-is inside labeled sections for clear boundaries.
-func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string, error) {
+func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string, string, error) {
 	discovered, err := skills.DiscoverAll(b.WorkDir)
 	if err != nil {
-		return "", "", fmt.Errorf("skills discovery: %w", err)
+		return "", "", "", fmt.Errorf("skills discovery: %w", err)
 	}
 	if len(discovered) == 0 {
-		return "", "", nil
+		return "", "", "", nil
 	}
 
-	// Available skills as compact-language list.
+	// Available loadable skills as compact-language list.
 	var avail strings.Builder
-	avail.WriteString("\n")
+	var runnable strings.Builder
+	hasAvail := false
+	hasRunnable := false
 	for _, id := range skills.SortedNames(discovered) {
 		skill := discovered[id]
-		desc, err := b.injectVariablesForSkill(skill.Description, skill.Dir)
-		if err != nil {
-			return "", "", err
-		}
 		displayName := strings.TrimPrefix(id, "global/")
-		avail.WriteString(fmt.Sprintf("- %s = %s\n", displayName, desc))
+		if skill.HasPromptContent() {
+			desc, err := b.injectVariablesForSkill(skill.Description, skill.Dir)
+			if err != nil {
+				return "", "", "", err
+			}
+			if !hasAvail {
+				avail.WriteString("\n")
+				hasAvail = true
+			}
+			avail.WriteString(fmt.Sprintf("- %s = %s\n", displayName, desc))
+		}
+		if skill.IsRunnable() {
+			syntax, err := b.injectVariablesForSkill(skill.Syntax, skill.Dir)
+			if err != nil {
+				return "", "", "", err
+			}
+			if !hasRunnable {
+				runnable.WriteString("\n")
+				hasRunnable = true
+			}
+			runnable.WriteString(fmt.Sprintf("- %s = %s\n", displayName, syntax))
+		}
 	}
 
 	// Active skills as Markdown sections.
@@ -197,13 +216,16 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string,
 			if !ok {
 				continue
 			}
+			if !skill.HasPromptContent() {
+				continue
+			}
 			name := strings.TrimPrefix(id, "global/")
 			sb.WriteString(fmt.Sprintf("### %s\n\n", name))
 
 			if skill.Behavior != "" {
 				behavior, err := b.injectVariablesForSkill(skill.Behavior, skill.Dir)
 				if err != nil {
-					return "", "", err
+					return "", "", "", err
 				}
 				sb.WriteString("[BEHAVIOR]\n")
 				sb.WriteString(behavior)
@@ -213,7 +235,7 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string,
 			if skill.Data != "" {
 				data, err := b.injectVariablesForSkill(skill.Data, skill.Dir)
 				if err != nil {
-					return "", "", err
+					return "", "", "", err
 				}
 				sb.WriteString("[DATA]\n")
 				sb.WriteString(data)
@@ -223,7 +245,7 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string,
 		activeContent = sb.String()
 	}
 
-	return avail.String(), activeContent, nil
+	return avail.String(), runnable.String(), activeContent, nil
 }
 
 // buildHostHelpersSection assembles the host helpers data from live detection.
@@ -304,7 +326,7 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 	}
 
 	// 4. Skills section (optional, includes project-scoped).
-	skillsAvailable, skillsActive, err := b.buildSkillsSection(activeSkills)
+	skillsAvailable, runnableSkillsAvailable, skillsActive, err := b.buildSkillsSection(activeSkills)
 	if err != nil {
 		return "", err
 	}
@@ -332,14 +354,15 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 	}
 
 	rendered, err := b.injectTemplateVariables(universal, map[string]string{
-		"OS_PROMPT":              strings.TrimSpace(osPrompt),
-		"HOST_HELPERS_ADVISORY":  strings.TrimSpace(helperAdvisory),
-		"HOST_HELPERS_AVAILABLE": strings.TrimSpace(helperAvailable),
-		"HOST_HELPERS_OPTIONAL":  strings.TrimSpace(helperOptional),
-		"SKILLS_AVAILABLE":       strings.TrimSpace(skillsAvailable),
-		"SKILLS_ACTIVE":          strings.TrimSpace(skillsActive),
-		"PROJECT_MAP_CONTENT":    strings.TrimSpace(projectMap),
-		"AGENTS_CONTENT":         strings.TrimSpace(agents),
+		"OS_PROMPT":                 strings.TrimSpace(osPrompt),
+		"HOST_HELPERS_ADVISORY":     strings.TrimSpace(helperAdvisory),
+		"HOST_HELPERS_AVAILABLE":    strings.TrimSpace(helperAvailable),
+		"HOST_HELPERS_OPTIONAL":     strings.TrimSpace(helperOptional),
+		"SKILLS_AVAILABLE":          strings.TrimSpace(skillsAvailable),
+		"RUNNABLE_SKILLS_AVAILABLE": strings.TrimSpace(runnableSkillsAvailable),
+		"SKILLS_ACTIVE":             strings.TrimSpace(skillsActive),
+		"PROJECT_MAP_CONTENT":       strings.TrimSpace(projectMap),
+		"AGENTS_CONTENT":            strings.TrimSpace(agents),
 	}, "")
 	if err != nil {
 		return "", err

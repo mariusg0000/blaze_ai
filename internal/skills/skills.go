@@ -3,8 +3,10 @@
 // At runtime, skills are discovered from two scopes: global (app_home/skills/) and
 // project (app_home/projects/<project>/skills/). Both use subdirectory layout:
 // <scope>/<name>/skill.md. Skills are keyed with scope prefix: global/name, project/name.
-// Parses [DESCRIPTION] (required), [BEHAVIOR] (optional), [DATA] (optional).
-// At least one of Behavior or Data must be present.
+// Parses [DESCRIPTION] (required), [BEHAVIOR] (optional), [DATA] (optional),
+// [SYNTAX] (optional), and [CODE] (optional).
+// A skill must provide prompt content ([BEHAVIOR] or [DATA]) or a runnable pair
+// ([SYNTAX] and [CODE]).
 // Resolution: unqualified names resolve if unique across scopes; ambiguous names error.
 // Layer: skill management. Dependencies: internal/platform.
 package skills
@@ -32,24 +34,41 @@ const (
 // ErrMissingDescription is returned when a skill file lacks a [DESCRIPTION] section.
 var ErrMissingDescription = errors.New("skill missing [DESCRIPTION] section")
 
-// ErrMissingBehaviorOrData is returned when a skill file has neither [BEHAVIOR] nor [DATA].
-var ErrMissingBehaviorOrData = errors.New("skill missing [BEHAVIOR] and [DATA]: at least one is required")
+// ErrMissingBehaviorOrData is returned when a skill file has neither prompt content nor a runnable pair.
+var ErrMissingBehaviorOrData = errors.New("skill missing [BEHAVIOR] and [DATA], and no runnable [SYNTAX] + [CODE] pair")
 
 // Skill represents a parsed skill file.
 //
-// WHAT:  Holds the parsed content of a single skill file with optional behavior and data.
-// WHY:   The prompt builder needs description (available skills), behavior, and data (active skills).
+// WHAT:  Holds the parsed content of a single skill file with prompt and runnable metadata.
+// WHY:   The prompt builder needs description, behavior, data, and runnable syntax; the
+// HOW:   runtime also needs parsed runnable code for run_skill execution.
 // Fields: Name — folder name; Description — [DESCRIPTION] content;
 //
 //	Behavior — [BEHAVIOR] content (optional); Data — [DATA] content (optional);
-//	Dir — folder path; Scope — global or project.
+//	Syntax — [SYNTAX] content (optional); CodeLang/Code — parsed [CODE] fence content
+//	(optional); CodeError — [CODE] parse failure message when present; Dir — folder
+//	path; Scope — global or project.
 type Skill struct {
 	Name        string
 	Description string
 	Behavior    string
 	Data        string
+	Syntax      string
+	CodeLang    string
+	Code        string
+	CodeError   string
 	Dir         string
 	Scope       Scope
+}
+
+// HasPromptContent reports whether the skill contributes prompt content when loaded.
+func (s *Skill) HasPromptContent() bool {
+	return strings.TrimSpace(s.Behavior) != "" || strings.TrimSpace(s.Data) != ""
+}
+
+// IsRunnable reports whether the skill is runnable in v1.
+func (s *Skill) IsRunnable() bool {
+	return strings.TrimSpace(s.Syntax) != "" && strings.TrimSpace(s.Code) != "" && s.CodeLang == "shell"
 }
 
 // ActiveList holds the in-memory list of active skill IDs for the current session.
@@ -109,8 +128,9 @@ func (a *ActiveList) List() []string {
 	return result
 }
 
-// Parse extracts [DESCRIPTION], [BEHAVIOR], and [DATA] sections from skill content.
-// [DESCRIPTION] is required. At least one of [BEHAVIOR] or [DATA] must be present.
+// Parse extracts [DESCRIPTION], [BEHAVIOR], [DATA], [SYNTAX], and [CODE] sections from skill content.
+// [DESCRIPTION] is required. A skill must provide [BEHAVIOR] or [DATA], or a runnable
+// [SYNTAX] + [CODE] pair.
 // Section markers must appear at the start of a line (after newline or at position 0).
 // References to [SECTION] names inside body text (e.g., in backticks or prose) are ignored.
 // Escaped markers like \[BEHAVIOR\] and \[DATA\] remain literal text and do not open sections.
@@ -126,8 +146,11 @@ func Parse(name, content string) (*Skill, error) {
 
 	behavior, _ := extractOptionalSection(content, "BEHAVIOR")
 	data, _ := extractOptionalSection(content, "DATA")
+	syntax, _ := extractOptionalSection(content, "SYNTAX")
+	codeSection, _ := extractOptionalSection(content, "CODE")
+	codeLang, code, codeErr := parseCodeFence(codeSection)
 
-	if behavior == "" && data == "" {
+	if strings.TrimSpace(behavior) == "" && strings.TrimSpace(data) == "" && (strings.TrimSpace(syntax) == "" || strings.TrimSpace(code) == "") {
 		return nil, ErrMissingBehaviorOrData
 	}
 
@@ -136,7 +159,45 @@ func Parse(name, content string) (*Skill, error) {
 		Description: strings.TrimSpace(desc),
 		Behavior:    strings.TrimSpace(behavior),
 		Data:        strings.TrimSpace(data),
+		Syntax:      compactLines(syntax),
+		CodeLang:    codeLang,
+		Code:        code,
+		CodeError:   codeErr,
 	}, nil
+}
+
+// parseCodeFence extracts a fenced code block language and body from a [CODE] section.
+func parseCodeFence(section string) (string, string, string) {
+	section = strings.TrimSpace(section)
+	if section == "" {
+		return "", "", ""
+	}
+	if !strings.HasPrefix(section, "```") {
+		return "", "", "[CODE] must start with a fenced code block"
+	}
+	newlineIdx := strings.IndexByte(section, '\n')
+	if newlineIdx < 0 {
+		return "", "", "[CODE] fence must include a language line and body"
+	}
+	lang := strings.TrimSpace(section[len("```"):newlineIdx])
+	if lang == "" {
+		return "", "", "[CODE] fence language is required"
+	}
+	body := section[newlineIdx+1:]
+	closeIdx := strings.LastIndex(body, "\n```")
+	if closeIdx < 0 {
+		return "", "", "[CODE] fence must end with ```"
+	}
+	trailing := strings.TrimSpace(body[closeIdx+len("\n```"):])
+	if trailing != "" {
+		return "", "", "[CODE] must not contain text after the closing fence"
+	}
+	return lang, strings.TrimSpace(body[:closeIdx]), ""
+}
+
+// compactLines collapses a multi-line section into a single trimmed line for prompt-efficient display.
+func compactLines(text string) string {
+	return strings.Join(strings.Fields(text), " ")
 }
 
 // extractSection finds a required [SECTION] block and returns its content.

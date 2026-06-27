@@ -83,6 +83,15 @@ Any skill loaded with the `load_skill` tool appears here.
 
 {SKILLS_ACTIVE}
 
+[RUNNABLE SKILLS]
+
+Use the `run_skill` tool to execute a runnable skill.
+Pass `arguments` as one raw string that matches the listed syntax exactly.
+
+**Runnable skills:**
+
+{RUNNABLE_SKILLS_AVAILABLE}
+
 [HOST ENVIRONMENT HELPERS]
 
 {HOST_HELPERS_ADVISORY}

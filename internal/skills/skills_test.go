@@ -5,6 +5,7 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -118,6 +119,52 @@ func TestParseBehaviorAtEnd(t *testing.T) {
 	}
 	if !contains(skill.Behavior, "Line 1") || !contains(skill.Behavior, "Line 3") {
 		t.Errorf("Details = %q, want all three lines", skill.Behavior)
+	}
+}
+
+// TestParseRunnableSkill verifies a runnable-only skill parses successfully.
+func TestParseRunnableSkill(t *testing.T) {
+	content := "[DESCRIPTION]\nRunnable echo.\n\n[SYNTAX]\n<text>\n\n[CODE]\n```shell\nprintf '%s' \"$BLAZE_SKILL_ARGS\"\n```"
+	skill, err := Parse("echo", content)
+	if err != nil {
+		t.Fatalf("Parse() unexpected error: %v", err)
+	}
+	if !skill.IsRunnable() {
+		t.Fatal("skill should be runnable")
+	}
+	if skill.Syntax != "<text>" {
+		t.Fatalf("Syntax = %q, want <text>", skill.Syntax)
+	}
+	if !strings.Contains(skill.Code, "BLAZE_SKILL_ARGS") {
+		t.Fatalf("Code = %q, want runnable shell body", skill.Code)
+	}
+	if skill.HasPromptContent() {
+		t.Fatal("runnable-only skill should not report prompt content")
+	}
+}
+
+// TestParseMalformedCodeFence verifies malformed [CODE] does not become runnable.
+func TestParseMalformedCodeFence(t *testing.T) {
+	content := `[DESCRIPTION]
+Runnable echo.
+
+[BEHAVIOR]
+Use me.
+
+[SYNTAX]
+<text>
+
+[CODE]
+printf '%s' "$BLAZE_SKILL_ARGS"`
+	skill, err := Parse("echo", content)
+	if err != nil {
+		t.Fatalf("Parse() unexpected error: %v", err)
+	}
+	if skill.CodeError == "" {
+		t.Fatal("expected CodeError for malformed [CODE] fence")
+	}
+	if skill.IsRunnable() {
+		t.Fatal("malformed [CODE] should not be runnable")
 	}
 }
 

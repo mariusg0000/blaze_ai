@@ -220,6 +220,24 @@ func TestUnloadSkillFormatArgsFallback(t *testing.T) {
 	}
 }
 
+// TestRunSkillFormatArgs verifies run_skill shows the runnable name and raw args.
+func TestRunSkillFormatArgs(t *testing.T) {
+	r := NewRunSkillTool(platform.Linux, nil, nil)
+	result := r.FormatArgs(json.RawMessage(`{"name":"echo.md","arguments":"hello world"}`))
+	if result != "Running skill: echo hello world" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "Running skill: echo hello world")
+	}
+}
+
+// TestRunSkillFormatArgsFallback verifies run_skill uses a generic label on invalid args.
+func TestRunSkillFormatArgsFallback(t *testing.T) {
+	r := NewRunSkillTool(platform.Linux, nil, nil)
+	result := r.FormatArgs(json.RawMessage(`{invalid}`))
+	if result != "Running skill" {
+		t.Errorf("FormatArgs() = %q, want %q", result, "Running skill")
+	}
+}
+
 // TestReplaceBlockFormatArgs verifies replace_block shows relative path and purpose.
 func TestReplaceBlockFormatArgs(t *testing.T) {
 	r := NewReplaceBlockTool(func() string { return "/path/to" })

@@ -43,6 +43,36 @@ A good BEHAVIOR section answers:
 - What signals indicate success or failure?
 - When should the agent stop and ask the user?
 
+### Runnable Skills (v1)
+
+A skill can become **runnable** by adding two optional sections:
+
+1. `\[SYNTAX\]` — one-line compact invocation syntax that tells the model what arguments to pass.
+2. `\[CODE\]` — a fenced code block with language `shell` that executes when the model calls `run_skill`.
+
+A skill with both `[SYNTAX]` and valid `[CODE]` appears in the **Runnable Skills** prompt section automatically. The model uses `run_skill` (not `load_skill`) to execute it.
+
+Rules:
+- `[CODE]` must be a fenced block with `shell` language. No other languages in v1.
+- The skill body runs with env vars: `BLAZE_SKILL_ARGS` (raw string), `BLAZE_SKILL_DIR`, `BLAZE_SKILL_ID`, `BLAZE_SKILL_NAME`.
+- `[SYNTAX]` is compact, single‑line — the model sees it directly in the prompt.
+- Runnable skills stay visible in the available list; they need not be loaded to run.
+
+Example:
+```
+[SYNTAX]
+<path> [--dry-run]
+
+[CODE]
+```shell
+rsync -av "$BLAZE_SKILL_ARGS"
+``
+```
+
+(Single backticks in the actual file; use `\[SYNTAX\]` and `\[CODE\]` to avoid triggering parsing.)
+
+Do not add runnable sections unless the skill actually has executable code. Prompt‑only skills use `[BEHAVIOR]` and `[DATA]` as before.
+
 ### DATA
 
 Use DATA for durable facts, reference data, mappings, and preferences. Keep `scope.key=value`, one fact per line.

@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -117,8 +118,16 @@ func (s *ShellTool) Execute(ctx context.Context, args json.RawMessage) string {
 	if parsed.Timeout != nil && *parsed.Timeout > 0 {
 		timeoutSec = *parsed.Timeout
 	}
+	return executeShell(ctx, s.os, parsed.Command, "", nil, timeoutSec)
+}
 
-	shellPath, err := platform.SelectShell(s.os)
+// executeShell runs shell input with the shared timeout, output, and cancellation rules.
+func executeShell(ctx context.Context, osName platform.OS, command, workDir string, extraEnv map[string]string, timeoutSec int) string {
+	if strings.TrimSpace(command) == "" {
+		return "error: command is required"
+	}
+
+	shellPath, err := platform.SelectShell(osName)
 	if err != nil {
 		return fmt.Sprintf("error: cannot find shell: %v", err)
 	}
@@ -130,14 +139,23 @@ func (s *ShellTool) Execute(ctx context.Context, args json.RawMessage) string {
 	defer cancel()
 
 	var flag string
-	if s.os == platform.Windows {
+	if osName == platform.Windows {
 		flag = "-Command"
 	} else {
 		flag = "-c"
 	}
 
-	cmd := exec.Command(shellPath, flag, parsed.Command)
+	cmd := exec.Command(shellPath, flag, command)
 	prepareShellCommand(cmd)
+	if workDir != "" {
+		cmd.Dir = workDir
+	}
+	if len(extraEnv) > 0 {
+		cmd.Env = os.Environ()
+		for key, value := range extraEnv {
+			cmd.Env = append(cmd.Env, key+"="+value)
+		}
+	}
 	var stdout, stderr bytes.Buffer
 	limiter := &shellOutputLimiter{maxBytes: MaxShellOutputBytes}
 	cmd.Stdout = &limitedStreamWriter{buffer: &stdout, limiter: limiter}

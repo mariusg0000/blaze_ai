@@ -156,11 +156,27 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 		}
 		return skills.Resolve(name, all)
 	}
+	runnableSkillResolver := func(name string) (string, *skills.Skill, error) {
+		all, err := skills.DiscoverAll(agent.WorkDir)
+		if err != nil {
+			return "", nil, fmt.Errorf("skill discovery failed: %w", err)
+		}
+		resolved, err := skills.Resolve(name, all)
+		if err != nil {
+			return "", nil, err
+		}
+		skill := all[resolved]
+		if skill == nil {
+			return "", nil, fmt.Errorf("skill not found: %s", name)
+		}
+		return resolved, skill, nil
+	}
 
 	registry := tools.NewRegistry()
 	registry.Register(tools.NewShellTool(os))
 	registry.Register(tools.NewLoadSkillTool(active, skillResolver))
 	registry.Register(tools.NewUnloadSkillTool(active, skillResolver))
+	registry.Register(tools.NewRunSkillTool(os, runnableSkillResolver, func() string { return agent.WorkDir }))
 	registry.Register(tools.NewReplaceBlockTool(func() string { return agent.WorkDir }))
 	registry.Register(tools.NewTaskWriteTool(func() string { return agent.WorkDir }))
 	registry.Register(tools.NewTaskReadTool(func() string { return agent.WorkDir }))
