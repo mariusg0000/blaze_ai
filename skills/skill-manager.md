@@ -9,13 +9,56 @@ Design, review, or improve skill content. A skill improves future behavior by de
 
 ## Skill Format
 
-Every skill is a folder containing `skill.md` with these sections:
+Every skill is a folder containing `skill.md`. A skill is exactly one of two exclusive types. Never mix loadable sections with runnable sections in the same skill.
 
-1. `\[DESCRIPTION\]` — required, must appear first.
-2. `\[BEHAVIOR\]` — optional, procedural guidance.
-3. `\[DATA\]` — optional, persistent facts.
+### Type 1 — Loadable skill
 
-At least one of `\[BEHAVIOR\]` or `\[DATA\]` must be present.
+Sections: `[DESCRIPTION]` (required) plus `[BEHAVIOR]`, `[DATA]`, or both.
+
+Loaded with `load_skill`. Its `[BEHAVIOR]` and `[DATA]` enter the prompt context and guide the agent's reasoning and decisions.
+
+### Type 2 — Runnable skill
+
+Sections: `[DESCRIPTION]` (required) plus `[SYNTAX]` and valid `[CODE]`.
+
+Executed with `run_skill`. It does not enter the prompt context. It runs as a shell command and returns output. It must not contain `[BEHAVIOR]` or `[DATA]`.
+
+### Exclusive types
+
+Never add `[SYNTAX]` or `[CODE]` to a loadable skill. Never add `[BEHAVIOR]` or `[DATA]` to a runnable skill. If a use case needs both guidance and a runnable command, create two separate skills: one loadable for guidance, one runnable for execution.
+
+## Skill Type Decision
+
+Choose the skill type by purpose, not by user wording.
+
+### Choose loadable when the skill:
+
+- teaches the agent how to work (workflow, strategy, safety)
+- provides decision rules or stop conditions
+- stores durable facts the agent needs to know
+- guides which tools to use and when
+- defines first checks, pitfalls, and fallbacks
+- requires context-dependent interpretation or conversation
+- depends on data from other skills, SSH hosts, APIs, or user input
+
+### Choose runnable when the skill:
+
+- does one clear, repeatable, deterministic action
+- takes simple input expressible as a raw string
+- produces directly useful output without model interpretation
+- can be completed entirely in one shell script
+- needs no context, no reasoning rules, and no conversation during execution
+- failure can be reported by the script clearly
+
+### Do not make runnable when:
+
+- the task needs exploration or filesystem search before deciding what to run
+- the task needs conversation with the user
+- the task requires model judgment to interpret results
+- the task modifies files contextually based on current state
+- the task requires approvals, sudo, destructive actions, or credential handling
+- the script would become a broad program or orchestration layer
+- user intent is ambiguous and the correct tooling depends on context
 
 ### DESCRIPTION
 
@@ -45,20 +88,20 @@ A good BEHAVIOR section answers:
 
 ### Runnable Skills (v1)
 
-A skill can become **runnable** by adding two optional sections:
+A runnable skill is a standalone executable tool. It is not a loadable skill with extra sections. It must not contain `[BEHAVIOR]` or `[DATA]`.
 
-1. `\[SYNTAX\]` — one-line compact invocation syntax that tells the model what arguments to pass.
-2. `\[CODE\]` — a fenced code block with language `shell` that executes when the model calls `run_skill`.
+Sections:
+1. `\[DESCRIPTION\]` — required, must appear first. Same rules as loadable skills.
+2. `\[SYNTAX\]` — required, one-line compact argument syntax. Describes arguments only. Never repeats the skill name.
+3. `\[CODE\]` — required, a fenced code block with language `shell`. No other languages in v1.
 
-A skill with both `[SYNTAX]` and valid `[CODE]` appears in the **Runnable Skills** prompt section automatically. The model uses `run_skill` (not `load_skill`) to execute it.
+If the skill takes no arguments, set `[SYNTAX]` to `""`. Call it with `run_skill(name, "")`.
 
-Rules:
-- `[SYNTAX]` describes **arguments only**. Never repeat the skill name in `[SYNTAX]`.
-- If the skill takes no arguments, set `[SYNTAX]` to `""`. Call it with `run_skill(name, "")`.
-- `[CODE]` must be a fenced block with `shell` language. No other languages in v1.
-- The skill body runs with env vars: `BLAZE_SKILL_ARGS` (raw string), `BLAZE_SKILL_DIR`, `BLAZE_SKILL_ID`, `BLAZE_SKILL_NAME`.
-- `[SYNTAX]` is compact, single‑line — the model sees it directly in the prompt.
-- Runnable skills stay visible in the available list; they need not be loaded to run.
+The skill body runs with env vars: `BLAZE_SKILL_ARGS` (raw string), `BLAZE_SKILL_DIR`, `BLAZE_SKILL_ID`, `BLAZE_SKILL_NAME`.
+
+`[SYNTAX]` is compact, single‑line — the model sees it directly in the prompt's runnable skills section. A runnable skill does not enter the prompt context as active content; it is only listed by name and syntax.
+
+The model uses `run_skill` (not `load_skill`) to execute it. Runnable skills are always visible in the available list; they need not be loaded.
 
 Example:
 ````
@@ -85,8 +128,6 @@ df -h
 
 (The outer example fences use four backticks so the inner `shell` fence stays literal.)
 
-Do not add runnable sections unless the skill actually has executable code. Prompt‑only skills use `[BEHAVIOR]` and `[DATA]` as before.
-
 When creating or fixing a skill, load this skill first and use its path rules directly. Do not browse unrelated skills just to rediscover the folder layout.
 
 ### DATA
@@ -99,7 +140,7 @@ Keep DATA short, dense, and factual. No headings, prose, narratives, credentials
 - BEHAVIOR: how to work.
 - DATA: what is true.
 
-A skill may contain only BEHAVIOR, only DATA, or both. If a skill needs persistent domain facts, put them in its own DATA section. Do not create a separate skill just for data.
+A loadable skill may contain only BEHAVIOR, only DATA, or both. If a loadable skill needs persistent domain facts, put them in its own DATA section. Do not create a separate skill just for data. Runnable skills do not use BEHAVIOR or DATA.
 
 ## Recommended Structure
 
