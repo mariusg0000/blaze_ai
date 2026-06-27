@@ -73,6 +73,8 @@ Avoid skill churn. Do not unload a skill immediately after use; keep it loaded f
 Unload a skill only when it is clearly irrelevant for about 10 user turns, or when it conflicts with the current task.
 If unsure, keep it loaded.
 
+Before performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first. Do not act on an unfamiliar domain without loading the relevant skill.
+
 **Available skills:**
 Use the `load_skill` tool to load a skill if needed.
 
