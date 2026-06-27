@@ -94,6 +94,12 @@ func (h *Handler) OnUsage(promptTokens int) {
 	h.mu.Unlock()
 }
 
+// RequestSudoApproval is not supported in the Telegram transport.
+// Sudo commands are not allowed via Telegram for security.
+func (h *Handler) RequestSudoApproval(command string) (bool, string) {
+	return false, ""
+}
+
 // OnContent appends a streamed text delta to the Telegram buffer.
 func (h *Handler) OnContent(delta string) {
 	h.mu.Lock()

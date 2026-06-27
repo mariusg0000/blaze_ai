@@ -80,6 +80,7 @@ type Console struct {
 	lineOpen         bool
 	turnAborting     atomic.Bool
 	lastToolArgs     string
+	toolLinePending  bool
 }
 
 // inputEvent carries one console input line or a terminal read error.
@@ -483,7 +484,8 @@ func (c *Console) OnContent(delta string) {
 }
 
 // OnToolCall is called before a tool is executed.
-// Stores args for deferred single-line display in OnToolResult.
+// On TTY, prints the tool purpose line immediately so the user sees what is running.
+// On non-TTY, defers display to OnToolResult.
 //
 // WHAT:  Buffers tool call args and handles tool group header.
 // PARAMS: name — tool name; args — formatted arguments (purpose text).
@@ -499,6 +501,11 @@ func (c *Console) OnToolCall(name string, args string) {
 		c.openToolGroup()
 	}
 	c.lastToolArgs = args
+
+	if c.IsTTY && args != "" {
+		fmt.Fprintf(c.Out, "%s %s …", c.color(colorGreen, toolEmoji(name)), args)
+		c.toolLinePending = true
+	}
 }
 
 // toolEmoji returns a tool-specific emoji for display in the console UI.
@@ -526,6 +533,7 @@ func toolEmoji(name string) string {
 
 // OnToolResult is called after a tool has finished.
 // Prints a single line: tool emoji + purpose + status symbol.
+// On TTY, overwrites the pending line printed by OnToolCall.
 // Success: ✓. Error: ✗ <message>. Timeout: ⏱ <message>.
 //
 // WHAT:  Displays tool result inline with the deferred tool call line.
@@ -533,12 +541,18 @@ func toolEmoji(name string) string {
 func (c *Console) OnToolResult(name string, result string) {
 	if c.turnAborting.Load() {
 		c.lastToolArgs = ""
+		c.toolLinePending = false
 		return
 	}
 	badge, content, colorCode := parseToolResult(result)
 	icon := c.color(colorGreen, toolEmoji(name))
 	args := c.lastToolArgs
 	c.lastToolArgs = ""
+
+	if c.IsTTY && c.toolLinePending {
+		fmt.Fprintf(c.Out, "\r\033[K")
+		c.toolLinePending = false
+	}
 
 	switch badge {
 	case "DONE":
@@ -592,6 +606,37 @@ func (c *Console) OnToolResult(name string, result string) {
 		}
 	}
 	c.lineOpen = false
+}
+
+// RequestSudoApproval prompts the user for confirmation before executing a sudo command.
+// On approval, reads a hidden password. The password is never stored or echoed.
+//
+// WHAT:  Collects user approval and sudo password for a shell command.
+// HOW:   Shows the command, asks Y/N, then reads hidden input.
+// PARAMS: command — the shell command that contains sudo.
+// RETURNS: approved — true if user confirmed; password — the sudo password, empty if declined.
+func (c *Console) RequestSudoApproval(command string) (approved bool, password string) {
+	c.ensureLineBreakBeforeBlock()
+	label := c.color(colorOrange, "sudo")
+	fmt.Fprintf(c.Out, "\n%s: %s\n", label, command)
+	fmt.Fprintf(c.Out, "%s [y/N] ", c.color(colorBrightGreen, "Execute with sudo?"))
+
+	line, err := c.Reader.ReadLine()
+	if err != nil {
+		return false, ""
+	}
+	line = strings.TrimSpace(line)
+	if line != "y" && line != "Y" {
+		fmt.Fprintln(c.Out)
+		return false, ""
+	}
+
+	pass, err := c.Reader.ReadHiddenInput("Sudo password: ")
+	if err != nil || pass == "" {
+		fmt.Fprintln(c.Out)
+		return false, ""
+	}
+	return true, pass
 }
 
 // parseToolResult extracts a display badge, useful content, and color from raw tool output.

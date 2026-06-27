@@ -145,8 +145,21 @@ func executeShell(ctx context.Context, osName platform.OS, command, workDir stri
 		flag = "-c"
 	}
 
+	// Handle sudo password via env var set by runtime.
+	var sudoStdin *strings.Reader
+	if sudoPass := os.Getenv("BLAZE_SUDO_PASSWORD"); sudoPass != "" {
+		os.Unsetenv("BLAZE_SUDO_PASSWORD")
+		if !strings.Contains(command, "sudo -S") {
+			command = strings.Replace(command, "sudo ", "sudo -S ", 1)
+		}
+		sudoStdin = strings.NewReader(sudoPass + "\n")
+	}
+
 	cmd := exec.Command(shellPath, flag, command)
 	prepareShellCommand(cmd)
+	if sudoStdin != nil {
+		cmd.Stdin = sudoStdin
+	}
 	if workDir != "" {
 		cmd.Dir = workDir
 	}

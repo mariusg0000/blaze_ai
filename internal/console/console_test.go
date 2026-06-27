@@ -48,6 +48,7 @@ func (h *mockHandler) OnContent(delta string)                  {}
 func (h *mockHandler) OnToolCall(name string, args string)     {}
 func (h *mockHandler) OnToolResult(name string, result string) {}
 func (h *mockHandler) OnUsage(promptTokens int)                {}
+func (h *mockHandler) RequestSudoApproval(command string) (bool, string) { return false, "" }
 
 // newConsole creates a Console with a buffer for output and non-TTY mode.
 func newConsole(agent *runtime.Agent) (*Console, *bytes.Buffer) {

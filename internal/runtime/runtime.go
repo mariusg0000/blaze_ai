@@ -45,6 +45,12 @@ type Handler interface {
 	OnToolResult(name string, result string)
 	// OnUsage is called after each provider response with prompt token count.
 	OnUsage(promptTokens int)
+
+	// RequestSudoApproval is called before executing a shell command that requires sudo.
+	// The handler prompts the user for confirmation, then reads a hidden password if approved.
+	// approved: false means the user declined — the tool call is skipped.
+	// password: empty on decline; the sudo password on approval. Never stored in session JSON.
+	RequestSudoApproval(command string) (approved bool, password string)
 }
 
 // Agent is the core runtime that ties all packages together and drives the conversation loop.
@@ -313,6 +319,33 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 				return ErrTurnAborted
 			}
 			a.Handler.OnToolCall(tc.Name, a.Tools.FormatArgs(tc.Name, tc.Arguments))
+
+			// Reset sudo password before each tool call to prevent cross-call leaks.
+			os.Unsetenv("BLAZE_SUDO_PASSWORD")
+
+			// Detect sudo in shell commands and collect password.
+			if tc.Name == "shell" {
+				var shellArgs struct {
+					Command string `json:"command"`
+				}
+				if err := json.Unmarshal([]byte(tc.Arguments), &shellArgs); err == nil && containsSudo(shellArgs.Command) {
+					approved, password := a.Handler.RequestSudoApproval(shellArgs.Command)
+					if !approved {
+						result := "error: sudo command declined by user"
+						a.Handler.OnToolResult(tc.Name, result)
+						if err := a.Session.Append(session.Message{
+							Role:       "tool",
+							Content:    result,
+							ToolCallID: tc.ID,
+							Name:       tc.Name,
+						}); err != nil {
+							return fmt.Errorf("cannot persist tool error: %w", err)
+						}
+						continue
+					}
+					os.Setenv("BLAZE_SUDO_PASSWORD", password)
+				}
+			}
 
 			tool := a.Tools.Get(tc.Name)
 			if tool == nil {
@@ -600,4 +633,25 @@ func isDir(path string) bool {
 		return false
 	}
 	return info.IsDir()
+}
+
+// containsSudo reports whether a shell command string invokes sudo.
+//
+// WHAT:  Checks for sudo at a shell command boundary (start of line, after pipe, semicolon, or logic operator).
+// WHY:   Sudo commands need password approval before execution.
+// RETURNS: bool — true if the command contains a sudo invocation.
+func containsSudo(command string) bool {
+	cmd := strings.TrimSpace(command)
+	if cmd == "" {
+		return false
+	}
+	if strings.HasPrefix(cmd, "sudo ") || cmd == "sudo" {
+		return true
+	}
+	for _, sep := range []string{"| sudo ", "| sudo\t", "; sudo ", "; sudo\t", "&& sudo ", "&& sudo\t", "|| sudo ", "|| sudo\t"} {
+		if strings.Contains(cmd, sep) {
+			return true
+		}
+	}
+	return false
 }

@@ -156,3 +156,63 @@ func (r *Reader) ReadEvent() (string, string, error) {
 		}
 	}
 }
+
+// ReadHiddenInput reads one line from the terminal without echoing characters.
+// Used for password entry. Backspace is supported but not echoed.
+// On non-TTY, delegates to ReadLine (echo is visible — acceptable for tests/pipes).
+//
+// WHAT:  Reads a single line of hidden input (password).
+// RETURNS: string — the input text; error — read error, cancellation, or EOF.
+func (r *Reader) ReadHiddenInput(prompt string) (string, error) {
+	if !r.isTTY {
+		fmt.Fprint(os.Stdout, prompt)
+		line, err := r.ReadLine()
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(line), nil
+	}
+
+	fmt.Fprint(os.Stdout, prompt)
+
+	fd := int(os.Stdin.Fd())
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return "", err
+	}
+	defer term.Restore(fd, oldState)
+
+	var buf []byte
+	for {
+		b := make([]byte, 1)
+		n, readErr := os.Stdin.Read(b)
+		if readErr != nil {
+			return "", readErr
+		}
+		if n == 0 {
+			continue
+		}
+
+		switch b[0] {
+		case 0x03: // Ctrl-C — cancel
+			fmt.Fprint(os.Stdout, "\r\n")
+			return "", fmt.Errorf("cancelled")
+		case 0x0a, 0x0d: // Enter — submit
+			fmt.Fprint(os.Stdout, "\r\n")
+			return string(buf), nil
+		case 0x04: // Ctrl-D
+			if len(buf) == 0 {
+				return "", io.EOF
+			}
+		case 0x7f, 0x08: // Backspace
+			if len(buf) > 0 {
+				buf = buf[:len(buf)-1]
+			}
+		default:
+			if b[0] >= 0x20 {
+				buf = append(buf, b[0])
+				// Intentionally no echo.
+			}
+		}
+	}
+}
