@@ -1,5 +1,5 @@
 [DESCRIPTION]
-Load when creating, reviewing, or modifying a skill, including runnable skills. Use for designing procedural skill content, authoring runnable `[SYNTAX]` and `[CODE]` sections, separating behavior from data, and turning user corrections or failed workflows into better skill rules.
+MUST load first before creating, reviewing, modifying, repairing, or debugging any skill, including runnable skills. Use for skill type decisions, skill structure, separating instructions from facts, and turning user corrections or failed workflows into better skill rules.
 
 [BEHAVIOR]
 # Skill Manager
@@ -43,15 +43,17 @@ Choose the skill type by purpose, not by user wording.
 
 ### Choose runnable when the skill:
 
-- does one clear, repeatable, deterministic action
-- takes simple input expressible as a raw string
+- is a non-trivial, reusable shell script worth saving across sessions
+- has a stable argument interface you would otherwise retype or get wrong
 - produces directly useful output without model interpretation
-- can be completed entirely in one shell script
-- needs no context, no reasoning rules, and no conversation during execution
+- runs as one self-contained script with no conversation during execution
 - failure can be reported by the script clearly
+- invoking it repeatedly via `shell` directly would be tedious or error-prone
 
 ### Do not make runnable when:
 
+- the action is a simple one-liner the model can reproduce from memory (use `shell` directly)
+- you would run it only once
 - the task needs exploration or filesystem search before deciding what to run
 - the task needs conversation with the user
 - the task requires model judgment to interpret results
@@ -59,6 +61,10 @@ Choose the skill type by purpose, not by user wording.
 - the task requires approvals, sudo, destructive actions, or credential handling
 - the script would become a broad program or orchestration layer
 - user intent is ambiguous and the correct tooling depends on context
+
+### Rule of thumb
+
+If you can type the command in `shell` right now and it works, do not make a runnable skill for it. A runnable skill earns its place by being non-trivial, reusable, and stable. Otherwise just run it.
 
 ### DESCRIPTION
 
