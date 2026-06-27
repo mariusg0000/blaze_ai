@@ -739,7 +739,7 @@ func TestNewAgentIgnoresLastModelWhenLastModeExists(t *testing.T) {
 	}
 }
 
-// TestInjectDirective verifies directive injection appends to last message in copy.
+// TestInjectDirective verifies directive injection appends to the latest user message in copy.
 func TestInjectDirective(t *testing.T) {
 	original := []session.Message{
 		{Role: "system", Content: "sys"},
@@ -764,6 +764,32 @@ func TestInjectDirective(t *testing.T) {
 	}
 	if !strings.Contains(last, "hello") {
 		t.Error("result[1].Content missing original content")
+	}
+}
+
+// TestInjectDirectiveSkipsToolTail verifies tool results stay untouched and the directive is
+// applied to the latest user message instead.
+func TestInjectDirectiveSkipsToolTail(t *testing.T) {
+	original := []session.Message{
+		{Role: "system", Content: "sys"},
+		{Role: "user", Content: "hello"},
+		{Role: "tool", Content: "tool output"},
+	}
+	result := injectDirective(original, "be quick")
+
+	toolContent, ok := result[2].Content.(string)
+	if !ok {
+		t.Fatal("result[2].Content is not string")
+	}
+	if toolContent != "tool output" {
+		t.Fatalf("tool content mutated: %q", toolContent)
+	}
+	userContent, ok := result[1].Content.(string)
+	if !ok {
+		t.Fatal("result[1].Content is not string")
+	}
+	if !strings.Contains(userContent, "[MODE DIRECTIVE]") || !strings.Contains(userContent, "be quick") {
+		t.Fatalf("user content missing directive: %q", userContent)
 	}
 }
 

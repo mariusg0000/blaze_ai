@@ -225,7 +225,7 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 			_ = os.WriteFile(promptPath, []byte(raw), 0644)
 		}
 
-		// Inject volatile mode directive into the last message (copy, never mutate session).
+		// Inject volatile mode directive into the latest user message only (copy, never mutate session).
 		if a.CurrentMode != nil && strings.TrimSpace(a.CurrentMode.Directive) != "" {
 			messages = injectDirective(messages, a.CurrentMode.Directive)
 		}
@@ -346,16 +346,22 @@ func shouldPersistAssistantMessage(msg session.Message) bool {
 	return content != "" || msg.Reasoning != "" || msg.ToolCalls != nil
 }
 
-// injectDirective appends the mode directive to the last message in a copy of the slice.
+// injectDirective appends the mode directive to the most recent user message in a copy of the
+// slice. Tool messages must stay unchanged so tool results are sent back exactly as produced.
 func injectDirective(messages []session.Message, directive string) []session.Message {
 	if len(messages) == 0 {
 		return messages
 	}
 	out := make([]session.Message, len(messages))
 	copy(out, messages)
-	last := &out[len(out)-1]
-	content, _ := last.Content.(string)
-	last.Content = content + "\n\n[MODE DIRECTIVE]\n" + directive
+	for i := len(out) - 1; i >= 0; i-- {
+		if out[i].Role != "user" {
+			continue
+		}
+		content, _ := out[i].Content.(string)
+		out[i].Content = content + "\n\n[MODE DIRECTIVE]\n" + directive
+		return out
+	}
 	return out
 }
 

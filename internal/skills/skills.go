@@ -178,7 +178,9 @@ func extractOptionalSection(content, sectionName string) (string, error) {
 }
 
 // SeedBuiltins copies embedded builtin skill templates into app_home/skills/ if they do not
-// already exist. Each embedded .md file becomes app_home/skills/<name>/skill.md.
+// already exist. Each embedded .md file becomes app_home/skills/<name>/skill.md. If the
+// builtin template also has a same-named support subtree (for example <name>/docs/), that
+// subtree is copied alongside the skill file during the first seed.
 // Existing files are never overwritten — the user can delete a seeded skill to restore the
 // original on the next restart.
 //
@@ -226,6 +228,43 @@ func SeedBuiltins(templatesFS fs.FS, appHomeSkillsDir string) error {
 		}
 		if err := os.WriteFile(skillFile, data, 0644); err != nil {
 			return fmt.Errorf("cannot write skill file %s: %w", skillFile, err)
+		}
+		if err := copyBuiltinSubtree(templatesFS, skillName, skillDir); err != nil {
+			return fmt.Errorf("cannot copy builtin subtree for %s: %w", skillName, err)
+		}
+	}
+	return nil
+}
+
+// copyBuiltinSubtree copies an optional same-named subtree from the embedded builtin skill
+// templates into the seeded skill directory. It is used for auxiliary docs such as
+// customize-me/docs/*.md.
+func copyBuiltinSubtree(templatesFS fs.FS, sourceDir, targetDir string) error {
+	entries, err := fs.ReadDir(templatesFS, sourceDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		sourcePath := filepath.ToSlash(filepath.Join(sourceDir, entry.Name()))
+		targetPath := filepath.Join(targetDir, entry.Name())
+		if entry.IsDir() {
+			if err := os.MkdirAll(targetPath, 0755); err != nil {
+				return fmt.Errorf("cannot create builtin subtree directory %s: %w", targetPath, err)
+			}
+			if err := copyBuiltinSubtree(templatesFS, sourcePath, targetPath); err != nil {
+				return err
+			}
+			continue
+		}
+		data, err := fs.ReadFile(templatesFS, sourcePath)
+		if err != nil {
+			return fmt.Errorf("cannot read builtin subtree file %s: %w", sourcePath, err)
+		}
+		if err := os.WriteFile(targetPath, data, 0644); err != nil {
+			return fmt.Errorf("cannot write builtin subtree file %s: %w", targetPath, err)
 		}
 	}
 	return nil

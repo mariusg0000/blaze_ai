@@ -306,7 +306,7 @@ The `telegram_bridge` skill is a builtin Markdown skill (not generated from Go c
 8. **Maintenance**: Token rotation, workdir change, model change, instance repair.
 
 Constraints:
-- `customize_me` defers Telegram instance work to `telegram_bridge`.
+- `customize-me` links Telegram guidance from its own `docs/telegram.md`.
 - `skill-manager` includes `telegram_bridge` in its builtin list.
 - Collision rules apply: a user-created `telegram_bridge` in `app_home/skills/` overrides the builtin.
 

@@ -63,8 +63,8 @@
 - `vision` and `summarization` roles can be configured during setup or left for later.
 
 ### Auto-Configuration Skill
-- A builtin skill named `customize_me` exists to let the LLM assist the user with configuration.
-- The `customize_me` skill explains how to define providers, models, and roles in `config.json`.
+- A builtin skill named `customize-me` exists to let the LLM assist the user with configuration.
+- The `customize-me` skill explains how to define providers, models, and roles in `config.json`.
 - The skill can be loaded by the user or by the agent when configuration help is needed.
 
 ## Prompt Build
@@ -178,7 +178,7 @@
 ### Builtin Skills
 - At least two builtin skills ship with the product:
   1. `skill-manager`: explains how to create, modify, review, and repair skills. Includes skill format, data authoring rules, and the behavior/data distinction.
-  2. `customize_me`: explains how to configure providers, models, and roles in `config.json`, enabling the LLM to assist with auto-configuration.
+  2. `customize-me`: explains how to configure providers, models, and roles in `config.json`, enabling the LLM to assist with auto-configuration.
 
 ## Memory
 

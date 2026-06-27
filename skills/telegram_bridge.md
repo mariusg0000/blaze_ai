@@ -129,16 +129,79 @@ Rules:
 12. Tell the user how to start the bridge and how to verify it.
 
 ## Startup
-- Start one instance with:
-```text
-blazeai --telegram <instance>
-```
+- Start one instance with `blazeai --telegram <instance>`.
 - The runtime loads:
   - `{APP_HOME}/config/config.json`
   - `{APP_HOME}/telegram/<instance>/bridge.json`
   - `{APP_HOME}/telegram/<instance>/state.json`
 - Startup must fail if any required Telegram file or field is missing or invalid.
 - Do not describe any fallback startup path.
+
+### Linux systemd
+- Use one service per instance.
+- Run the service as the same user that owns `{APP_HOME}` so the bridge reads the correct home directory.
+- Prefer an explicit absolute binary path and an explicit instance argument.
+
+```ini
+[Unit]
+Description=BlazeAI Telegram bridge (%i)
+After=network-online.target
+
+[Service]
+Type=simple
+User=blazeai
+WorkingDirectory=/home/blazeai
+ExecStart=/opt/blazeai/blazeai --telegram %i
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+```
+
+- Enable and start with `systemctl enable --now blazeai-telegram@<instance>`.
+- Check logs with `journalctl -u blazeai-telegram@<instance> -f`.
+
+### macOS launchd
+- Use one LaunchAgent per instance for a logged-in user session.
+- Put the plist under `~/Library/LaunchAgents/` and run the binary with `--telegram <instance>`.
+- Keep the service tied to the same user home that contains `{APP_HOME}`.
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.blazeai.telegram.instance-name</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/blazeai/bin/blazeai</string>
+    <string>--telegram</string>
+    <string>instance-name</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+</dict>
+</plist>
+```
+
+- Load with `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.blazeai.telegram.instance-name.plist`.
+- Check logs with `log stream --predicate 'process == "blazeai"'`.
+
+### Windows service
+- Prefer NSSM for a long-running bridge service.
+- Run the executable with `--telegram <instance>` and use the same Windows account profile that contains `{APP_HOME}`.
+
+```text
+nssm install BlazeAI-<instance> C:\BlazeAI\blazeai.exe
+nssm set BlazeAI-<instance> AppParameters --telegram <instance>
+```
+
+- Start with `nssm start BlazeAI-<instance>`.
+- Check logs in the service output configured by NSSM or in Event Viewer if the wrapper routes there.
 
 ## Verification
 - After startup, send a normal text message from the allowed chat.

@@ -35,6 +35,4 @@ tmp/
 temp/
 
 # Local runtime data
-/blazeai/
-/.blazeai/
 app_home/

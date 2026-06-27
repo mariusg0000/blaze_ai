@@ -10,5 +10,5 @@ import "embed"
 //go:embed prompts/*
 var embeddedPrompts embed.FS
 
-//go:embed skills/*
+//go:embed skills
 var embeddedBuiltinSkills embed.FS
