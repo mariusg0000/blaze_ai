@@ -83,7 +83,7 @@ Type=simple
 User=blazeai
 WorkingDirectory=/home/blazeai
 ExecStart=/opt/blazeai/blazeai --telegram %i
-Restart=on-failure
+Restart=always
 RestartSec=2
 
 [Install]
@@ -92,6 +92,8 @@ WantedBy=multi-user.target
 
 - Enable and start with `systemctl enable --now blazeai-telegram@<instance>`.
 - Check logs with `journalctl -u blazeai-telegram@<instance> -f`.
+- Keep `Restart=always` so the service comes back even if the process exits after a signal.
+- The bridge retries transient `getUpdates` transport errors in-process, so resets like `connection reset by peer` should not require a manual restart.
 
 ## Verification
 - Send a normal text message from the allowed chat.

@@ -130,12 +130,17 @@ blazeai --telegram <instance>
 11. Publish bot commands via setMyCommands.
 12. Drain pending updates (fetch with offset=0, compute start offset).
 13. Start long polling (timeout=30s).
-14. Only process updates where chat.id == allowed_chat_id.
+14. Retry transient `getUpdates` transport errors with a short backoff.
+15. Only process updates where chat.id == allowed_chat_id.
 ```
 
 ### Pending Update Drain
 
 On first boot (or after restart), Telegram may have queued old updates. The bridge calls `getUpdates(offset=0, timeout=0)` once at startup, computes `max(update_id)+1` as the starting offset, and discards those updates. This prevents stale messages ("/start", "Salut", etc. sent during chat ID discovery) from being fed to the LLM.
+
+### Polling Failure Policy
+
+The bridge must not exit on a transient long-poll transport failure. Retryable failures include network-layer conditions such as `EOF`, timeouts, and `connection reset by peer`. The polling loop retries those errors after a short fixed backoff. Non-retryable API or validation errors still fail fast with a clear error.
 
 ### Transport Context
 

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,6 +27,8 @@ import (
 )
 
 const startupDrainTimeoutSeconds = 0
+const pollingTimeoutSeconds = 30
+const pollingRetryDelay = 2 * time.Second
 
 type telegramClient interface {
 	GetUpdates(ctx context.Context, offset int, timeoutSeconds int) ([]Update, error)
@@ -123,7 +126,7 @@ func runPolling(ctx context.Context, client telegramClient, bridgeCfg *BridgeCon
 		return fmt.Errorf("cannot drain pending telegram updates: %w", err)
 	}
 	for {
-		updates, err := client.GetUpdates(ctx, offset, 30)
+		updates, err := getUpdatesWithRetry(ctx, client, offset, pollingTimeoutSeconds, pollingRetryDelay)
 		if err != nil {
 			return fmt.Errorf("telegram polling failed: %w", err)
 		}
@@ -172,11 +175,55 @@ func runPolling(ctx context.Context, client telegramClient, bridgeCfg *BridgeCon
 }
 
 func drainPendingUpdates(ctx context.Context, client telegramClient) (int, error) {
-	updates, err := client.GetUpdates(ctx, 0, startupDrainTimeoutSeconds)
+	updates, err := getUpdatesWithRetry(ctx, client, 0, startupDrainTimeoutSeconds, pollingRetryDelay)
 	if err != nil {
 		return 0, err
 	}
 	return nextOffsetFromUpdates(updates, 0), nil
+}
+
+func getUpdatesWithRetry(ctx context.Context, client telegramClient, offset int, timeoutSeconds int, retryDelay time.Duration) ([]Update, error) {
+	for {
+		updates, err := client.GetUpdates(ctx, offset, timeoutSeconds)
+		if err == nil {
+			return updates, nil
+		}
+		if !isRetryablePollingError(err) {
+			return nil, err
+		}
+		if err := waitForPollingRetry(ctx, retryDelay); err != nil {
+			return nil, err
+		}
+	}
+}
+
+func isRetryablePollingError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "connection reset by peer") || strings.Contains(message, "broken pipe")
+}
+
+func waitForPollingRetry(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func nextOffsetFromUpdates(updates []Update, initial int) int {

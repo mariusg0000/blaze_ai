@@ -152,7 +152,8 @@ For `blazeai --telegram <instance>`:
 9. Create one `runtime.Agent` for this instance.
 10. Attach a Telegram handler implementing `runtime.Handler`.
 11. Start Telegram long polling.
-12. Ignore every update whose `chat_id` does not match `allowed_chat_id`.
+12. Retry transient `getUpdates` transport errors with a short backoff instead of stopping the bridge.
+13. Ignore every update whose `chat_id` does not match `allowed_chat_id`.
 
 ### Runtime Message Flow
 
@@ -170,6 +171,8 @@ For a normal Telegram message:
 ### Telegram Output Strategy
 
 Telegram is not a terminal and has message/edit limits. The bridge should not stream token-by-token.
+
+The polling loop must also tolerate transient network failures such as `EOF`, timeouts, and `connection reset by peer`. Those failures should retry after a short delay instead of terminating the process.
 
 Recommended v1 strategy:
 
@@ -428,8 +431,9 @@ Deliverable:
 1. Add long polling with the chosen Telegram library.
 2. Accept only text messages in v1.
 3. Reject or ignore updates from any chat other than `allowed_chat_id`.
-4. Serialize processing so only one turn runs at a time for the instance.
-5. Surface clear runtime errors to the allowed chat when possible.
+4. Retry transient polling transport failures with a short backoff.
+5. Serialize processing so only one turn runs at a time for the instance.
+6. Surface clear runtime errors to the allowed chat when possible.
 
 Deliverable:
 

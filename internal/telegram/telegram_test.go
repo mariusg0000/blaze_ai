@@ -4,6 +4,9 @@ package telegram
 
 import (
 	"context"
+	"errors"
+	"io"
+	"net"
 	"path/filepath"
 	"testing"
 
@@ -15,9 +18,10 @@ type mockUpdateClient struct {
 		offset  int
 		timeout int
 	}
-	updates  []Update
-	err      error
-	commands [][]botCommand
+	updates    []Update
+	errs       []error
+	defaultErr error
+	commands   [][]botCommand
 }
 
 func (m *mockUpdateClient) GetUpdates(_ context.Context, offset int, timeoutSeconds int) ([]Update, error) {
@@ -25,7 +29,17 @@ func (m *mockUpdateClient) GetUpdates(_ context.Context, offset int, timeoutSeco
 		offset  int
 		timeout int
 	}{offset: offset, timeout: timeoutSeconds})
-	return m.updates, m.err
+	if len(m.errs) > 0 {
+		err := m.errs[0]
+		m.errs = m.errs[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
+	if m.defaultErr != nil {
+		return nil, m.defaultErr
+	}
+	return m.updates, nil
 }
 
 func (m *mockUpdateClient) SendMessage(_ context.Context, _ int64, _ string) (int, error) {
@@ -182,5 +196,62 @@ func TestOpenTelegramSessionResumesSameFixedSession(t *testing.T) {
 	}
 	if loaded.Messages[0].Content != "hello telegram" {
 		t.Fatalf("loaded content = %v, want hello telegram", loaded.Messages[0].Content)
+	}
+}
+
+func TestGetUpdatesWithRetryRetriesTransientError(t *testing.T) {
+	client := &mockUpdateClient{
+		errs:    []error{&net.DNSError{IsTemporary: true, Err: "temporary telegram dns failure"}, nil},
+		updates: []Update{{UpdateID: 7}},
+	}
+
+	updates, err := getUpdatesWithRetry(context.Background(), client, 15, pollingTimeoutSeconds, 0)
+	if err != nil {
+		t.Fatalf("getUpdatesWithRetry() error: %v", err)
+	}
+	if len(updates) != 1 || updates[0].UpdateID != 7 {
+		t.Fatalf("updates = %+v, want one update with id 7", updates)
+	}
+	if len(client.updatesCalls) != 2 {
+		t.Fatalf("GetUpdates calls = %d, want 2", len(client.updatesCalls))
+	}
+	if client.updatesCalls[0].offset != 15 || client.updatesCalls[0].timeout != pollingTimeoutSeconds {
+		t.Fatalf("first GetUpdates args = (%d,%d), want (15,%d)", client.updatesCalls[0].offset, client.updatesCalls[0].timeout, pollingTimeoutSeconds)
+	}
+}
+
+func TestGetUpdatesWithRetryStopsOnNonRetryableError(t *testing.T) {
+	client := &mockUpdateClient{defaultErr: errors.New("telegram getUpdates failed: unauthorized")}
+
+	_, err := getUpdatesWithRetry(context.Background(), client, 3, pollingTimeoutSeconds, 0)
+	if err == nil {
+		t.Fatal("getUpdatesWithRetry() error = nil, want non-retryable error")
+	}
+	if len(client.updatesCalls) != 1 {
+		t.Fatalf("GetUpdates calls = %d, want 1", len(client.updatesCalls))
+	}
+}
+
+func TestIsRetryablePollingError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", err: nil, want: false},
+		{name: "context canceled", err: context.Canceled, want: false},
+		{name: "deadline", err: context.DeadlineExceeded, want: false},
+		{name: "eof", err: io.EOF, want: true},
+		{name: "net error", err: &net.DNSError{IsTemporary: true, Err: "timeout"}, want: true},
+		{name: "connection reset text", err: errors.New("telegram getUpdates request failed: read tcp [::1]:443: read: connection reset by peer"), want: true},
+		{name: "telegram api error", err: errors.New("telegram getUpdates failed: unauthorized"), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isRetryablePollingError(tt.err); got != tt.want {
+				t.Fatalf("isRetryablePollingError() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
