@@ -180,9 +180,11 @@ Recommended v1 strategy:
 - flush updates at a fixed interval such as 300-700 ms
 - edit the active Telegram message while it remains within Telegram limits
 - split into a new message when the current message would exceed Telegram size limits
-- send tool call and tool result notices as short separate messages
+- render tool activity in one compact editable status bubble instead of sending raw tool result bubbles
 
 This keeps the runtime streaming behavior while adapting it to Telegram safely.
+
+If tool activity begins after an assistant reply already started streaming, the earlier assistant bubble should be left in place. Later assistant content must continue in a new lower bubble so the final answer appears below the tool activity block.
 
 ## Runtime Integration
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # deploy_nas.sh — Build BlazeAI, deploy and install on a remote server.
-# Usage: ./deploy_nas.sh user@host
+# Usage: ./deploy_nas.sh [user@host]
+# Default target: nas@192.168.0.104
 set -euo pipefail
 
-[ $# -eq 1 ] || { printf 'Usage: %s user@host\n' "$0" >&2; exit 1; }
-remote="$1"
+remote="${1:-nas@192.168.0.104}"
 
 printf 'Building linux/amd64 binary...\n'
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /tmp/blazeai-bin .

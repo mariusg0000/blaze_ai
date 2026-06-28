@@ -187,10 +187,14 @@ OnContent(delta)
   └── append delta to content buffer
 
 OnToolCall(name, args)
-  └── send "[tool] <name> <args>" as separate message
+  ├── flush any already-started assistant text bubble
+  ├── append one pending line to a shared "🛠 Activity" message
+  └── send or edit that shared activity message
 
 OnToolResult(name, result)
-  └── send "[tool result] <name> <truncated_result>" as separate message
+  ├── classify the raw result as success, error, or timeout
+  ├── update the matching activity line with `✅`, `❌`, or `⏱`
+  └── do not send a separate raw tool-result bubble
 
 OnUsage(promptTokens)
   └── record token count for context display
@@ -215,6 +219,20 @@ typingLoop (goroutine)
     sendChatAction("typing")
   (shared stopFlush channel with flushLoop)
 ```
+
+### Tool Activity Bubble
+
+Tool execution is rendered into one editable status bubble instead of a stream of raw tool messages. Example:
+
+```text
+🛠 Activity
+💻 Check signal-cli installation... ✅
+💻 Check if signal-cli binary is installed... ✅
+```
+
+This keeps tool visibility without pushing the final assistant reply off-screen with `[tool result]` dumps.
+
+If the assistant already started a text reply before the first tool call, that earlier reply bubble is left in place. Any assistant content produced after tool activity starts is sent in a new lower bubble, so the final answer appears below the activity block instead of editing the older top bubble.
 
 ### Message Splitting
 
