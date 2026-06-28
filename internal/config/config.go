@@ -53,12 +53,13 @@ type Provider struct {
 // Roles maps model roles to provider/model_name identifiers.
 //
 // WHAT:  Assigns models to functional roles in the runtime.
-// WHY:   Different tasks (default, vision, summarization) may use different models.
-// PARAMS: Default — required, normal interaction; Vision — optional; Summarization — optional.
+// WHY:   Different tasks (default, vision, summarization, advisor) may use different models.
+// PARAMS: Default — required, normal interaction; Vision — optional; Summarization — optional; Advisor — optional.
 type Roles struct {
 	Default       string `json:"default"`
 	Vision        string `json:"vision,omitempty"`
 	Summarization string `json:"summarization,omitempty"`
+	Advisor       string `json:"advisor,omitempty"`
 }
 
 // Mode defines one work mode: a name, its assigned model, and an optional directive.
@@ -333,6 +334,11 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("summarization role: %w", err)
 		}
 	}
+	if c.Roles.Advisor != "" {
+		if err := validateModelFormat(c.Roles.Advisor); err != nil {
+			return fmt.Errorf("advisor role: %w", err)
+		}
+	}
 	if err := validateProviders(c.Providers); err != nil {
 		return err
 	}
@@ -348,6 +354,11 @@ func (c *Config) Validate() error {
 	if c.Roles.Summarization != "" {
 		if err := validateModelProvider(c.Roles.Summarization, providerNames); err != nil {
 			return fmt.Errorf("summarization role: %w", err)
+		}
+	}
+	if c.Roles.Advisor != "" {
+		if err := validateModelProvider(c.Roles.Advisor, providerNames); err != nil {
+			return fmt.Errorf("advisor role: %w", err)
 		}
 	}
 	for _, model := range c.FavoriteModels {

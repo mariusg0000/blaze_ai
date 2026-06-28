@@ -19,6 +19,7 @@ func validConfig() *Config {
 		Roles: Roles{
 			Default: "openrouter/deepseek-v4-flash",
 			Vision:  "openrouter/gpt-4o",
+			Advisor: "openrouter/gpt-4.1",
 		},
 		Compaction:     DefaultCompaction(),
 		StripReasoning: DefaultStripReasoning(),
@@ -53,6 +54,9 @@ func TestLoadFromValid(t *testing.T) {
 	}
 	if loaded.Roles.Default != cfg.Roles.Default {
 		t.Errorf("LoadFrom() default = %q, want %q", loaded.Roles.Default, cfg.Roles.Default)
+	}
+	if loaded.Roles.Advisor != cfg.Roles.Advisor {
+		t.Errorf("LoadFrom() advisor = %q, want %q", loaded.Roles.Advisor, cfg.Roles.Advisor)
 	}
 	if len(loaded.Providers) != 1 {
 		t.Errorf("LoadFrom() providers = %d, want 1", len(loaded.Providers))
@@ -175,6 +179,9 @@ func TestSaveToAndLoadFrom(t *testing.T) {
 	}
 	if loaded.Roles.Default != cfg.Roles.Default {
 		t.Errorf("round-trip default = %q, want %q", loaded.Roles.Default, cfg.Roles.Default)
+	}
+	if loaded.Roles.Advisor != cfg.Roles.Advisor {
+		t.Errorf("round-trip advisor = %q, want %q", loaded.Roles.Advisor, cfg.Roles.Advisor)
 	}
 	if loaded.Compaction.MaxContextTokens != cfg.Compaction.MaxContextTokens {
 		t.Errorf("round-trip maxContextTokens = %d, want %d",
@@ -392,4 +399,3 @@ func TestSaveLoadHelperSetup(t *testing.T) {
 		t.Errorf("HelperSetup.Declined = %v, want [rg fd]", loaded.HelperSetup.Declined)
 	}
 }
-

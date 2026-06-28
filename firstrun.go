@@ -209,13 +209,13 @@ func selectModel(out io.Writer, reader *bufio.Reader, models []string, providerN
 	return providerName + "/" + models[num-1], nil
 }
 
-// assignOptionalRoles prompts for optional vision and summarization role assignment.
+// assignOptionalRoles prompts for optional vision, summarization, and advisor role assignment.
 //
-// WHAT:  Asks the user if they want to assign vision and summarization models.
+// WHAT:  Asks the user if they want to assign vision, summarization, and advisor models.
 // PARAMS: out — output; reader — input; models — available models; providerName — for ID; cfg — config to update.
 // RETURNS: error if input reading fails fatally.
 func assignOptionalRoles(out io.Writer, reader *bufio.Reader, models []string, providerName string, cfg *config.Config) error {
-	for _, role := range []string{"vision", "summarization"} {
+	for _, role := range []string{"vision", "summarization", "advisor"} {
 		fmt.Fprintln(out)
 		fmt.Fprintf(out, "Assign %s role? (y/N): ", role)
 		input, err := reader.ReadString('\n')
@@ -247,6 +247,8 @@ func assignOptionalRoles(out io.Writer, reader *bufio.Reader, models []string, p
 			cfg.Roles.Vision = modelID
 		case "summarization":
 			cfg.Roles.Summarization = modelID
+		case "advisor":
+			cfg.Roles.Advisor = modelID
 		}
 		cfg.FavoriteModels = append(cfg.FavoriteModels, modelID)
 	}

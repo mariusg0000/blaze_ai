@@ -101,8 +101,8 @@ func TestFirstRunFullFlow(t *testing.T) {
 	overrideAppHome(t, tmpHome)
 
 	var out bytes.Buffer
-	// Select provider 1, API key, model 1, skip vision, skip summarization.
-	cfg, err := firstRun(&out, newBufReader("1\ntest-key\n1\nn\nn\n"))
+	// Select provider 1, API key, model 1, skip vision, skip summarization, skip advisor.
+	cfg, err := firstRun(&out, newBufReader("1\ntest-key\n1\nn\nn\nn\n"))
 	if err != nil {
 		t.Fatalf("firstRun() error: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestFirstRunModelRetrievalFailure(t *testing.T) {
 	}
 }
 
-// TestFirstRunOptionalRoles verifies vision and summarization role assignment.
+// TestFirstRunOptionalRoles verifies vision, summarization, and advisor role assignment.
 func TestFirstRunOptionalRoles(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"data":[{"id":"gpt-4"},{"id":"gpt-3.5-turbo"}]}`)
@@ -184,8 +184,8 @@ func TestFirstRunOptionalRoles(t *testing.T) {
 	overrideAppHome(t, tmpHome)
 
 	var out bytes.Buffer
-	// Provider 1, key, model 1, yes vision + model 2, yes summarization + model 2.
-	cfg, err := firstRun(&out, newBufReader("1\ntest-key\n1\ny\n2\ny\n2\n"))
+	// Provider 1, key, model 1, yes vision + model 2, yes summarization + model 2, yes advisor + model 1.
+	cfg, err := firstRun(&out, newBufReader("1\ntest-key\n1\ny\n2\ny\n2\ny\n1\n"))
 	if err != nil {
 		t.Fatalf("firstRun() error: %v", err)
 	}
@@ -194,6 +194,9 @@ func TestFirstRunOptionalRoles(t *testing.T) {
 	}
 	if cfg.Roles.Summarization != "testprov/gpt-4" {
 		t.Errorf("summarization role = %q, want 'testprov/gpt-4'", cfg.Roles.Summarization)
+	}
+	if cfg.Roles.Advisor != "testprov/gpt-3.5-turbo" {
+		t.Errorf("advisor role = %q, want 'testprov/gpt-3.5-turbo'", cfg.Roles.Advisor)
 	}
 }
 

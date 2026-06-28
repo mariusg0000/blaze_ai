@@ -41,7 +41,7 @@
 - Provider definition: `name`, `endpoint`, `api_key`.
 - API keys stored in `config.json`, not in `.env`.
 - Models predefined in config, canonical format `provider/model_name`.
-- Three model roles: `default` (required), `vision` (optional), `summarization` (optional).
+- Four model roles: `default` (required), `vision` (optional), `summarization` (optional), `advisor` (optional).
 - No fallback providers or models. Errors stop the runtime with clear messages.
 - Last selected model persists across sessions in config.
 - Runtime command `/model` sets current model. No `/provider` command.
@@ -56,7 +56,7 @@
 - Interactive console: curated list of max 15 known providers + custom option.
 - After provider selection: API key entry.
 - After API key: model retrieval from endpoint, selection by number.
-- Role assignment for `default`; `vision` and `summarization` optional.
+- Role assignment for `default`; `vision`, `summarization`, and `advisor` optional.
 - Builtin skill `customize-me` allows LLM-assisted configuration.
 
 ### App Home Bootstrap

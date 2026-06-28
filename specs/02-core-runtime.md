@@ -29,16 +29,17 @@
   - `default`: the model used for normal agent interaction
   - `vision`: a model intended for vision tasks
   - `summarization`: a model intended for summarization tasks
+  - `advisor`: a model intended for one-shot delegated analysis
 - Each role maps to one `provider/model_name` entry in configuration.
 - The `default` role is required for the runtime to start.
-- `vision` and `summarization` roles are optional but recommended.
+- `vision`, `summarization`, and `advisor` roles are optional but recommended when configured.
 
 ### Config Location
 - The runtime configuration lives in `app_home/config/config.json`.
 - The config file contains:
   - the list of providers, each with `name`, `endpoint`, `api_key`
   - the list of favorite models per provider, each in `provider/model_name` form
-  - the role assignments mapping `default`, `vision`, and `summarization` to specific `provider/model_name` entries
+   - the role assignments mapping `default`, `vision`, `summarization`, and `advisor` to specific `provider/model_name` entries
 - `config.json` lives in `app_home/config/` and is not committed to version control.
 
 ### Config Validation
@@ -60,7 +61,7 @@
 
 ### Goal
 - The user must define at least one provider and assign the `default` model role before the runtime can start a session.
-- `vision` and `summarization` roles can be configured during setup or left for later.
+- `vision`, `summarization`, and `advisor` roles can be configured during setup or left for later.
 
 ### Auto-Configuration Skill
 - A builtin skill named `customize-me` exists to let the LLM assist the user with configuration.

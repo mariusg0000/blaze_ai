@@ -104,7 +104,7 @@
 
 ### Role Assignment
 - After model selection, the user assigns the `default` role.
-- `vision` and `summarization` roles can be assigned during setup or skipped for later.
+- `vision`, `summarization`, and `advisor` roles can be assigned during setup or skipped for later.
 
 ### Completion
 - After setup, `config.json` is written to `app_home/config/`.

@@ -9,7 +9,7 @@ This folder stores BlazeAI machine-local configuration files.
 
 - `providers`: provider definitions. Each item needs `name`, `endpoint`, and `api_key`.
 - `favorite_models`: quick-pick list of model IDs in `provider/model_name` form.
-- `roles`: model assignments. `default` is required; `vision` and `summarization` are optional.
+- `roles`: model assignments. `default` is required; `vision`, `summarization`, and `advisor` are optional.
 - `compaction`: context compaction thresholds such as trigger, target, summary budget, file cap, local token estimate coefficient, and hard-cap backoff.
 - `stripReasoning`: whether reasoning parts are stripped before provider calls and how many newest reasoning blocks stay visible.
 - `last_model`: legacy fallback for rare cases without an active mode. Normal model persistence should happen through `modes.json`.

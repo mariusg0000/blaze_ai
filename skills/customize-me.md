@@ -28,7 +28,8 @@ Load for BlazeAI auto-configuration: providers, API keys, favorite models, role 
   "roles": {
     "default": "provider_name/model_name",
     "vision": "provider_name/model_name",
-    "summarization": "provider_name/model_name"
+    "summarization": "provider_name/model_name",
+    "advisor": "provider_name/model_name"
   },
   "compaction": {
     "maxContextTokens": 100000,
@@ -51,9 +52,10 @@ Load for BlazeAI auto-configuration: providers, API keys, favorite models, role 
 - No fallback providers. No automatic provider switching on failure.
 
 ## Model Roles
-- `default`: required. Used for normal agent interaction and summarization (initial implementation).
+- `default`: required. Used for normal agent interaction and core runtime work.
 - `vision`: optional. Intended for vision tasks.
-- `summarization`: optional. Intended for summarization tasks (future use).
+- `summarization`: optional. Intended for summarization and compact review tasks.
+- `advisor`: optional. Intended for one-shot delegated analysis to a stronger model.
 
 ## How To Edit
 1. Read the current file with the `shell` tool.
