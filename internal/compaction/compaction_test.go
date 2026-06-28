@@ -34,7 +34,7 @@ func setupManager(t *testing.T, handler http.HandlerFunc) (*Manager, *httptest.S
 		StripReasoning: config.StripReasoning{Enable: true, PreserveLast: 5},
 	}
 	client := provider.NewClientRaw(server.URL, "sk-test")
-	return NewManager(cfg, client), server
+	return NewManager(cfg, client, client), server
 }
 
 // makeSession creates a session in a temp dir with the given messages.
@@ -399,7 +399,7 @@ func TestStripReasoningDisabled(t *testing.T) {
 	cfg := &config.Config{
 		StripReasoning: config.StripReasoning{Enable: false, PreserveLast: 5},
 	}
-	m := NewManager(cfg, nil)
+	m := NewManager(cfg, nil, nil)
 	msgs := []session.Message{{Role: "user", Content: "test", Reasoning: "thinking"}}
 	result := m.StripReasoningFromPayload(msgs)
 	if len(result) != 1 || result[0].Reasoning != "thinking" {
@@ -428,7 +428,7 @@ func TestStripReasoningStripsOlder(t *testing.T) {
 		Compaction:     config.DefaultCompaction(),
 		StripReasoning: config.StripReasoning{Enable: true, PreserveLast: 2},
 	}
-	m := NewManager(cfg, nil)
+	m := NewManager(cfg, nil, nil)
 
 	msgs := []session.Message{
 		{Role: "assistant", Content: "a1", Reasoning: "r1"},
@@ -473,7 +473,7 @@ func TestBuildTranscriptWithReasoning(t *testing.T) {
 		Compaction:     config.DefaultCompaction(),
 		StripReasoning: config.StripReasoning{Enable: true, PreserveLast: 1},
 	}
-	m := NewManager(cfg, nil)
+	m := NewManager(cfg, nil, nil)
 
 	msgs := []session.Message{
 		{Role: "assistant", Content: "a1", Reasoning: "old reasoning"},

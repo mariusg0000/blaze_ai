@@ -132,6 +132,15 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 		return nil, fmt.Errorf("cannot create provider client: %w", err)
 	}
 
+	// Create a dedicated summarization client if the summarization role is configured with a different model.
+	summarizationClient := client
+	if summarizationModel, err := cfg.ModelForRole("summarization"); err == nil && summarizationModel != modelID {
+		summarizationClient, err = provider.NewClient(cfg, summarizationModel)
+		if err != nil {
+			return nil, fmt.Errorf("cannot create summarization client: %w", err)
+		}
+	}
+
 	active := skills.NewActiveList()
 
 	builder := &prompt.Builder{
@@ -150,7 +159,7 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 		Builder:     builder,
 		Provider:    client,
 		Handler:     handler,
-		Compactor:   compaction.NewManager(cfg, client),
+		Compactor:   compaction.NewManager(cfg, client, summarizationClient),
 		ModelID:     modelID,
 		CurrentMode: currentMode,
 		WorkDir:     workDir,
@@ -351,8 +360,6 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 				}
 				return ErrTurnAborted
 			}
-			a.Handler.OnToolCall(tc.Name, a.Tools.FormatArgs(tc.Name, tc.Arguments))
-
 			// Reset sudo password before each tool call to prevent cross-call leaks.
 			os.Unsetenv("BLAZE_SUDO_PASSWORD")
 
@@ -394,6 +401,7 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 				}
 				continue
 			}
+			a.Handler.OnToolCall(tc.Name, a.Tools.FormatArgs(tc.Name, tc.Arguments))
 
 			result := tool.Execute(ctx, tc.Arguments)
 			a.Handler.OnToolResult(tc.Name, result)

@@ -24,18 +24,25 @@ import (
 //
 // WHAT:  Orchestrates compaction: trigger check, pruning, summarization, summary storage/injection.
 // WHY:   Long sessions exceed model context windows; compaction keeps them usable.
-// PARAMS: Config — compaction thresholds and strip reasoning settings; Provider — LLM client for summarization.
+// PARAMS: Config — compaction thresholds and strip reasoning settings; Provider — default LLM client;
+//
+//	SummarizationProvider — dedicated client for summarization (falls back to Provider when nil).
 type Manager struct {
-	Config   *config.Config
-	Provider *provider.Client
+	Config                *config.Config
+	Provider              *provider.Client
+	SummarizationProvider *provider.Client
 }
 
-// NewManager creates a compaction Manager from config and a provider client.
+// NewManager creates a compaction Manager from config and provider clients.
 //
-// PARAMS: cfg — loaded config with compaction thresholds; client — provider for summarization calls.
+// PARAMS: cfg — loaded config with compaction thresholds;
+//
+//	client — default provider for non-summarization calls;
+//	summarizationClient — dedicated client for summarization calls (nil = use Provider).
+//
 // RETURNS: *Manager — ready to check and compact.
-func NewManager(cfg *config.Config, client *provider.Client) *Manager {
-	return &Manager{Config: cfg, Provider: client}
+func NewManager(cfg *config.Config, client *provider.Client, summarizationClient *provider.Client) *Manager {
+	return &Manager{Config: cfg, Provider: client, SummarizationProvider: summarizationClient}
 }
 
 // ShouldCompact checks whether compaction should trigger based on provider-reported usage.
@@ -267,8 +274,12 @@ func (m *Manager) summarize(sessionFolder string, pruned []session.Message) (str
 	existing := m.loadSummaries(sessionFolder)
 	summaryPrompt := buildSummaryPrompt(transcript, existing, m.Config.Compaction.SummaryMaxTokens)
 
-	// Use the default model for summarization (per spec 05).
-	resp, err := m.Provider.Stream(
+	// Use the summarization model if available, fall back to the default provider.
+	summaryClient := m.SummarizationProvider
+	if summaryClient == nil {
+		summaryClient = m.Provider
+	}
+	resp, err := summaryClient.Stream(
 		context.Background(),
 		[]session.Message{
 			{Role: "system", Content: summaryPrompt},
