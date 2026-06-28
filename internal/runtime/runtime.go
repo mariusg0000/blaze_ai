@@ -426,6 +426,13 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 			}
 		}
 
+		// Check compaction after tool execution — context may be at or over limit.
+		if a.Compactor != nil {
+			if _, err := a.Compactor.Compact(a.Session, resp.Usage); err != nil {
+				return fmt.Errorf("compaction failed: %w", err)
+			}
+		}
+
 		// Loop back to LLM with tool results included in session history.
 	}
 }
