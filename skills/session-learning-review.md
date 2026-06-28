@@ -23,15 +23,14 @@ Never auto-create skills, memories, or code changes from this review.
 
 1. Call `session_review_extract` with `action="list"` and a limit no higher than `30`.
 2. Focus first on sessions where `has_learning_md=false`.
-3. For each target session, read `<session_dir>/prompt.json` and build a compact transcript from its message array. `prompt.json` is the final JSON payload sent to the LLM — it contains the system prompt, compaction summaries, and all conversation messages exactly as the model received them.
-4. Preserve and use the extracted `transport`, `source_kind`, and `source_name` metadata in the review prompt.
+3. For each target session, call `ask_a_friend` with `role="summarization"`, providing all instructions and context in `question`/`context`, and set `input_file` to `<session_dir>/prompt.json`. The summarization model receives the file content directly and must analyze it per the instructions.
+4. Include `transport`, `source_kind`, and `source_name` from the list step in the `context` so the summarization model knows the session origin.
 5. If `source_kind="telegram_bridge"`, explicitly tell the summarization model that the session came through a Telegram bridge and should be judged as chat/bridge interaction, not as a normal console REPL transcript.
-6. Send that compact transcript to `ask_a_friend` with `role="summarization"`.
-7. In per-session reports, keep the bridge or project source explicit so the final synthesis can separate Telegram patterns from terminal patterns.
-8. Write the returned report to `<session_dir>/learning.md`.
-9. After the newest relevant reports exist, collect up to `30` `learning.md` files.
-10. Send the combined report set to `ask_a_friend` with `role="advisor"` for the cross-session synthesis.
-11. Present the final plan to the user and stop for discussion.
+6. In per-session reports, keep the bridge or project source explicit so the final synthesis can separate Telegram patterns from terminal patterns.
+7. Write the returned report to `<session_dir>/learning.md`.
+8. After the newest relevant reports exist, collect up to `30` `learning.md` files.
+9. Send the combined report set to `ask_a_friend` with `role="advisor"` for the cross-session synthesis.
+10. Present the final plan to the user and stop for discussion.
 
 ## Review Rules
 
