@@ -61,7 +61,7 @@ var Known = []Helper{
 	},
 	{
 		Name:        "jq",
-		Description: "json_inspection_and_transformation",
+		Description: "use jq to load, edit, and modify JSON files; never use replace_block on JSON",
 		Instruction: "Use jq for JSON inspection and transformation.",
 		Kind:        KindCore,
 	},
