@@ -87,6 +87,10 @@ Any skill loaded with the `load_skill` tool appears here.
 
 {RUNNABLE_SKILLS_SECTION}
 
+[SECONDARY MODEL CONSULTATION]
+
+Use `ask_a_friend` only for focused secondary-model help: `summarization` for summarizing, extracting, or compacting supplied content, and `advisor` for stronger-model review of design, risks, root causes, or trade-offs. The secondary model has no tools and no access to the current conversation, so include every required snippet, log, file excerpt, goal, constraint, and expected output format in `context`, or provide one `input_file` up to `150000` bytes when direct file content is the right input. Do not delegate routine work that the main model can handle directly.
+
 [HOST ENVIRONMENT HELPERS]
 
 {HOST_HELPERS_ADVISORY}

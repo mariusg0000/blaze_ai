@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 )
@@ -18,6 +19,7 @@ const (
 	maxAskFriendContextChars      = 24000
 	maxAskFriendOutputFormatChars = 1000
 	maxAskFriendResponseChars     = 12000
+	maxAskFriendInputFileBytes    = 150000
 )
 
 // AskFriendArgs are the arguments for ask_a_friend.
@@ -25,12 +27,13 @@ const (
 // WHAT:  Parsed ask_a_friend tool inputs.
 // PARAMS: Role — configured model role; Purpose — concise objective; Question — focused ask;
 //
-//	Context — supporting evidence; OutputFormat — exact answer shape; Timeout — optional seconds.
+//	Context — supporting evidence; InputFile — optional file to include verbatim; OutputFormat — exact answer shape; Timeout — optional seconds.
 type AskFriendArgs struct {
 	Role         string `json:"role"`
 	Purpose      string `json:"purpose"`
 	Question     string `json:"question"`
 	Context      string `json:"context"`
+	InputFile    string `json:"input_file,omitempty"`
 	OutputFormat string `json:"output_format"`
 	Timeout      *int   `json:"timeout,omitempty"`
 }
@@ -100,6 +103,10 @@ func (t *AskFriendTool) Parameters() json.RawMessage {
 				"type": "string",
 				"description": "context = supporting evidence; required = true"
 			},
+			"input_file": {
+				"type": "string",
+				"description": "input_file = optional readable file path to include in the consultation; max size = 150000 bytes"
+			},
 			"output_format": {
 				"type": "string",
 				"description": "output_format = exact required answer shape"
@@ -135,9 +142,13 @@ func (t *AskFriendTool) Execute(ctx context.Context, args json.RawMessage) strin
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	prepared, err := prepareAskFriendArgs(parsed)
+	if err != nil {
+		return fmt.Sprintf("error: %v", err)
+	}
 	callCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
 	defer cancel()
-	result, err := t.caller(callCtx, parsed)
+	result, err := t.caller(callCtx, prepared)
 	if err != nil {
 		if callCtx.Err() != nil {
 			return fmt.Sprintf("timeout %ds exceeded", timeoutSec)
@@ -148,6 +159,32 @@ func (t *AskFriendTool) Execute(ctx context.Context, args json.RawMessage) strin
 		return fmt.Sprintf("error: ask_a_friend response exceeded %d characters", maxAskFriendResponseChars)
 	}
 	return result
+}
+
+// prepareAskFriendArgs injects optional file content into the secondary-model context.
+func prepareAskFriendArgs(args AskFriendArgs) (AskFriendArgs, error) {
+	prepared := args
+	inputFile := strings.TrimSpace(args.InputFile)
+	if inputFile == "" {
+		return prepared, nil
+	}
+	stat, err := os.Stat(inputFile)
+	if err != nil {
+		return AskFriendArgs{}, fmt.Errorf("cannot stat input_file %s: %w", inputFile, err)
+	}
+	if !stat.Mode().IsRegular() {
+		return AskFriendArgs{}, fmt.Errorf("input_file is not a regular file: %s", inputFile)
+	}
+	if stat.Size() > maxAskFriendInputFileBytes {
+		return AskFriendArgs{}, fmt.Errorf("input_file exceeds %d bytes: %s", maxAskFriendInputFileBytes, inputFile)
+	}
+	data, err := os.ReadFile(inputFile)
+	if err != nil {
+		return AskFriendArgs{}, fmt.Errorf("cannot read input_file %s: %w", inputFile, err)
+	}
+	prepared.InputFile = inputFile
+	prepared.Context = strings.TrimSpace(prepared.Context) + "\n\n[INPUT FILE]\npath: " + inputFile + "\nsize_bytes: " + fmt.Sprintf("%d", len(data)) + "\ncontent:\n" + string(data)
+	return prepared, nil
 }
 
 // validateAskFriendArgs enforces the constrained ask_a_friend contract.
