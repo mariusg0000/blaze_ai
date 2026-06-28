@@ -1,0 +1,186 @@
+// ask_friend.go — ask_a_friend tool implementation.
+// Delegates one focused subproblem to a configured secondary model role and returns the
+// plain-text answer as a normal tool result. Layer: tool execution. Dependencies:
+// internal/llmcall.
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+)
+
+const (
+	maxAskFriendPurposeChars      = 500
+	maxAskFriendQuestionChars     = 4000
+	maxAskFriendContextChars      = 24000
+	maxAskFriendOutputFormatChars = 1000
+	maxAskFriendResponseChars     = 12000
+)
+
+// AskFriendArgs are the arguments for ask_a_friend.
+//
+// WHAT:  Parsed ask_a_friend tool inputs.
+// PARAMS: Role — configured model role; Purpose — concise objective; Question — focused ask;
+//
+//	Context — supporting evidence; OutputFormat — exact answer shape; Timeout — optional seconds.
+type AskFriendArgs struct {
+	Role         string `json:"role"`
+	Purpose      string `json:"purpose"`
+	Question     string `json:"question"`
+	Context      string `json:"context"`
+	OutputFormat string `json:"output_format"`
+	Timeout      *int   `json:"timeout,omitempty"`
+}
+
+// AskFriendTool delegates one no-tools consultation to a configured secondary role.
+//
+// WHAT:  Validates ask_a_friend arguments and returns one consultant answer.
+// WHY:   Some tasks need a stronger or specialized second opinion without a nested agent.
+// PARAMS: caller — secondary LLM helper used for role resolution and API calls.
+type AskFriendTool struct {
+	caller func(ctx context.Context, args AskFriendArgs) (string, error)
+}
+
+// NewAskFriendTool creates an ask_a_friend tool.
+func NewAskFriendTool(caller func(ctx context.Context, args AskFriendArgs) (string, error)) *AskFriendTool {
+	return &AskFriendTool{caller: caller}
+}
+
+// Name returns the tool's unique identifier.
+func (t *AskFriendTool) Name() string {
+	return "ask_a_friend"
+}
+
+// FormatArgs returns a compact UI label for delegated consultation.
+func (t *AskFriendTool) FormatArgs(args json.RawMessage) string {
+	parsed, err := ParseToolCallArgs[AskFriendArgs](args)
+	if err != nil {
+		return "Consulting secondary model"
+	}
+	purpose := strings.TrimSpace(parsed.Purpose)
+	role := strings.TrimSpace(parsed.Role)
+	if purpose == "" && role == "" {
+		return "Consulting secondary model"
+	}
+	if purpose == "" {
+		return truncateDisplay("Consulting "+role, 80)
+	}
+	if role == "" {
+		return truncateDisplay("Consulting: "+purpose, 80)
+	}
+	return truncateDisplay("Consulting "+role+": "+purpose, 80)
+}
+
+// Description returns the human-readable description for the LLM.
+func (t *AskFriendTool) Description() string {
+	return "role + purpose + question + context + output_format → one-shot no-tools consultation via configured role model"
+}
+
+// Parameters returns the JSON schema for the tool's parameters.
+func (t *AskFriendTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"role": {
+				"type": "string",
+				"description": "role = configured model role; allowed = advisor | summarization | vision"
+			},
+			"purpose": {
+				"type": "string",
+				"description": "purpose = concise why for this consultation"
+			},
+			"question": {
+				"type": "string",
+				"description": "question = focused ask for the secondary model"
+			},
+			"context": {
+				"type": "string",
+				"description": "context = supporting evidence; required = true"
+			},
+			"output_format": {
+				"type": "string",
+				"description": "output_format = exact required answer shape"
+			},
+			"timeout": {
+				"type": "integer",
+				"description": "timeout = seconds; optional = true; default = 60"
+			}
+		},
+		"required": ["role", "purpose", "question", "context", "output_format"]
+	}`)
+}
+
+// Execute performs the delegated one-shot call and returns the answer text.
+func (t *AskFriendTool) Execute(ctx context.Context, args json.RawMessage) string {
+	if ctx != nil && ctx.Err() != nil {
+		return "aborted before execution by user"
+	}
+	parsed, err := ParseToolCallArgs[AskFriendArgs](args)
+	if err != nil {
+		return fmt.Sprintf("error: invalid arguments: %v", err)
+	}
+	if err := validateAskFriendArgs(parsed); err != nil {
+		return fmt.Sprintf("error: %v", err)
+	}
+	if t.caller == nil {
+		return "error: ask_a_friend caller is not configured"
+	}
+	timeoutSec := DefaultTimeout
+	if parsed.Timeout != nil && *parsed.Timeout > 0 {
+		timeoutSec = *parsed.Timeout
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	callCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+	result, err := t.caller(callCtx, parsed)
+	if err != nil {
+		if callCtx.Err() != nil {
+			return fmt.Sprintf("timeout %ds exceeded", timeoutSec)
+		}
+		return fmt.Sprintf("error: %v", err)
+	}
+	if len(result) > maxAskFriendResponseChars {
+		return fmt.Sprintf("error: ask_a_friend response exceeded %d characters", maxAskFriendResponseChars)
+	}
+	return result
+}
+
+// validateAskFriendArgs enforces the constrained ask_a_friend contract.
+func validateAskFriendArgs(args AskFriendArgs) error {
+	role := strings.TrimSpace(args.Role)
+	switch role {
+	case "advisor", "summarization", "vision":
+	default:
+		return fmt.Errorf("role must be one of advisor, summarization, or vision")
+	}
+	if err := validateSizedField("purpose", args.Purpose, maxAskFriendPurposeChars); err != nil {
+		return err
+	}
+	if err := validateSizedField("question", args.Question, maxAskFriendQuestionChars); err != nil {
+		return err
+	}
+	if err := validateSizedField("context", args.Context, maxAskFriendContextChars); err != nil {
+		return err
+	}
+	if err := validateSizedField("output_format", args.OutputFormat, maxAskFriendOutputFormatChars); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateSizedField rejects empty or oversized string fields.
+func validateSizedField(name, value string, maxChars int) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fmt.Errorf("%s is required", name)
+	}
+	if len(value) > maxChars {
+		return fmt.Errorf("%s exceeds %d characters", name, maxChars)
+	}
+	return nil
+}

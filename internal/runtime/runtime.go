@@ -16,9 +16,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"blazeai/internal/compaction"
 	"blazeai/internal/config"
+	"blazeai/internal/learning"
+	"blazeai/internal/llmcall"
 	"blazeai/internal/platform"
 	"blazeai/internal/prompt"
 	"blazeai/internal/provider"
@@ -177,12 +180,42 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 		}
 		return resolved, skill, nil
 	}
+	oneShotCaller := llmcall.New(cfg, func(cfg *config.Config, modelID string) (llmcall.StreamClient, error) {
+		return provider.NewClient(cfg, modelID)
+	})
 
 	registry := tools.NewRegistry()
 	registry.Register(tools.NewShellTool(os))
 	registry.Register(tools.NewLoadSkillTool(active, skillResolver))
 	registry.Register(tools.NewUnloadSkillTool(active, skillResolver))
 	registry.Register(tools.NewRunSkillTool(os, runnableSkillResolver, func() string { return agent.WorkDir }))
+	registry.Register(tools.NewAskFriendTool(func(ctx context.Context, args tools.AskFriendArgs) (string, error) {
+		return oneShotCaller.Call(ctx, llmcall.Request{
+			Role:         strings.TrimSpace(args.Role),
+			Purpose:      strings.TrimSpace(args.Purpose),
+			Question:     strings.TrimSpace(args.Question),
+			Context:      strings.TrimSpace(args.Context),
+			OutputFormat: strings.TrimSpace(args.OutputFormat),
+		})
+	}))
+	registry.Register(tools.NewSessionReviewExtractTool(func(limit int, includeTerminal, includeTelegram bool) ([]tools.SessionReviewSession, error) {
+		infos, err := learning.DiscoverRecentSessions(limit, includeTerminal, includeTelegram)
+		if err != nil {
+			return nil, err
+		}
+		result := make([]tools.SessionReviewSession, 0, len(infos))
+		for _, info := range infos {
+			result = append(result, tools.SessionReviewSession{
+				SessionPath:   info.SessionPath,
+				SessionDir:    info.SessionDir,
+				LearningPath:  info.LearningPath,
+				Transport:     info.Transport,
+				UpdatedAt:     info.UpdatedAt.Format(time.RFC3339),
+				HasLearningMD: info.HasLearningMD,
+			})
+		}
+		return result, nil
+	}, learning.ExtractCompactTranscript))
 	registry.Register(tools.NewReplaceBlockTool(func() string { return agent.WorkDir }))
 	registry.Register(tools.NewTaskWriteTool(func() string { return agent.WorkDir }))
 	registry.Register(tools.NewTaskReadTool(func() string { return agent.WorkDir }))

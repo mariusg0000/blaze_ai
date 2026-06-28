@@ -459,6 +459,36 @@ func (c *Config) ProviderByName(name string) *Provider {
 	return nil
 }
 
+// ModelForRole returns the configured provider/model_name for a named role.
+//
+// WHAT:  Resolves one configured model role to its model identifier.
+// WHY:   Runtime helpers and delegation tools must route by named role, not arbitrary models.
+// PARAMS: role — one of default, vision, summarization, or advisor.
+// RETURNS: string — configured provider/model_name; error if the role is unknown or unset.
+func (c *Config) ModelForRole(role string) (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("config is required")
+	}
+	var modelID string
+	switch strings.TrimSpace(role) {
+	case "default":
+		modelID = c.Roles.Default
+	case "vision":
+		modelID = c.Roles.Vision
+	case "summarization":
+		modelID = c.Roles.Summarization
+	case "advisor":
+		modelID = c.Roles.Advisor
+	default:
+		return "", fmt.Errorf("unknown model role: %s", role)
+	}
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return "", fmt.Errorf("model role is not configured: %s", role)
+	}
+	return modelID, nil
+}
+
 // SplitModelID separates a provider/model_name identifier into its parts.
 //
 // WHAT:  Splits a model identifier into provider name and model name.

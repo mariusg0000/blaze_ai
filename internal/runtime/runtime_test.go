@@ -45,7 +45,7 @@ func (h *mockHandler) OnToolCall(name string, args string) {
 func (h *mockHandler) OnToolResult(name string, result string) {
 	h.toolResults = append(h.toolResults, name+": "+result)
 }
-func (h *mockHandler) OnUsage(promptTokens int) { h.usages = append(h.usages, promptTokens) }
+func (h *mockHandler) OnUsage(promptTokens int)                          { h.usages = append(h.usages, promptTokens) }
 func (h *mockHandler) RequestSudoApproval(command string) (bool, string) { return false, "" }
 
 // setupAgent creates a fully wired Agent with a mock SSE server.
@@ -446,6 +446,12 @@ func TestNewAgent(t *testing.T) {
 	}
 	if agent.Tools.Get("run_skill") == nil {
 		t.Error("run_skill tool not registered")
+	}
+	if agent.Tools.Get("ask_a_friend") == nil {
+		t.Error("ask_a_friend tool not registered")
+	}
+	if agent.Tools.Get("session_review_extract") == nil {
+		t.Error("session_review_extract tool not registered")
 	}
 	if agent.Active == nil {
 		t.Error("Active skills list is nil")

@@ -32,7 +32,7 @@
 - Main tool: `shell`.
 - Inline shell for simple tasks, OS-native scripts for complex tasks.
 - Python is last resort only, in a lazily-created venv under `app_home/scripts/venv`.
-- Four native tools: `shell`, `load_skill`, `unload_skill`, `replace_block`.
+- Native tools remain hardcoded and compact. Current runtime tools include `shell`, `load_skill`, `unload_skill`, `run_skill`, `replace_block`, `ask_a_friend`, `session_review_extract`, `task_read`, and `task_write`.
 - OpenAI-compatible tool calling, multi tool call per turn, optional `timeout` parameter per call.
 - Default tool timeout: 60s. Timeout returns `timeout <N>s exceeded`.
 
@@ -76,7 +76,7 @@
 - Format: Markdown with `[DESCRIPTION]` (required) and at least one of `[BEHAVIOR]` or `[DATA]`.
 - Discovery: builtin (embedded `skills/`), global (`app_home/skills/`), project (`<workdir>/.blazeai/skills/`). All read every build.
 - Collision: `skill-manager` forbids duplicates. If collision exists, custom wins.
-- Builtin skills: `skill-manager`, `customize-me`.
+- Builtin skills: `skill-manager`, `customize-me`, `session-learning-review`.
 - Active skills: in-memory list of names, starts empty per session, not persisted, not deduced from history.
 - `load_skill` / `unload_skill` only modify the in-memory list.
 

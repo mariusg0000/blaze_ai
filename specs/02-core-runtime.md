@@ -233,7 +233,11 @@ Memory is handled through skills. Persistent facts are stored in the `[DATA]` se
   1. `shell`: execute a shell command on the host.
   2. `load_skill`: add a skill to the active skills list.
   3. `unload_skill`: remove a skill from the active skills list.
-  4. `replace_block`: replace a block of text in a file by matching an old block and writing a new block.
+  4. `run_skill`: execute a runnable skill's shell code.
+  5. `replace_block`: replace a block of text in a file by matching an old block and writing a new block.
+  6. `ask_a_friend`: delegate one focused no-tools consultation to a configured secondary role model.
+  7. `session_review_extract`: list recent sessions or extract one compact learning transcript.
+  8. `task_read` / `task_write`: inspect and update the runtime task tracker.
 - No script-based or dynamically discovered tools are supported in this phase.
 - The tool set is intentionally minimal and hardcoded in the runtime.
 

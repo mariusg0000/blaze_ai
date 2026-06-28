@@ -315,6 +315,18 @@ func TestProviderByNameNotFound(t *testing.T) {
 	}
 }
 
+// TestModelForRole verifies configured role resolution.
+func TestModelForRole(t *testing.T) {
+	cfg := validConfig()
+	modelID, err := cfg.ModelForRole("advisor")
+	if err != nil {
+		t.Fatalf("ModelForRole() error: %v", err)
+	}
+	if modelID != cfg.Roles.Advisor {
+		t.Fatalf("ModelForRole() = %q, want %q", modelID, cfg.Roles.Advisor)
+	}
+}
+
 // TestSplitModelID verifies that model IDs are split correctly.
 func TestSplitModelID(t *testing.T) {
 	provider, model := SplitModelID("openrouter/deepseek-v4-flash")
