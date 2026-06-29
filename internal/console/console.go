@@ -160,11 +160,15 @@ func (c *Console) responseSeparator() {
 	mChar := "┬"
 
 	topLine := "┌" + strings.Repeat(char, w1) + mChar + strings.Repeat(char, w2) + mChar + strings.Repeat(char, w3) + "┐"
-	midLine := vChar + cell1 + vChar + cell2 + vChar + cell3 + vChar
 	botLine := "└" + strings.Repeat(char, w1) + "┴" + strings.Repeat(char, w2) + "┴" + strings.Repeat(char, w3) + "┘"
 
-	fmt.Fprintln(c.Out, c.color(colorBrightBlue, topLine))
-	fmt.Fprintln(c.Out, c.color(colorBrightBlue, midLine))
+	blue := c.color(colorBrightBlue, vChar)
+	styles := func(s string) string { return c.color(colorOrange, c.bold(s)) }
+
+	fmt.Fprint(c.Out, c.color(colorBrightBlue, topLine))
+	fmt.Fprintln(c.Out)
+	fmt.Fprint(c.Out, blue, styles(cell1), blue, styles(cell2), blue, styles(cell3), blue)
+	fmt.Fprintln(c.Out)
 	fmt.Fprintln(c.Out, c.color(colorBrightBlue, botLine))
 }
 
