@@ -1,7 +1,6 @@
-// reader.go — input reader for the console REPL.
-// Handles single-line and multiline paste input. On TTY, waits for an empty line
-// to signal end of pasted multiline content. On non-TTY, reads line by line.
-// On TTY, supports raw-mode reading with Tab detection for mode cycling.
+// reader.go — raw-mode input reader for the terminal REPL.
+// Handles Tab detection for mode cycling, Enter, Backspace, and Ctrl-D.
+// Uses term.MakeRaw to capture individual key presses.
 // Layer: transport (console). Dependencies: golang.org/x/term.
 package console
 
@@ -10,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"golang.org/x/term"
 )
@@ -29,11 +27,13 @@ func isTerminal(f *os.File) bool {
 	return (info.Mode() & os.ModeCharDevice) != 0
 }
 
-// Reader reads input lines from the console, handling multiline paste.
+// Reader reads input from the terminal with raw-mode key detection.
 //
-// WHAT:  Reads user input with single-line and multiline paste support.
-// WHY:   Pasted text with newlines should not be submitted prematurely per spec.
-// PARAMS: reader — the underlying io.Reader; isTTY — whether input is from a terminal.
+// WHAT:  Reads user input with Tab (mode switch), Enter, Backspace, and Ctrl-D support.
+// WHY:   Tab key detection requires raw terminal mode per spec.
+// PARAMS: scanner — buffered line scanner for cooked-mode fallback (sudo, interactive prompts);
+//
+//	isTTY — whether raw-mode key detection is active.
 type Reader struct {
 	scanner *bufio.Scanner
 	isTTY   bool
@@ -49,11 +49,10 @@ func NewReader(r io.Reader, isTTY bool) *Reader {
 	return &Reader{scanner: scanner, isTTY: isTTY}
 }
 
-// ReadLine reads one logical input from the console.
-// On TTY: if the first line contains a paste (multiple lines), reads until an empty line.
-// On non-TTY: reads a single line.
+// ReadLine reads one line from the buffered scanner.
+// Used by sudo approval and interactive prompts — not the main REPL prompt (which uses ReadEvent).
 //
-// WHAT:  Reads one user input, handling multiline paste on TTY.
+// WHAT:  Reads one line of cooked-mode input.
 // RETURNS: string — the user input; error if reading fails or EOF.
 func (r *Reader) ReadLine() (string, error) {
 	if !r.scanner.Scan() {
@@ -62,63 +61,25 @@ func (r *Reader) ReadLine() (string, error) {
 		}
 		return "", io.EOF
 	}
-	first := r.scanner.Text()
-
-	// On non-TTY, return single line.
-	if !r.isTTY {
-		return first, nil
-	}
-
-	// On TTY, check if this is a multiline paste by looking for embedded newlines
-	// in the raw input. Since bufio.Scanner splits on newlines, a paste of multiple
-	// lines will come as multiple Scan() calls. We detect multiline by checking if
-	// the next read is available immediately (non-blocking check is not possible
-	// with bufio.Scanner, so we use a simpler heuristic: if the line looks like a
-	// slash command or is short and standalone, return it; otherwise wait for more).
-	// For simplicity in this phase: single line per Read() call.
-	// Multiline paste handling will be refined when full terminal control is added.
-	return first, nil
-}
-
-// ReadMultiline reads lines until an empty line is encountered, concatenating them.
-// Used for multiline paste detection on TTY.
-//
-// WHAT:  Reads multiple lines until an empty line signals end of paste.
-// RETURNS: string — concatenated lines; error if reading fails.
-func (r *Reader) ReadMultiline() (string, error) {
-	var lines []string
-	for r.scanner.Scan() {
-		line := r.scanner.Text()
-		if strings.TrimSpace(line) == "" {
-			break
-		}
-		lines = append(lines, line)
-	}
-	if err := r.scanner.Err(); err != nil {
-		return "", err
-	}
-	return strings.Join(lines, "\n"), nil
+	return r.scanner.Text(), nil
 }
 
 // ReadEvent reads one input event from the console.
-// On TTY: enters raw mode to detect Tab (mode switch), Enter (submit), Ctrl-D (EOF),
+// Enters raw mode to detect Tab (mode switch), Enter (submit), Ctrl-D (EOF),
 // and Backspace (delete). Returns the line, an event type, and error.
-// On non-TTY: delegates to ReadLine with no events.
 //
-// WHAT:  Reads input with special key detection on TTY.
+// WHAT:  Reads input with special key detection.
 // WHY:   Tab key cycles work modes; raw mode is required to detect it.
 // RETURNS: string — input line; string — event type ("", "mode_switch"); error — read error or EOF.
 func (r *Reader) ReadEvent() (string, string, error) {
 	if !r.isTTY {
-		line, err := r.ReadLine()
-		return line, "", err
+		return "", "", fmt.Errorf("ReadEvent requires a terminal")
 	}
 
 	fd := int(os.Stdin.Fd())
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
-		line, err := r.ReadLine()
-		return line, "", err
+		return "", "", fmt.Errorf("cannot enter raw terminal mode: %w", err)
 	}
 	defer term.Restore(fd, oldState)
 
@@ -159,26 +120,16 @@ func (r *Reader) ReadEvent() (string, string, error) {
 
 // ReadHiddenInput reads one line from the terminal without echoing characters.
 // Used for password entry. Backspace is supported but not echoed.
-// On non-TTY, delegates to ReadLine (echo is visible — acceptable for tests/pipes).
 //
 // WHAT:  Reads a single line of hidden input (password).
 // RETURNS: string — the input text; error — read error, cancellation, or EOF.
 func (r *Reader) ReadHiddenInput(prompt string) (string, error) {
-	if !r.isTTY {
-		fmt.Fprint(os.Stdout, prompt)
-		line, err := r.ReadLine()
-		if err != nil {
-			return "", err
-		}
-		return strings.TrimSpace(line), nil
-	}
-
 	fmt.Fprint(os.Stdout, prompt)
 
 	fd := int(os.Stdin.Fd())
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("cannot enter raw terminal mode: %w", err)
 	}
 	defer term.Restore(fd, oldState)
 

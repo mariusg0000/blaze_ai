@@ -25,7 +25,7 @@
 - The main interface is a simple CLI.
 - The web interface should imitate a terminal session, not replace it with a generic chat UI.
 - Both interfaces should behave like views over the same agent core.
-- The console experience should include Markdown rendering, colored and bold labels, clear visual separation between message blocks, streaming output, and thinking spinners.
+- The console experience should include Markdown rendering, colored and bold labels, clear visual separation between message blocks, and streaming output.
 
 ## Execution Model
 - The main tool is `shell`.

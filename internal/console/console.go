@@ -1,8 +1,7 @@
-// console.go — console REPL transport implementing the handler contract.
-// Implements OnContent, OnToolCall, OnToolResult. Auto-detects TTY for colors, spinner, and
-// visual separators. Handles slash commands (/exit, /model, /cd) before reaching the agent core.
-// Renders Markdown incrementally during streaming. Non-TTY output is plain text.
-// Layer: transport (console). Dependencies: internal/runtime, internal/config.
+// console.go — terminal REPL transport implementing the handler contract.
+// Implements OnContent, OnToolCall, OnToolResult. TTY-only: reads raw input for Tab mode cycling,
+// renders Markdown with ANSI colors, and handles slash commands (/exit, /model, /cd).
+// Layer: transport (console). Dependencies: internal/runtime, internal/config, internal/skills.
 package console
 
 import (
@@ -58,18 +57,14 @@ var slashCommands = []slashCmd{
 
 // Console is the console transport implementing runtime.Handler.
 //
-// WHAT:  The REPL transport that renders LLM output and handles user input.
+// WHAT:  The terminal REPL transport that renders LLM output and handles user input.
 // WHY:   Console is the first and complete transport per spec.
-// PARAMS: Out — output writer; In — input reader; IsTTY — whether output is a terminal;
-//
-//	Agent — the runtime agent; Reader — line reader for input.
+// HOW:   Always uses raw-mode input for Tab mode cycling and ANSI colors for output.
 type Console struct {
-	Out     io.Writer
-	In      io.Reader
-	IsTTY   bool
-	Agent   *runtime.Agent
-	Reader  *Reader
-	Spinner *Spinner
+	Out    io.Writer
+	In     io.Reader
+	Agent  *runtime.Agent
+	Reader *Reader
 
 	contentStarted   bool
 	contentBuffer    string
@@ -80,32 +75,19 @@ type Console struct {
 	lineOpen         bool
 	turnAborting     atomic.Bool
 	lastToolArgs     string
-	toolLinePending  bool
 }
 
-// inputEvent carries one console input line or a terminal read error.
-type inputEvent struct {
-	line  string
-	err   error
-	event string // "", "mode_switch"
-}
-
-// NewConsole creates a Console with TTY auto-detection.
+// NewConsole creates a Console for terminal interaction.
 //
-// WHAT:  Constructs the console transport with automatic TTY detection.
+// WHAT:  Constructs the console transport for TTY use.
 // PARAMS: agent — the runtime agent.
 // RETURNS: *Console — ready to run.
 func NewConsole(agent *runtime.Agent) *Console {
-	out := os.Stdout
-	in := os.Stdin
-	isTTY := isTerminal(out)
 	return &Console{
-		Out:              out,
-		In:               in,
-		IsTTY:            isTTY,
+		Out:              os.Stdout,
+		In:               os.Stdin,
 		Agent:            agent,
-		Reader:           NewReader(in, isTTY),
-		Spinner:          NewSpinner(out, isTTY),
+		Reader:           NewReader(os.Stdin, true),
 		lineOpen:         false,
 		inToolGroup:      false,
 		needContentLabel: true,
@@ -156,23 +138,17 @@ func (c *Console) closeToolGroup() {
 	c.inToolGroup = false
 }
 
-// color wraps text with an ANSI color code if TTY, otherwise returns plain text.
+// color wraps text with an ANSI color code.
 //
-// WHAT:  Applies ANSI color to text on TTY.
+// WHAT:  Applies ANSI color to text.
 // PARAMS: c — color code; text — the text to colorize.
-// RETURNS: string — colored text or plain text.
+// RETURNS: string — ANSI-colored text.
 func (c *Console) color(colorCode, text string) string {
-	if !c.IsTTY {
-		return text
-	}
 	return colorCode + text + colorReset
 }
 
-// bold wraps text with bold ANSI code if TTY.
+// bold wraps text with bold ANSI code.
 func (c *Console) bold(text string) string {
-	if !c.IsTTY {
-		return text
-	}
 	return colorBold + text + colorReset
 }
 
@@ -181,21 +157,14 @@ func (c *Console) bold(text string) string {
 // WHAT:  Renders the single visual separator style used across tools and context footer.
 func (c *Console) divider(label, labelColor string, boldLabel bool) {
 	c.ensureLineBreakBeforeBlock()
-	char := "-"
-	if c.IsTTY {
-		char = "─"
-	}
+	char := "─"
 	if label == "" {
 		line := strings.Repeat(char, dividerWidth)
-		if c.IsTTY {
-			lineCol := colorLightGray
-			if labelColor != "" {
-				lineCol = labelColor
-			}
-			fmt.Fprintln(c.Out, c.color(lineCol, line))
-			return
+		lineCol := colorLightGray
+		if labelColor != "" {
+			lineCol = labelColor
 		}
-		fmt.Fprintln(c.Out, line)
+		fmt.Fprintln(c.Out, c.color(lineCol, line))
 		return
 	}
 	remainder := dividerWidth - len(label) - 1
@@ -203,28 +172,24 @@ func (c *Console) divider(label, labelColor string, boldLabel bool) {
 		remainder = 1
 	}
 	tail := strings.Repeat(char, remainder)
-	if c.IsTTY {
-		styledLabel := label
-		if boldLabel {
-			styledLabel = c.bold(styledLabel)
-		}
-		if labelColor != "" {
-			styledLabel = c.color(labelColor, styledLabel)
-		}
-		lineColor := colorLightGray
-		if labelColor != "" {
-			lineColor = labelColor
-		}
-		fmt.Fprintf(c.Out, "%s %s\n", styledLabel, c.color(lineColor, tail))
-		return
+	styledLabel := label
+	if boldLabel {
+		styledLabel = c.bold(styledLabel)
 	}
-	fmt.Fprintf(c.Out, "%s %s\n", label, tail)
+	if labelColor != "" {
+		styledLabel = c.color(labelColor, styledLabel)
+	}
+	lineColor := colorLightGray
+	if labelColor != "" {
+		lineColor = labelColor
+	}
+	fmt.Fprintf(c.Out, "%s %s\n", styledLabel, c.color(lineColor, tail))
 }
 
 // responseSeparator prints the separator shown after the assistant finishes responding.
-// Renders a three-line ASCII table with CTX tokens, current model, and work directory (tail-truncated).
+// Renders a boxed table with CTX tokens, current model, and work directory (tail-truncated).
 //
-// WHAT:  Prints an ASCII table separator after the response.
+// WHAT:  Prints a boxed table separator after the response.
 func (c *Console) responseSeparator() {
 	if c.lastPromptTokens <= 0 {
 		return
@@ -243,38 +208,17 @@ func (c *Console) responseSeparator() {
 	w2 := len(cell2)
 	w3 := len(cell3)
 
-	char := "-"
-	vChar := "|"
-	mChar := "+"
-	if c.IsTTY {
-		char = "─"
-		vChar = "│"
-		mChar = "┬"
-	}
+	char := "─"
+	vChar := "│"
+	mChar := "┬"
 
 	topLine := "┌" + strings.Repeat(char, w1) + mChar + strings.Repeat(char, w2) + mChar + strings.Repeat(char, w3) + "┐"
 	midLine := vChar + cell1 + vChar + cell2 + vChar + cell3 + vChar
 	botLine := "└" + strings.Repeat(char, w1) + "┴" + strings.Repeat(char, w2) + "┴" + strings.Repeat(char, w3) + "┘"
-	if !c.IsTTY {
-		topLine = "+" + strings.Repeat(char, w1) + mChar + strings.Repeat(char, w2) + mChar + strings.Repeat(char, w3) + "+"
-		botLine = "+" + strings.Repeat(char, w1) + "+" + strings.Repeat(char, w2) + "+" + strings.Repeat(char, w3) + "+"
-	}
 
-	if c.IsTTY {
-		fmt.Fprintln(c.Out, c.color(colorBrightBlue, topLine))
-		fmt.Fprint(c.Out, c.color(colorBrightBlue, vChar))
-		fmt.Fprint(c.Out, c.color(colorOrange, cell1))
-		fmt.Fprint(c.Out, c.color(colorBrightBlue, vChar))
-		fmt.Fprint(c.Out, c.color(colorOrange, cell2))
-		fmt.Fprint(c.Out, c.color(colorBrightBlue, vChar))
-		fmt.Fprint(c.Out, c.color(colorOrange, cell3))
-		fmt.Fprintln(c.Out, c.color(colorBrightBlue, vChar))
-		fmt.Fprintln(c.Out, c.color(colorBrightBlue, botLine))
-		return
-	}
-	fmt.Fprintln(c.Out, topLine)
-	fmt.Fprintln(c.Out, midLine)
-	fmt.Fprintln(c.Out, botLine)
+	fmt.Fprintln(c.Out, c.color(colorBrightBlue, topLine))
+	fmt.Fprintln(c.Out, c.color(colorBrightBlue, midLine))
+	fmt.Fprintln(c.Out, c.color(colorBrightBlue, botLine))
 }
 
 // ctxSeparator prints the prompt-token separator using the requested color.
@@ -321,10 +265,6 @@ func truncatePathTail(path string, maxLen int) string {
 // WHY:   Gives the user an immediate overview of available commands, skills, and current state.
 // HOW:   Boxed title, section labels with muted separators, columnar skill names, session info.
 func (c *Console) showStartupSplash() {
-	if !c.IsTTY {
-		return
-	}
-
 	// Title box.
 	title := "BlazeAI — blazing-fast AI terminal agent"
 	width := len(title) + 2
@@ -447,7 +387,6 @@ func (c *Console) OnUsage(promptTokens int) {
 }
 
 // OnContent is called for each streaming text chunk from the LLM.
-// Stops the spinner on first chunk, then writes the delta to output.
 //
 // WHAT:  Streams LLM text content to the console.
 // PARAMS: delta — the text chunk from the LLM.
@@ -461,7 +400,6 @@ func (c *Console) OnContent(delta string) {
 	}
 	if !c.contentStarted {
 		c.contentStarted = true
-		c.Spinner.Stop()
 	}
 	if c.needContentLabel {
 		fmt.Fprint(c.Out, c.color(colorOrange, c.bold("[BLAZE] ")))
@@ -484,8 +422,8 @@ func (c *Console) OnContent(delta string) {
 }
 
 // OnToolCall is called before a tool is executed.
-// On TTY, prints the tool purpose line immediately so the user sees what is running.
-// On non-TTY, defers display to OnToolResult.
+// Prints the tool purpose immediately and leaves the line open so OnToolResult can append
+// the final status without redrawing wrapped terminal lines.
 //
 // WHAT:  Buffers tool call args and handles tool group header.
 // PARAMS: name — tool name; args — formatted arguments (purpose text).
@@ -495,16 +433,14 @@ func (c *Console) OnToolCall(name string, args string) {
 	}
 	if !c.contentStarted {
 		c.contentStarted = true
-		c.Spinner.Stop()
 	}
 	if !c.inToolGroup {
 		c.openToolGroup()
 	}
 	c.lastToolArgs = args
 
-	if c.IsTTY && args != "" {
+	if args != "" {
 		fmt.Fprintf(c.Out, "%s %s …", c.color(colorGreen, toolEmoji(name)), args)
-		c.toolLinePending = true
 	}
 }
 
@@ -533,7 +469,8 @@ func toolEmoji(name string) string {
 
 // OnToolResult is called after a tool has finished.
 // Prints a single line: tool emoji + purpose + status symbol.
-// On TTY, overwrites the pending line printed by OnToolCall.
+// Appends the status to the pending line printed by OnToolCall to avoid broken output
+// when the purpose wraps across multiple terminal lines.
 // Success: ✓. Error: ✗ <message>. Timeout: ⏱ <message>.
 //
 // WHAT:  Displays tool result inline with the deferred tool call line.
@@ -541,7 +478,6 @@ func toolEmoji(name string) string {
 func (c *Console) OnToolResult(name string, result string) {
 	if c.turnAborting.Load() {
 		c.lastToolArgs = ""
-		c.toolLinePending = false
 		return
 	}
 	badge, content, colorCode := parseToolResult(result)
@@ -549,18 +485,10 @@ func (c *Console) OnToolResult(name string, result string) {
 	args := c.lastToolArgs
 	c.lastToolArgs = ""
 
-	if c.IsTTY && c.toolLinePending {
-		fmt.Fprintf(c.Out, "\r\033[K")
-		c.toolLinePending = false
-	}
-
 	switch badge {
 	case "DONE":
 		if args != "" {
-			fmt.Fprintf(c.Out, "%s %s %s\n",
-				icon, args,
-				c.color(colorBrightGreen, "✓"),
-			)
+			fmt.Fprintf(c.Out, " %s\n", c.color(colorBrightGreen, "✓"))
 		} else {
 			fmt.Fprintf(c.Out, "%s %s\n",
 				icon,
@@ -575,8 +503,7 @@ func (c *Console) OnToolResult(name string, result string) {
 			}
 		}
 		if args != "" {
-			fmt.Fprintf(c.Out, "%s %s %s %s\n",
-				icon, args,
+			fmt.Fprintf(c.Out, " %s %s\n",
 				c.color(colorCode, "✗"),
 				c.color(colorCode, content),
 			)
@@ -592,8 +519,7 @@ func (c *Console) OnToolResult(name string, result string) {
 			content = strings.ReplaceAll(content, "\n", " ")
 		}
 		if args != "" {
-			fmt.Fprintf(c.Out, "%s %s %s %s\n",
-				icon, args,
+			fmt.Fprintf(c.Out, " %s %s\n",
 				c.color(colorCode, "⏱"),
 				c.color(colorCode, content),
 			)
@@ -761,9 +687,7 @@ func (c *Console) renderLine(line string, terminated bool) {
 
 	if level, title, ok := parseHeading(line); ok {
 		rendered := c.renderInline(title)
-		if c.IsTTY {
-			rendered = c.color(colorBlue, c.bold(rendered))
-		}
+		rendered = c.color(colorBlue, c.bold(rendered))
 		if level == 1 {
 			rendered = strings.ToUpper(rendered)
 		}
@@ -805,29 +729,17 @@ var reUnderscoreItalic = regexp.MustCompile(`(?:^|\s)_([^_]+)_(?:\s|$)`)
 // renderInline strips or styles simple inline Markdown markers within a rendered line.
 func (c *Console) renderInline(text string) string {
 	text = c.toggleDelimited(text, "**", func(s string) string {
-		if c.IsTTY {
-			return c.bold(s)
-		}
-		return s
+		return c.bold(s)
 	})
 	text = reUnderscoreItalic.ReplaceAllStringFunc(text, func(match string) string {
 		inner := match[1 : len(match)-1]
-		if c.IsTTY {
-			return c.color(colorItalic, inner)
-		}
-		return inner
+		return c.color(colorItalic, inner)
 	})
 	text = c.toggleDelimited(text, "*", func(s string) string {
-		if c.IsTTY {
-			return c.color(colorItalic, s)
-		}
-		return s
+		return c.color(colorItalic, s)
 	})
 	text = c.toggleDelimited(text, "`", func(s string) string {
-		if c.IsTTY {
-			return c.color(colorOrange, s)
-		}
-		return s
+		return c.color(colorOrange, s)
 	})
 	text = c.renderLinks(text)
 	return text
@@ -835,7 +747,7 @@ func (c *Console) renderInline(text string) string {
 
 // renderLinks replaces Markdown links with a terminal-friendly format.
 //
-// WHAT:  Converts [text](url) to text (url), coloring the URL portion on TTY.
+// WHAT:  Converts [text](url) to text (url), coloring the URL portion.
 // PARAMS: text — the line to process.
 // RETURNS: string — the line with links rendered.
 func (c *Console) renderLinks(text string) string {
@@ -846,10 +758,7 @@ func (c *Console) renderLinks(text string) string {
 		}
 		label := parts[1]
 		url := parts[2]
-		if c.IsTTY {
-			return label + " " + c.color(colorPurple, "("+url+")")
-		}
-		return label + " (" + url + ")"
+		return label + " " + c.color(colorPurple, "("+url+")")
 	})
 }
 
@@ -988,23 +897,18 @@ func (c *Console) promptLabel() string {
 //
 // WHAT:  The main REPL loop.
 // WHY:   This is the entrypoint for the console transport.
-// HOW:   Loops reading input, dispatches slash commands or sends input to the agent.
-// On TTY: uses raw-mode input for Tab detection (mode cycling).
-// On non-TTY: uses buffered input with a background goroutine.
+// HOW:   Uses raw-mode input for Tab mode cycling, loops reading input.
 // RETURNS: error if a fatal error occurs.
 func (c *Console) Run() error {
 	c.showStartupSplash()
-	if c.IsTTY {
-		return c.runTTY()
-	}
-	return c.runNonTTY()
+	return c.runTTY()
 }
 
 // runTTY runs the REPL loop with raw-mode input for Tab detection.
 // No background goroutine — input is read directly at the prompt.
 // During streaming, abort is via SIGINT only (no queued input).
 //
-// WHAT:  TTY-specific REPL with raw-mode Tab detection.
+// WHAT:  REPL with raw-mode Tab detection.
 // WHY:   Tab key requires raw terminal mode to detect.
 func (c *Console) runTTY() error {
 	for {
@@ -1051,23 +955,13 @@ func (c *Console) runTTY() error {
 
 		fmt.Fprintln(c.Out)
 
-		// Start spinner and reset content state before LLM call.
-		c.contentStarted = false
-		c.contentBuffer = ""
-		c.inCodeBlock = false
-		c.inToolGroup = false
-		c.needContentLabel = true
-		c.lastPromptTokens = 0
-		c.lineOpen = false
-		c.Spinner.Start()
+		c.resetTurnState()
 
 		interrupts := make(chan os.Signal, 1)
 		signal.Notify(interrupts, os.Interrupt)
 
-		// Run agent turn without input events (abort via SIGINT only).
-		turnErr := c.runAgentTurnTTY(input, interrupts)
+		turnErr := c.runAgentTurn(input, interrupts)
 		if turnErr != nil && !errors.Is(turnErr, runtime.ErrTurnAborted) {
-			c.Spinner.Stop()
 			fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("error: %v", turnErr)))
 			c.lineOpen = false
 		}
@@ -1080,11 +974,22 @@ func (c *Console) runTTY() error {
 	}
 }
 
-// runAgentTurnTTY executes one agent turn with SIGINT-only abort (no input events).
+// resetTurnState resets per-turn tracking fields before each agent call.
+func (c *Console) resetTurnState() {
+	c.contentStarted = false
+	c.contentBuffer = ""
+	c.inCodeBlock = false
+	c.inToolGroup = false
+	c.needContentLabel = true
+	c.lastPromptTokens = 0
+	c.lineOpen = false
+}
+
+// runAgentTurn executes one agent turn with SIGINT-only abort.
 //
 // WHAT:  Simplified turn execution for TTY mode.
 // WHY:   TTY mode reads input directly at the prompt; no goroutine for queued input.
-func (c *Console) runAgentTurnTTY(input string, interrupts <-chan os.Signal) error {
+func (c *Console) runAgentTurn(input string, interrupts <-chan os.Signal) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1105,156 +1010,9 @@ func (c *Console) runAgentTurnTTY(input string, interrupts <-chan os.Signal) err
 	}
 }
 
-// runNonTTY runs the REPL loop with buffered input (existing goroutine approach).
-// No Tab detection — modes are fixed from config's LastMode.
-func (c *Console) runNonTTY() error {
-	inputs := c.startInputReader()
-	pending := ""
-	promptShown := false
-
-	for {
-		if pending == "" {
-			if !promptShown {
-				fmt.Fprint(c.Out, c.promptLabel())
-				promptShown = true
-			}
-			event, ok := <-inputs
-			if !ok || event.err == io.EOF {
-				fmt.Fprintln(c.Out)
-				return nil
-			}
-			if event.err != nil {
-				return fmt.Errorf("input error: %w", event.err)
-			}
-			pending = strings.TrimSpace(event.line)
-		}
-
-		input := pending
-		pending = ""
-		if input == "" {
-			promptShown = false
-			continue
-		}
-		promptShown = false
-
-		// Handle slash commands.
-		if strings.HasPrefix(input, "/") {
-			handled, exit, err := c.handleCommand(input)
-			if err != nil {
-				fmt.Fprintln(c.Out, c.color(colorRed, err.Error()))
-				continue
-			}
-			if exit {
-				return nil
-			}
-			if handled {
-				continue
-			}
-		}
-
-		fmt.Fprintln(c.Out)
-
-		// Start spinner and reset content state before LLM call.
-		c.contentStarted = false
-		c.contentBuffer = ""
-		c.inCodeBlock = false
-		c.inToolGroup = false
-		c.needContentLabel = true
-		c.lastPromptTokens = 0
-		c.lineOpen = false
-		c.Spinner.Start()
-
-		interrupts := make(chan os.Signal, 1)
-		signal.Notify(interrupts, os.Interrupt)
-
-		// Run the agent turn.
-		nextInput, err := c.runAgentTurn(input, interrupts, inputs)
-		if err != nil && !errors.Is(err, runtime.ErrTurnAborted) {
-			c.Spinner.Stop()
-			fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("error: %v", err)))
-			c.lineOpen = false
-		}
-		signal.Stop(interrupts)
-		c.flushPendingContent()
-		fmt.Fprintln(c.Out)
-		c.lineOpen = false
-		c.closeToolGroup()
-		c.responseSeparator()
-		if nextInput != "" {
-			pending = nextInput
-		}
-	}
-}
-
-// startInputReader continuously reads console input lines in the background.
-func (c *Console) startInputReader() <-chan inputEvent {
-	ch := make(chan inputEvent)
-	go func() {
-		defer close(ch)
-		for {
-			line, err := c.Reader.ReadLine()
-			ch <- inputEvent{line: line, err: err}
-			if err != nil {
-				return
-			}
-		}
-	}()
-	return ch
-}
-
-// runAgentTurn executes one agent turn while listening for Ctrl+C abort requests.
-func (c *Console) runAgentTurn(input string, interrupts <-chan os.Signal, inputs <-chan inputEvent) (string, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- c.Agent.RunTurn(ctx, input)
-	}()
-
-	nextInput := ""
-	activeInputs := inputs
-
-	for {
-		select {
-		case err := <-errCh:
-			c.turnAborting.Store(false)
-			return nextInput, err
-		case event, ok := <-activeInputs:
-			if !ok || event.err == io.EOF {
-				activeInputs = nil
-				c.turnAborting.Store(true)
-				cancel()
-				continue
-			}
-			if event.err != nil {
-				c.turnAborting.Store(false)
-				return "", fmt.Errorf("input error: %w", event.err)
-			}
-			trimmed := strings.TrimSpace(event.line)
-			if trimmed == "" {
-				continue
-			}
-			if nextInput == "" {
-				nextInput = trimmed
-			}
-			if c.turnAborting.Load() {
-				continue
-			}
-			c.abortCurrentTurn(cancel)
-		case <-interrupts:
-			if c.turnAborting.Load() {
-				continue
-			}
-			c.abortCurrentTurn(cancel)
-		}
-	}
-}
-
 // abortCurrentTurn stops visible turn activity and requests cancellation from the runtime.
 func (c *Console) abortCurrentTurn(cancel context.CancelFunc) {
 	c.turnAborting.Store(true)
-	c.Spinner.Stop()
 	cancel()
 	c.contentBuffer = ""
 	if c.lineOpen {
@@ -1287,12 +1045,8 @@ func (c *Console) handleCommand(input string) (bool, bool, error) {
 		return true, true, nil
 	case "/model":
 		if arg == "" {
-			if c.IsTTY {
-				if err := c.interactiveSelectModel(); err != nil {
-					fmt.Fprintln(c.Out, c.color(colorRed, err.Error()))
-				}
-			} else {
-				c.listModels()
+			if err := c.interactiveSelectModel(); err != nil {
+				fmt.Fprintln(c.Out, c.color(colorRed, err.Error()))
 			}
 			return true, false, nil
 		}

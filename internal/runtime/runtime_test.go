@@ -450,9 +450,6 @@ func TestNewAgent(t *testing.T) {
 	if agent.Tools.Get("ask_a_friend") == nil {
 		t.Error("ask_a_friend tool not registered")
 	}
-	if agent.Tools.Get("session_review_extract") == nil {
-		t.Error("session_review_extract tool not registered")
-	}
 	if agent.Active == nil {
 		t.Error("Active skills list is nil")
 	}

@@ -33,10 +33,8 @@
 - The console should encourage Markdown-formatted LLM responses and render them properly.
 
 ### Console Detection
-- The console auto-detects whether output goes to a real terminal (TTY) or is piped/redirected (non-TTY).
-- On TTY: colors, bold labels, spinner, and visual separators are active.
-- On non-TTY: colors, bold, and spinner are disabled; output is plain text.
-- This detection is automatic and silent.
+- The console is terminal-only (TTY). ANSI colors, bold labels, and visual separators are always active.
+- Non-TTY fallback has been removed. The console requires a real terminal.
 
 ### Input
 
@@ -99,19 +97,11 @@
 - LLM responses are rendered as terminal Markdown.
 - Markdown rendering is incremental during streaming.
 - Headings, bold, italic, code blocks, lists, tables, and links are rendered with terminal formatting.
-- On non-TTY, Markdown is rendered as plain text without ANSI codes.
 
 #### Streaming
 - Assistant text is displayed incrementally as it arrives from the LLM.
 - The Blaze label is printed before the first content chunk.
 - Content chunks are written directly to the console as they arrive.
-
-#### Thinking Spinner
-- A spinner is displayed while the LLM is processing before the first content chunk.
-- On TTY: an animated spinner with frames.
-- On non-TTY: a static `thinking...` line or nothing.
-- The spinner is erased cleanly when the first content or tool event arrives.
-- After erase, the appropriate label is printed before content.
 
 ## Web Transport
 

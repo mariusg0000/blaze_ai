@@ -25,14 +25,14 @@
 ### Interaction Model
 - Main interface: simple CLI REPL, not a full-screen TUI.
 - Web interface: postponed, will imitate a terminal session over the same handler contract.
-- Console UX: Markdown rendering, colored and bold labels, visual separators, streaming output, thinking spinner.
+- Console UX: Markdown rendering, colored and bold labels, visual separators, streaming output.
 - Handler contract between agent core and transports: `OnContent`, `OnToolCall`, `OnToolResult`.
 
 ### Execution Model
 - Main tool: `shell`.
 - Inline shell for simple tasks, OS-native scripts for complex tasks.
 - Python is last resort only, in a lazily-created venv under `app_home/scripts/venv`.
-- Native tools remain hardcoded and compact. Current runtime tools include `shell`, `load_skill`, `unload_skill`, `run_skill`, `replace_block`, `ask_a_friend`, `session_review_extract`, `task_read`, and `task_write`.
+- Native tools remain hardcoded and compact. Current runtime tools include `shell`, `load_skill`, `unload_skill`, `run_skill`, `replace_block`, `ask_a_friend`, `task_read`, and `task_write`.
 - OpenAI-compatible tool calling, multi tool call per turn, optional `timeout` parameter per call.
 - Default tool timeout: 60s. Timeout returns `timeout <N>s exceeded`.
 

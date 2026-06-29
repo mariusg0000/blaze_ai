@@ -1,5 +1,5 @@
 [DESCRIPTION]
-Load when the user wants to review recent BlazeAI sessions, generate per-session `learning.md` reports, identify missing or weak skills, or synthesize a cross-session improvement plan. Use with `session_review_extract`, `ask_a_friend`, and normal file-writing tools. Do not auto-create or auto-edit skills from this review.
+Load when the user wants to review recent BlazeAI sessions, generate per-session `learning.md` reports, identify missing or weak skills, or synthesize a cross-session improvement plan. Use with `shell`, `ask_a_friend`, and normal file-writing tools. Do not auto-create or auto-edit skills from this review.
 
 The source for per-session analysis is `prompt.json` (the final JSON payload sent to the LLM: sysprompt + compaction summaries + conversation messages), not `session.json`.
 
@@ -21,23 +21,24 @@ Never auto-create skills, memories, or code changes from this review.
 
 ## Workflow
 
-1. Call `session_review_extract` with `action="list"` and a limit no higher than `30`.
-2. Focus first on sessions where `has_learning_md=false`.
-3. For each target session, call `ask_a_friend` with `role="summarization"`, providing all instructions and context in `question`/`context`, and set `input_file` to `<session_dir>/prompt.json`. The summarization model receives the file content directly and must analyze it per the instructions.
-4. Include `transport`, `source_kind`, and `source_name` from the list step in the `context` so the summarization model knows the session origin.
-5. If `source_kind="telegram_bridge"`, explicitly tell the summarization model that the session came through a Telegram bridge and should be judged as chat/bridge interaction, not as a normal console REPL transcript.
-6. In per-session reports, keep the bridge or project source explicit so the final synthesis can separate Telegram patterns from terminal patterns.
-7. Write the returned report to `<session_dir>/learning.md`.
-8. After the newest relevant reports exist, collect up to `30` `learning.md` files.
-9. Send the combined report set to `ask_a_friend` with `role="advisor"` for the cross-session synthesis.
-10. Present the final plan to the user and stop for discussion.
+1. Use `shell` to inspect the newest session folders under `{APP_HOME}/projects/*/sessions/*` and `{APP_HOME}/telegram/*/session`.
+2. Build a compact working list with at most `30` sessions, including `session_dir`, `prompt.json` path, `learning.md` path, transport (`terminal` or `telegram`), and whether `learning.md` already exists.
+3. Focus first on sessions where `learning.md` is missing.
+4. For each target session, call `ask_a_friend` with `role="summarization"`, providing all review instructions in `question`/`context`, and set `input_file` to `<session_dir>/prompt.json`.
+5. Include the session path and transport in the `context` so the summarization model knows the session origin.
+6. If the session came from `{APP_HOME}/telegram/`, explicitly tell the summarization model that it was a Telegram bridge interaction and should not be judged as a normal console REPL transcript.
+7. In per-session reports, keep the bridge or project source explicit so the final synthesis can separate Telegram patterns from terminal patterns.
+8. Write the returned report to `<session_dir>/learning.md`.
+9. After the newest relevant reports exist, collect up to `30` `learning.md` files.
+10. Send the combined report set to `ask_a_friend` with `role="advisor"` for the cross-session synthesis.
+11. Present the final plan to the user and stop for discussion.
 
 ## Review Rules
 
 - Prefer the newest sessions first.
 - Skip sessions that already have a good `learning.md` unless the user explicitly wants regeneration.
 - The analysis source is `<session_dir>/prompt.json`, not `session.json`. If `prompt.json` does not exist for a session, report the error and stop — no fallback.
-- If `session_review_extract` or `ask_a_friend` returns a hard error, surface it clearly and stop unless the user explicitly asks for partial review.
+- If `shell` or `ask_a_friend` returns a hard error, surface it clearly and stop unless the user explicitly asks for partial review.
 - Keep per-session reports concise and evidence-based.
 - Separate missing-skill recommendations from skill-optimization recommendations.
 - Distinguish memory-bank opportunities from runnable-skill opportunities.

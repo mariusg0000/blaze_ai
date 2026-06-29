@@ -4,11 +4,9 @@ package console
 import (
 	"bytes"
 	"errors"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -50,18 +48,21 @@ func (h *mockHandler) OnToolResult(name string, result string) {}
 func (h *mockHandler) OnUsage(promptTokens int)                {}
 func (h *mockHandler) RequestSudoApproval(command string) (bool, string) { return false, "" }
 
-// newConsole creates a Console with a buffer for output and non-TTY mode.
+// newConsole creates a Console with a buffer for output in TTY mode.
 func newConsole(agent *runtime.Agent) (*Console, *bytes.Buffer) {
 	out := &bytes.Buffer{}
 	return &Console{
 		Out:              out,
 		In:               strings.NewReader(""),
-		IsTTY:            false,
 		Agent:            agent,
-		Reader:           NewReader(strings.NewReader(""), false),
-		Spinner:          NewSpinner(out, false),
+		Reader:           NewReader(strings.NewReader(""), true),
 		needContentLabel: true,
 	}, out
+}
+
+func stripANSICodes(s string) string {
+	re := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	return re.ReplaceAllString(s, "")
 }
 
 // writePromptFixtures creates the prompt templates required by runtime prompt assembly.
@@ -69,28 +70,6 @@ func writePromptFixtures(t *testing.T, promptsDir string) {
 	t.Helper()
 	os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n## Tool Discipline\n- Keep relevant loaded skills active across follow-up turns on the same topic or task.\n- Do not unload a skill immediately after one successful action if the user is likely to continue in the same domain.\n- Unload a skill only when the user clearly changes topic or task, or when the loaded skill would interfere with the next turn.\n\n## Active State Rules\n- Only skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.\n- Only memories listed under `## Active Memories` are active right now. Do not infer current active memories from older `load_memory` or `unload_memory` tool results in the conversation history. If there is no `## Active Memories` section below, then no memories are currently active.\n\n{OS_PROMPT}\n\n## Host Environment Helpers\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nBefore performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first. Do not act on an unfamiliar domain without loading the relevant skill.\n\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n{RUNNABLE_SKILLS_SECTION}\n\n## Memories\nAvailable memories:\n{MEMORIES_AVAILABLE}\n\nActive memories:\n{MEMORIES_ACTIVE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n"), 0644)
 	os.WriteFile(filepath.Join(promptsDir, "sysprompt.linux.md"), []byte("linux"), 0644)
-}
-
-// setupStreamingConsole creates a console wired to a real streaming test server.
-func setupStreamingConsole(t *testing.T, handler http.HandlerFunc) (*Console, *bytes.Buffer, *httptest.Server) {
-	t.Helper()
-	t.Setenv("HOME", t.TempDir())
-	server := httptest.NewServer(handler)
-	dir := t.TempDir()
-	cfg := &config.Config{
-		Providers: []config.Provider{{Name: "test", Endpoint: server.URL, APIKey: "sk-test"}},
-		Roles:     config.Roles{Default: "test/test-model"},
-	}
-	sess, _ := session.CreateInDir(dir)
-	promptsDir := filepath.Join(dir, "prompts")
-	os.MkdirAll(promptsDir, 0755)
-	writePromptFixtures(t, promptsDir)
-	agent, err := runtime.NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{})
-	if err != nil {
-		t.Fatalf("NewAgent() error: %v", err)
-	}
-	c, out := newConsole(agent)
-	return c, out, server
 }
 
 // TestOnContent verifies content is written to output with [BLAZE] label on first chunk.
@@ -272,16 +251,16 @@ func TestOnContentTable(t *testing.T) {
 	}
 }
 
-// TestOnToolCall verifies tool args are buffered and printed on result.
+// TestOnToolCall verifies tool args are printed immediately and buffered for result append.
 func TestOnToolCall(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolCall("shell", "inspect package.json scripts")
 	if c.lastToolArgs != "inspect package.json scripts" {
 		t.Errorf("lastToolArgs = %q, want 'inspect package.json scripts'", c.lastToolArgs)
 	}
-	output := out.String()
-	if !strings.Contains(output, "tools ") {
-		t.Errorf("output missing tools divider header: %q", output)
+	plain := stripANSICodes(out.String())
+	if !strings.Contains(plain, "tools ") {
+		t.Errorf("output missing tools divider header: %q", out.String())
 	}
 }
 
@@ -302,23 +281,41 @@ func TestOnToolCallAfterContent(t *testing.T) {
 	c.OnContent("hello")
 	c.OnToolCall("shell", "ls")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nok\n")
-	output := out.String()
-	if !strings.Contains(output, "hello\ntools ------------------------------------------------------\n💻") {
-		t.Errorf("output missing newline before tool call block: %q", output)
+	plain := stripANSICodes(out.String())
+	if !strings.Contains(plain, "hello\ntools ") {
+		t.Errorf("output missing newline before tool call block: %q", out.String())
 	}
 }
 
-// TestOnToolResultSuccess verifies successful tool results display checkmark.
+// TestOnToolResultSuccess verifies successful tool results append a checkmark.
 func TestOnToolResultSuccess(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolCall("shell", "inspect package.json scripts")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nhi\n")
-	output := out.String()
-	if !strings.Contains(output, "💻 inspect package.json scripts ✓") {
-		t.Errorf("output missing success line: %q", output)
+	plain := stripANSICodes(out.String())
+	if !strings.Contains(plain, "💻 inspect package.json scripts … ✓") {
+		t.Errorf("output missing appended success line: %q", plain)
 	}
-	if strings.Contains(output, "exit_code") {
-		t.Errorf("output should not contain raw exit_code: %q", output)
+	if strings.Contains(plain, "exit_code") {
+		t.Errorf("output should not contain raw exit_code: %q", plain)
+	}
+}
+
+// TestOnToolResultSuccessTTY verifies the status is appended to the tool line.
+func TestOnToolResultSuccessTTY(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnToolCall("shell", "inspect package.json scripts")
+	c.OnToolResult("shell", "exit_code: 0\nstdout:\nhi\n")
+	output := out.String()
+	plain := stripANSICodes(output)
+	if strings.Contains(output, "\r\033[K") {
+		t.Errorf("output should not clear and redraw the tool line: %q", output)
+	}
+	if !strings.Contains(plain, "💻 inspect package.json scripts … ✓\n") {
+		t.Errorf("TTY output missing appended success status: %q", plain)
+	}
+	if strings.Count(plain, "inspect package.json scripts") != 1 {
+		t.Errorf("TTY output should print the purpose once: %q", plain)
 	}
 }
 
@@ -361,7 +358,7 @@ func TestOnToolResultGenericError(t *testing.T) {
 	}
 }
 
-// TestOnToolRoundTripAfterContent verifies the full tool block on single line.
+// TestOnToolRoundTripAfterContent verifies the full tool block: content, tool, result, separator.
 func TestOnToolRoundTripAfterContent(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnContent("hello")
@@ -369,15 +366,15 @@ func TestOnToolRoundTripAfterContent(t *testing.T) {
 	c.OnToolCall("shell", "inspect package.json scripts")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nok\n")
 	c.closeToolGroup()
-	output := out.String()
-	if !strings.Contains(output, "hello\ntools ------------------------------------------------------\n💻") {
-		t.Errorf("tool call block not separated from content: %q", output)
+	plain := stripANSICodes(out.String())
+	if !strings.Contains(plain, "hello\ntools ") {
+		t.Errorf("tool call block not separated from content: %q", plain)
 	}
-	if !strings.Contains(output, "💻 inspect package.json scripts ✓") {
-		t.Errorf("tool response formatting unexpected: %q", output)
+	if !strings.Contains(plain, "💻 inspect package.json scripts … ✓") {
+		t.Errorf("tool response formatting unexpected: %q", plain)
 	}
-	if !strings.Contains(output, "✓\nctx 11k") {
-		t.Errorf("tool group not closed with ctx separator: %q", output)
+	if !strings.Contains(plain, "✓\nctx 11k") {
+		t.Errorf("tool group not closed with ctx separator: %q", plain)
 	}
 }
 
@@ -390,18 +387,18 @@ func TestToolGroupConsecutive(t *testing.T) {
 	c.OnToolCall("shell", "inspect config")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nb\n")
 	c.closeToolGroup()
-	output := out.String()
-	if strings.Count(output, "tools ------------------------------------------------------") != 1 {
-		t.Errorf("expected one tools header, got %q", output)
+	plain := stripANSICodes(out.String())
+	if strings.Count(plain, "tools ") != 1 {
+		t.Errorf("expected one tools header, got %q", plain)
 	}
-	if strings.Count(output, "ctx 11k") != 1 {
-		t.Errorf("expected one ctx separator, got %d: %q", strings.Count(output, "ctx 11k"), output)
+	if strings.Count(plain, "ctx 11k") != 1 {
+		t.Errorf("expected one ctx separator, got %d: %q", strings.Count(plain, "ctx 11k"), plain)
 	}
-	if !strings.Contains(output, "💻 list root ✓") {
-		t.Errorf("first tool call missing: %q", output)
+	if !strings.Contains(plain, "💻 list root … ✓") {
+		t.Errorf("first tool call missing: %q", plain)
 	}
-	if !strings.Contains(output, "💻 inspect config ✓") {
-		t.Errorf("second tool call missing: %q", output)
+	if !strings.Contains(plain, "💻 inspect config … ✓") {
+		t.Errorf("second tool call missing: %q", plain)
 	}
 }
 
@@ -415,18 +412,18 @@ func TestToolGroupInterruptedByContent(t *testing.T) {
 	c.OnToolCall("shell", "inspect config")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nb\n")
 	c.closeToolGroup()
-	output := out.String()
-	if strings.Count(output, "tools ------------------------------------------------------") != 2 {
-		t.Errorf("expected 2 tools headers, got %d: %q", strings.Count(output, "tools ------------------------------------------------------"), output)
+	plain := stripANSICodes(out.String())
+	if strings.Count(plain, "tools ") != 2 {
+		t.Errorf("expected 2 tools headers, got %d: %q", strings.Count(plain, "tools "), plain)
 	}
-	if strings.Count(output, "ctx 11k") != 2 {
-		t.Errorf("expected 2 ctx separators, got %d: %q", strings.Count(output, "ctx 11k"), output)
+	if strings.Count(plain, "ctx 11k") != 2 {
+		t.Errorf("expected 2 ctx separators, got %d: %q", strings.Count(plain, "ctx 11k"), plain)
 	}
-	if !strings.Contains(output, "continuing") {
-		t.Errorf("intermediate content missing: %q", output)
+	if !strings.Contains(plain, "continuing") {
+		t.Errorf("intermediate content missing: %q", plain)
 	}
-	if !strings.Contains(output, "[BLAZE] continuing") {
-		t.Errorf("content after tool group should restart with [BLAZE]: %q", output)
+	if !strings.Contains(plain, "[BLAZE] continuing") {
+		t.Errorf("content after tool group should restart with [BLAZE]: %q", plain)
 	}
 }
 
@@ -473,18 +470,12 @@ func TestHandleCommandExit(t *testing.T) {
 	}
 }
 
-// TestHandleCommandModelList verifies /model without arg lists models.
+// TestHandleCommandModelList verifies /model without arg is handled (starts interactive flow).
 func TestHandleCommandModelList(t *testing.T) {
-	c, out := newConsole(mockAgent(t))
-	handled, exit, err := c.handleCommand("/model")
-	if err != nil {
-		t.Fatalf("/model error: %v", err)
-	}
+	c, _ := newConsole(mockAgent(t))
+	handled, exit, _ := c.handleCommand("/model")
 	if !handled || exit {
 		t.Errorf("handled=%v exit=%v, want true/false", handled, exit)
-	}
-	if !strings.Contains(out.String(), "test-model") {
-		t.Errorf("output missing model list: %q", out.String())
 	}
 }
 
@@ -652,41 +643,6 @@ func TestReaderReadLineEOF(t *testing.T) {
 	}
 }
 
-// TestRunAgentTurnInputInterrupt verifies a typed line aborts the active turn and is returned.
-func TestRunAgentTurnInputInterrupt(t *testing.T) {
-	c, _, server := setupStreamingConsole(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			t.Fatal("response writer does not support flushing")
-		}
-		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"Hello"}}]}`)
-		fmt.Fprintln(w)
-		flusher.Flush()
-		<-r.Context().Done()
-	})
-	defer server.Close()
-
-	inputs := make(chan inputEvent, 1)
-	inputs <- inputEvent{line: "second message\n"}
-	next, err := c.runAgentTurn("first message", make(chan os.Signal), inputs)
-	if !errors.Is(err, runtime.ErrTurnAborted) {
-		t.Fatalf("runAgentTurn() error = %v, want ErrTurnAborted", err)
-	}
-	if next != "second message" {
-		t.Fatalf("next input = %q, want second message", next)
-	}
-	if len(c.Agent.Session.Messages) < 2 {
-		t.Fatalf("session has %d messages, want at least 2", len(c.Agent.Session.Messages))
-	}
-	if got := c.Agent.Session.Messages[len(c.Agent.Session.Messages)-1].Content; got != "User requested an urgent abort. The previous assistant turn was interrupted before completion. Tool execution may have produced partial side effects before cancellation. Do not continue the interrupted response. Wait for the user's next instruction." {
-		t.Fatalf("abort marker = %v", got)
-	}
-	if c.turnAborting.Load() {
-		t.Fatal("turnAborting should be reset after interrupted turn")
-	}
-}
-
 // TestPromptLabelWithMode verifies prompt label shows [<mode> mode]> format.
 func TestPromptLabelWithMode(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
@@ -719,27 +675,24 @@ func TestPromptLabelWithoutMode(t *testing.T) {
 	}
 }
 
-// TestReadEventNonTTY verifies ReadEvent on non-TTY delegates to ReadLine.
+// TestReadEventNonTTY verifies ReadEvent on non-TTY returns an error.
 func TestReadEventNonTTY(t *testing.T) {
 	r := NewReader(strings.NewReader("hello\n"), false)
-	line, event, err := r.ReadEvent()
-	if err != nil {
-		t.Fatalf("ReadEvent() error: %v", err)
+	_, _, err := r.ReadEvent()
+	if err == nil {
+		t.Fatal("ReadEvent() expected error on non-TTY, got nil")
 	}
-	if line != "hello" {
-		t.Errorf("ReadEvent() line = %q, want 'hello'", line)
-	}
-	if event != "" {
-		t.Errorf("ReadEvent() event = %q, want ''", event)
+	if !strings.Contains(err.Error(), "terminal") {
+		t.Errorf("ReadEvent() error = %v, want terminal-related error", err)
 	}
 }
 
-// TestReadEventNonTTYEOF verifies ReadEvent on non-TTY returns EOF.
+// TestReadEventNonTTYEOF verifies ReadEvent on non-TTY returns an error.
 func TestReadEventNonTTYEOF(t *testing.T) {
 	r := NewReader(strings.NewReader(""), false)
 	_, _, err := r.ReadEvent()
 	if err == nil {
-		t.Error("ReadEvent() expected EOF, got nil")
+		t.Error("ReadEvent() expected error on non-TTY, got nil")
 	}
 }
 
@@ -783,7 +736,6 @@ func TestStartupSplashTTY(t *testing.T) {
 	out := &bytes.Buffer{}
 	c := &Console{
 		Out:   out,
-		IsTTY: true,
 		Agent: agent,
 	}
 	c.showStartupSplash()
@@ -854,23 +806,6 @@ func TestStartupSplashTTY(t *testing.T) {
 	}
 }
 
-// TestStartupSplashNonTTY verifies splash produces no output in non-TTY mode.
-func TestStartupSplashNonTTY(t *testing.T) {
-	agent := mockAgent(t)
-	out := &bytes.Buffer{}
-	c := &Console{
-		Out:   out,
-		IsTTY: false,
-		Agent: agent,
-	}
-	c.showStartupSplash()
-
-	output := out.String()
-	if output != "" {
-		t.Errorf("non-TTY splash should be empty, got: %q", output)
-	}
-}
-
 // TestStartupSplashSkillsEmpty verifies splash shows (none) when no skills exist.
 func TestStartupSplashSkillsEmpty(t *testing.T) {
 	agent := mockAgent(t)
@@ -879,7 +814,6 @@ func TestStartupSplashSkillsEmpty(t *testing.T) {
 	out := &bytes.Buffer{}
 	c := &Console{
 		Out:   out,
-		IsTTY: true,
 		Agent: agent,
 	}
 	c.showStartupSplash()
