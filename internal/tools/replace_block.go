@@ -77,7 +77,7 @@ func (t *ReplaceBlockTool) Parameters() json.RawMessage {
 		"properties": {
 			"purpose": {
 				"type": "string",
-				"description": "purpose = concise edit summary; include = change + why + constraints"
+				"description": "purpose = exactly 3 user-visible sentences. Sentence 1 must name the target file and the specific code/text area being edited. Sentence 2 must explain why the edit is needed. Sentence 3 must explain what the replacement will change and how it solves or advances the task."
 			},
 			"file_path": {
 				"type": "string",

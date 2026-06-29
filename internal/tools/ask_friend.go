@@ -79,7 +79,7 @@ func (t *AskFriendTool) FormatArgs(args json.RawMessage) string {
 
 // Description returns the human-readable description for the LLM.
 func (t *AskFriendTool) Description() string {
-	return "role + purpose + question + context + output_format → one-shot no-tools consultation via configured role model"
+	return "Delegate one focused question to a configured secondary model role with no tools. Use it only when an independent summarization, review, risk check, or trade-off analysis would improve the current task. Provide all required context because the secondary model cannot see the current conversation."
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -93,7 +93,7 @@ func (t *AskFriendTool) Parameters() json.RawMessage {
 			},
 			"purpose": {
 				"type": "string",
-				"description": "purpose = concise why for this consultation"
+				"description": "purpose = exactly 3 user-visible sentences. Sentence 1 must name the secondary model role, the consultation topic/question, and any relevant input file or context source. Sentence 2 must explain why a secondary no-tools consultation is needed here. Sentence 3 must explain what answer the consultation should produce and how that result solves or advances the task."
 			},
 			"question": {
 				"type": "string",
