@@ -80,7 +80,7 @@ func (s *ShellTool) Parameters() json.RawMessage {
 		"properties": {
 			"purpose": {
 				"type": "string",
-				"description": "purpose = exactly 3 user-visible sentences. Sentence 1 must name the command or command sequence and all relevant files/paths. Sentence 2 must explain why shell execution is needed here. Sentence 3 must explain what the command should produce and how that result solves or advances the task."
+				"description": "purpose = exactly 3 user-visible sentences. Sentence 1 must name the command or command sequence and all relevant files/paths. Sentence 2 must describe the command's approach, scope, or target — directories, patterns, helpers used. Sentence 3 must explain what the command should produce and how that result solves or advances the task."
 			},
 			"command": {
 				"type": "string",

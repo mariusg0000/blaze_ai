@@ -93,7 +93,7 @@ func (t *AskFriendTool) Parameters() json.RawMessage {
 			},
 			"purpose": {
 				"type": "string",
-				"description": "purpose = exactly 3 user-visible sentences. Sentence 1 must name the secondary model role, the consultation topic/question, and any relevant input file or context source. Sentence 2 must explain why a secondary no-tools consultation is needed here. Sentence 3 must explain what answer the consultation should produce and how that result solves or advances the task."
+				"description": "purpose = exactly 3 user-visible sentences. Sentence 1 must name the secondary model role, the consultation topic/question, and any relevant input file or context source. Sentence 2 must describe the scope or focus area of the consultation. Sentence 3 must explain what answer the consultation should produce and how that result solves or advances the task."
 			},
 			"question": {
 				"type": "string",
