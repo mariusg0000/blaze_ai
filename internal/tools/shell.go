@@ -216,7 +216,10 @@ func executeShell(ctx context.Context, osName platform.OS, command, workDir stri
 		sb.WriteString(fmt.Sprintf("stdout:\n%s\n", stdout.String()))
 	}
 	if stderr.Len() > 0 {
-		sb.WriteString(fmt.Sprintf("stderr:\n%s\n", stderr.String()))
+		cleaned := stripSudoPasswordPrompt(stderr.String())
+		if cleaned != "" {
+			sb.WriteString(fmt.Sprintf("stderr:\n%s\n", cleaned))
+		}
 	}
 	return sb.String()
 }
@@ -321,6 +324,25 @@ func formatShellOutputExceeded(stdoutBytes, stderrBytes int) string {
 		stderrBytes,
 		MaxShellOutputBytes,
 	)
+}
+
+// stripSudoPasswordPrompt removes sudo password prompt lines from stderr.
+// When sudo is invoked through a piped stderr but the command succeeds using
+// cached credentials, the prompt `[sudo] password for <user>:` is captured as
+// stderr noise. Filtering it prevents the LLM from misinterpreting it as an error.
+//
+// PARAMS: stderr — raw stderr output from the shell command.
+// RETURNS: cleaned stderr with sudo password prompts removed.
+func stripSudoPasswordPrompt(stderr string) string {
+	lines := strings.Split(stderr, "\n")
+	var cleaned []string
+	for _, line := range lines {
+		if strings.HasPrefix(line, "[sudo] password for ") {
+			continue
+		}
+		cleaned = append(cleaned, line)
+	}
+	return strings.TrimRight(strings.Join(cleaned, "\n"), "\n")
 }
 
 // formatAbortedToolOutput returns the partial output captured before user cancellation.
