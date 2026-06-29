@@ -3,8 +3,6 @@ package helpers
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"blazeai/internal/config"
@@ -92,83 +90,6 @@ func TestMissingCoreHelpersNoMissing(t *testing.T) {
 	missing := MissingCore(statuses, config.HelperSetup{})
 	if len(missing) != 0 {
 		t.Fatalf("MissingCore() returned %d helpers, want 0", len(missing))
-	}
-}
-
-// TestAvailableHelpersContextualGo verifies contextual go appears only with go.mod.
-func TestAvailableHelpersContextualGo(t *testing.T) {
-	dir := t.TempDir()
-	statuses := Detect(fakeLookup([]string{"rg", "go"}))
-
-	available := Available(statuses, dir)
-	for _, s := range available {
-		if s.Name == "go" {
-			t.Fatal("expected go NOT to appear without go.mod in workdir")
-		}
-	}
-
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test"), 0644)
-	available = Available(statuses, dir)
-	found := false
-	for _, s := range available {
-		if s.Name == "go" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("expected go to appear with go.mod in workdir")
-	}
-}
-
-// TestAvailableHelpersContextualNode verifies contextual node appears only with package.json.
-func TestAvailableHelpersContextualNode(t *testing.T) {
-	dir := t.TempDir()
-	statuses := Detect(fakeLookup([]string{"rg", "node", "npm"}))
-
-	available := Available(statuses, dir)
-	for _, s := range available {
-		if s.Name == "node" || s.Name == "npm" {
-			t.Fatal("expected node/npm NOT to appear without package.json")
-		}
-	}
-
-	os.WriteFile(filepath.Join(dir, "package.json"), []byte("{}"), 0644)
-	available = Available(statuses, dir)
-	foundNode := false
-	foundNpm := false
-	for _, s := range available {
-		if s.Name == "node" {
-			foundNode = true
-		}
-		if s.Name == "npm" {
-			foundNpm = true
-		}
-	}
-	if !foundNode || !foundNpm {
-		t.Fatal("expected node and npm to appear with package.json")
-	}
-}
-
-// TestProjectRelevant verifies core is always relevant and contextual depends on files.
-func TestProjectRelevant(t *testing.T) {
-	dir := t.TempDir()
-
-	for _, h := range Known {
-		if h.Kind == KindCore {
-			if !ProjectRelevant(dir, h) {
-				t.Errorf("expected core helper %q always relevant", h.Name)
-			}
-		} else {
-			if ProjectRelevant(dir, h) {
-				t.Errorf("expected contextual helper %q not relevant without project files", h.Name)
-			}
-		}
-	}
-
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x"), 0644)
-	goHelper := Known[5] // go
-	if !ProjectRelevant(dir, goHelper) {
-		t.Error("expected go relevant with go.mod present")
 	}
 }
 

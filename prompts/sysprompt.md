@@ -96,7 +96,7 @@ Use `ask_a_friend` only for focused secondary-model help: `summarization` for su
 {HOST_HELPERS_ADVISORY}
 
 **Available host helpers:**
-Use these helpers with shell tool.
+Already verified — no need to check availability. Prefer these helpers over their classic shell-only equivalents. When a helper covers a task domain, always choose it over traditional commands.
 
 {HOST_HELPERS_AVAILABLE}
 
