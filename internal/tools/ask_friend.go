@@ -69,12 +69,12 @@ func (t *AskFriendTool) FormatArgs(args json.RawMessage) string {
 		return "Consulting secondary model"
 	}
 	if purpose == "" {
-		return truncateDisplay("Consulting "+role, 80)
+		return truncateDisplay("Consulting "+role, 50)
 	}
 	if role == "" {
-		return truncateDisplay("Consulting: "+purpose, 80)
+		return "Consulting: " + purpose
 	}
-	return truncateDisplay("Consulting "+role+": "+purpose, 80)
+	return "Consulting " + role + ": " + purpose
 }
 
 // Description returns the human-readable description for the LLM.

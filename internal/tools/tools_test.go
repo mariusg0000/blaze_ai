@@ -168,16 +168,16 @@ func TestShellFormatArgsFallback(t *testing.T) {
 	}
 }
 
-// TestShellFormatArgsFallbackTruncated verifies shell fallback is truncated at 80 chars.
+// TestShellFormatArgsFallbackTruncated verifies shell fallback is truncated at 50 chars.
 func TestShellFormatArgsFallbackTruncated(t *testing.T) {
 	s := NewShellTool(platform.Linux)
 	longCmd := "echo "
-	for i := 0; i < 90; i++ {
+	for i := 0; i < 60; i++ {
 		longCmd += "x"
 	}
 	result := s.FormatArgs(json.RawMessage(`{"command":"` + longCmd + `"}`))
-	if len(result) > 80 {
-		t.Errorf("FormatArgs() len = %d, want ≤ 80", len(result))
+	if len(result) > 50 {
+		t.Errorf("FormatArgs() len = %d, want ≤ 50", len(result))
 	}
 	if !strings.HasSuffix(result, "...") {
 		t.Errorf("FormatArgs() = %q, want truncated with '...'", result)

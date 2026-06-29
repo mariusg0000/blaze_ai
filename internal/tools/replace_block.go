@@ -57,12 +57,12 @@ func (t *ReplaceBlockTool) FormatArgs(args json.RawMessage) string {
 		return "Editing file"
 	}
 	if path == "" {
-		return truncateDisplay("Editing: "+purpose, 80)
+		return "Editing: " + purpose
 	}
 	if purpose == "" {
-		return truncateDisplay("Editing: "+path, 80)
+		return truncateDisplay("Editing: "+path, 50)
 	}
-	return truncateDisplay("Editing: "+path+" — "+purpose, 80)
+	return "Editing: " + path + " — " + purpose
 }
 
 // Description returns the human-readable description for the LLM.

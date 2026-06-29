@@ -65,7 +65,7 @@ func (s *ShellTool) FormatArgs(args json.RawMessage) string {
 	if parsed.Command == "" {
 		return ""
 	}
-	return truncateDisplay(parsed.Command, 80)
+	return truncateDisplay(parsed.Command, 50)
 }
 
 // Description returns the human-readable description for the LLM.
