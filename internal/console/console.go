@@ -33,11 +33,12 @@ const (
 	colorGreen       = "\033[32m"
 	colorBrightGreen = "\033[1;32m"
 	colorLightGray   = "\033[37m"
-	colorGray        = "\033[90m"
 	colorBlue        = "\033[34m"
 	colorPurple      = "\033[35m"
 	colorOrange      = "\033[33m"
 	colorBrightBlue  = "\033[1;34m"
+	colorReasoning   = "\033[38;5;244m"
+	colorCtx         = "\033[1;96m"
 )
 
 // slashCmd holds a slash command and its description for the startup splash.
@@ -52,6 +53,7 @@ var slashCommands = []slashCmd{
 	{"/cd <path>", "change working folder"},
 	{"/clear", "clear current session"},
 	{"/new", "start a clean session"},
+	{"/show-reasoning", "toggle reasoning display"},
 	{"/exit", "close session cleanly"},
 }
 
@@ -69,12 +71,11 @@ type Console struct {
 	contentStarted   bool
 	contentBuffer    string
 	inCodeBlock      bool
-	inToolGroup      bool
-	needContentLabel bool
 	lastPromptTokens int
 	lineOpen         bool
 	turnAborting     atomic.Bool
 	lastToolArgs     string
+	reasoningStarted bool
 }
 
 // NewConsole creates a Console for terminal interaction.
@@ -84,13 +85,11 @@ type Console struct {
 // RETURNS: *Console — ready to run.
 func NewConsole(agent *runtime.Agent) *Console {
 	return &Console{
-		Out:              os.Stdout,
-		In:               os.Stdin,
-		Agent:            agent,
-		Reader:           NewReader(os.Stdin, true),
-		lineOpen:         false,
-		inToolGroup:      false,
-		needContentLabel: true,
+		Out:     os.Stdout,
+		In:      os.Stdin,
+		Agent:   agent,
+		Reader:  NewReader(os.Stdin, true),
+		lineOpen: false,
 	}
 }
 
@@ -99,6 +98,10 @@ func NewConsole(agent *runtime.Agent) *Console {
 // WHAT:  Forces separators and tool markers onto a fresh line after streamed content.
 func (c *Console) ensureLineBreakBeforeBlock() {
 	c.flushPendingContent()
+	if c.reasoningStarted {
+		fmt.Fprintln(c.Out)
+		c.reasoningStarted = false
+	}
 	if c.lineOpen {
 		fmt.Fprintln(c.Out)
 		c.lineOpen = false
@@ -116,28 +119,6 @@ func (c *Console) flushPendingContent() {
 	c.contentBuffer = ""
 }
 
-// openToolGroup prints the separator that starts a consecutive group of tool calls.
-//
-// WHAT:  Visually delimits the beginning of a tool batch.
-func (c *Console) openToolGroup() {
-	if c.inToolGroup {
-		return
-	}
-	c.divider("tools", colorGreen, true)
-	c.inToolGroup = true
-}
-
-// closeToolGroup prints the separator that ends a consecutive group of tool calls.
-//
-// WHAT:  Visually delimits the end of a tool batch.
-func (c *Console) closeToolGroup() {
-	if !c.inToolGroup {
-		return
-	}
-	c.ctxSeparator(colorGreen)
-	c.inToolGroup = false
-}
-
 // color wraps text with an ANSI color code.
 //
 // WHAT:  Applies ANSI color to text.
@@ -150,40 +131,6 @@ func (c *Console) color(colorCode, text string) string {
 // bold wraps text with bold ANSI code.
 func (c *Console) bold(text string) string {
 	return colorBold + text + colorReset
-}
-
-// divider prints a unified console divider with an optional label.
-//
-// WHAT:  Renders the single visual separator style used across tools and context footer.
-func (c *Console) divider(label, labelColor string, boldLabel bool) {
-	c.ensureLineBreakBeforeBlock()
-	char := "─"
-	if label == "" {
-		line := strings.Repeat(char, dividerWidth)
-		lineCol := colorLightGray
-		if labelColor != "" {
-			lineCol = labelColor
-		}
-		fmt.Fprintln(c.Out, c.color(lineCol, line))
-		return
-	}
-	remainder := dividerWidth - len(label) - 1
-	if remainder < 1 {
-		remainder = 1
-	}
-	tail := strings.Repeat(char, remainder)
-	styledLabel := label
-	if boldLabel {
-		styledLabel = c.bold(styledLabel)
-	}
-	if labelColor != "" {
-		styledLabel = c.color(labelColor, styledLabel)
-	}
-	lineColor := colorLightGray
-	if labelColor != "" {
-		lineColor = labelColor
-	}
-	fmt.Fprintf(c.Out, "%s %s\n", styledLabel, c.color(lineColor, tail))
 }
 
 // responseSeparator prints the separator shown after the assistant finishes responding.
@@ -219,17 +166,6 @@ func (c *Console) responseSeparator() {
 	fmt.Fprintln(c.Out, c.color(colorBrightBlue, topLine))
 	fmt.Fprintln(c.Out, c.color(colorBrightBlue, midLine))
 	fmt.Fprintln(c.Out, c.color(colorBrightBlue, botLine))
-}
-
-// ctxSeparator prints the prompt-token separator using the requested color.
-//
-// WHAT:  Renders the same context-size label for tool-group and end-of-turn separators.
-// PARAMS: color — ANSI color to use for the separator label and line.
-func (c *Console) ctxSeparator(color string) {
-	if c.lastPromptTokens <= 0 {
-		return
-	}
-	c.divider("ctx "+formatCompactInt(c.lastPromptTokens), color, false)
 }
 
 // formatCompactInt returns a shorter human-readable token count such as 12.3k.
@@ -386,6 +322,25 @@ func (c *Console) OnUsage(promptTokens int) {
 	c.lastPromptTokens = promptTokens
 }
 
+// OnReasoning is called for each streaming reasoning chunk from the LLM.
+//
+// WHAT:  Streams LLM reasoning/thinking blocks in muted color.
+// PARAMS: delta — the reasoning text chunk from the LLM.
+func (c *Console) OnReasoning(delta string) {
+	if c.turnAborting.Load() {
+		return
+	}
+	if !c.reasoningStarted {
+		c.ensureLineBreakBeforeBlock()
+		fmt.Fprint(c.Out, c.color(colorReasoning, "🧠 "))
+		c.reasoningStarted = true
+	}
+	fmt.Fprint(c.Out, c.color(colorReasoning, delta))
+	if bw, ok := c.Out.(*bufio.Writer); ok {
+		bw.Flush()
+	}
+}
+
 // OnContent is called for each streaming text chunk from the LLM.
 //
 // WHAT:  Streams LLM text content to the console.
@@ -394,16 +349,14 @@ func (c *Console) OnContent(delta string) {
 	if c.turnAborting.Load() {
 		return
 	}
-	if c.inToolGroup {
-		c.closeToolGroup()
-		c.needContentLabel = true
+	if c.reasoningStarted {
+		fmt.Fprintln(c.Out)
+		c.reasoningStarted = false
 	}
 	if !c.contentStarted {
 		c.contentStarted = true
-	}
-	if c.needContentLabel {
+		c.ensureLineBreakBeforeBlock()
 		fmt.Fprint(c.Out, c.color(colorOrange, c.bold("[BLAZE] ")))
-		c.needContentLabel = false
 	}
 	c.contentBuffer += delta
 	for {
@@ -431,12 +384,7 @@ func (c *Console) OnToolCall(name string, args string) {
 	if c.turnAborting.Load() {
 		return
 	}
-	if !c.contentStarted {
-		c.contentStarted = true
-	}
-	if !c.inToolGroup {
-		c.openToolGroup()
-	}
+	c.ensureLineBreakBeforeBlock()
 	c.lastToolArgs = args
 
 	if args != "" {
@@ -491,12 +439,17 @@ func (c *Console) OnToolResult(name string, result string) {
 
 	switch badge {
 	case "DONE":
+		ctx := ""
+		if c.lastPromptTokens > 0 {
+			ctx = "  " + c.color(colorCtx, "CTX: "+formatCompactInt(c.lastPromptTokens))
+		}
 		if args != "" {
-			fmt.Fprintf(c.Out, " %s\n", c.color(colorBrightGreen, "✔️"))
+			fmt.Fprintf(c.Out, " %s%s\n", c.color(colorBrightGreen, "✔️"), ctx)
 		} else {
-			fmt.Fprintf(c.Out, "%s %s\n",
+			fmt.Fprintf(c.Out, "%s %s%s\n",
 				icon,
 				c.color(colorBrightGreen, "✔️"),
+				ctx,
 			)
 		}
 	case "ERROR":
@@ -507,10 +460,10 @@ func (c *Console) OnToolResult(name string, result string) {
 			}
 		}
 		if args != "" {
-			fmt.Fprintf(c.Out, " %s %s\n",
-				c.color(colorCode, "✖️"),
-				c.color(colorCode, content),
-			)
+			fmt.Fprintf(c.Out, " %s\n", c.color(colorCode, "✖️"))
+			if content != "" {
+				fmt.Fprintf(c.Out, "  %s\n", c.color(colorCode, content))
+			}
 		} else {
 			fmt.Fprintf(c.Out, "%s %s %s\n",
 				icon,
@@ -523,10 +476,10 @@ func (c *Console) OnToolResult(name string, result string) {
 			content = strings.ReplaceAll(content, "\n", " ")
 		}
 		if args != "" {
-			fmt.Fprintf(c.Out, " %s %s\n",
-				c.color(colorCode, "⏱"),
-				c.color(colorCode, content),
-			)
+			fmt.Fprintf(c.Out, " %s\n", c.color(colorCode, "⏱"))
+			if content != "" {
+				fmt.Fprintf(c.Out, "  %s\n", c.color(colorCode, content))
+			}
 		} else {
 			fmt.Fprintf(c.Out, "%s %s %s\n",
 				icon,
@@ -957,8 +910,6 @@ func (c *Console) runTTY() error {
 			}
 		}
 
-		fmt.Fprintln(c.Out)
-
 		c.resetTurnState()
 
 		interrupts := make(chan os.Signal, 1)
@@ -973,7 +924,6 @@ func (c *Console) runTTY() error {
 		c.flushPendingContent()
 		fmt.Fprintln(c.Out)
 		c.lineOpen = false
-		c.closeToolGroup()
 		c.responseSeparator()
 	}
 }
@@ -983,10 +933,9 @@ func (c *Console) resetTurnState() {
 	c.contentStarted = false
 	c.contentBuffer = ""
 	c.inCodeBlock = false
-	c.inToolGroup = false
-	c.needContentLabel = true
 	c.lastPromptTokens = 0
 	c.lineOpen = false
+	c.reasoningStarted = false
 }
 
 // runAgentTurn executes one agent turn with SIGINT-only abort.
@@ -1023,7 +972,6 @@ func (c *Console) abortCurrentTurn(cancel context.CancelFunc) {
 		fmt.Fprintln(c.Out)
 		c.lineOpen = false
 	}
-	c.closeToolGroup()
 	fmt.Fprintln(c.Out, c.color(colorRed, c.bold("[ABORTED] current turn cancelled")))
 }
 
@@ -1073,6 +1021,17 @@ func (c *Console) handleCommand(input string) (bool, bool, error) {
 			return true, false, fmt.Errorf("cannot reset session: %w", err)
 		}
 		fmt.Fprintln(c.Out, "Session cleared.")
+		return true, false, nil
+	case "/show-reasoning":
+		c.Agent.Config.ShowReasoning = !c.Agent.Config.ShowReasoning
+		if err := c.Agent.Config.Save(); err != nil {
+			return true, false, fmt.Errorf("cannot save config: %w", err)
+		}
+		state := "disabled"
+		if c.Agent.Config.ShowReasoning {
+			state = "enabled"
+		}
+		fmt.Fprintf(c.Out, "Reasoning display %s\n", state)
 		return true, false, nil
 	default:
 		// Unknown slash command — pass to agent as normal message.

@@ -18,7 +18,7 @@ import (
 
 // StreamClient is the narrow provider surface needed for one-shot consultation.
 type StreamClient interface {
-	Stream(ctx context.Context, messages []session.Message, toolDefs []tools.OpenAITool, onContent func(string)) (*provider.Response, error)
+	Stream(ctx context.Context, messages []session.Message, toolDefs []tools.OpenAITool, onContent func(string), onReasoning func(string)) (*provider.Response, error)
 }
 
 // ClientFactory builds a provider client for a concrete provider/model_name identifier.
@@ -81,7 +81,7 @@ func (c *Caller) Call(ctx context.Context, req Request) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	resp, err := client.Stream(ctx, buildMessages(req), nil, nil)
+	resp, err := client.Stream(ctx, buildMessages(req), nil, nil, nil)
 	if err != nil {
 		return "", fmt.Errorf("secondary LLM call failed: %w", err)
 	}

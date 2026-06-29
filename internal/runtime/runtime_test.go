@@ -46,6 +46,7 @@ func (h *mockHandler) OnToolResult(name string, result string) {
 	h.toolResults = append(h.toolResults, name+": "+result)
 }
 func (h *mockHandler) OnUsage(promptTokens int)                          { h.usages = append(h.usages, promptTokens) }
+func (h *mockHandler) OnReasoning(delta string)                          {}
 func (h *mockHandler) RequestSudoApproval(command string) (bool, string) { return false, "" }
 
 // setupAgent creates a fully wired Agent with a mock SSE server.

@@ -19,7 +19,7 @@ type fakeStreamClient struct {
 	toolDefs []tools.OpenAITool
 }
 
-func (f *fakeStreamClient) Stream(ctx context.Context, messages []session.Message, toolDefs []tools.OpenAITool, onContent func(string)) (*provider.Response, error) {
+func (f *fakeStreamClient) Stream(ctx context.Context, messages []session.Message, toolDefs []tools.OpenAITool, onContent func(string), onReasoning func(string)) (*provider.Response, error) {
 	f.messages = messages
 	f.toolDefs = toolDefs
 	return f.resp, f.err

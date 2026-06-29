@@ -126,6 +126,7 @@ type Config struct {
 	StripReasoning StripReasoning `json:"stripReasoning"`
 	LastModel      string         `json:"last_model,omitempty"`
 	HelperSetup    HelperSetup    `json:"helperSetup,omitempty"`
+	ShowReasoning  bool           `json:"showReasoning"`
 }
 
 // DefaultCompaction returns the pre-filled compaction thresholds from spec 05.
@@ -169,6 +170,7 @@ func Default() *Config {
 		Roles:          Roles{},
 		Compaction:     DefaultCompaction(),
 		StripReasoning: DefaultStripReasoning(),
+		ShowReasoning:  false,
 		HelperSetup: HelperSetup{
 			Dismissed: false,
 			Declined:  []string{},

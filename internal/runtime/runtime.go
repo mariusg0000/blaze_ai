@@ -46,6 +46,8 @@ type Handler interface {
 	OnToolResult(name string, result string)
 	// OnUsage is called after each provider response with prompt token count.
 	OnUsage(promptTokens int)
+	// OnReasoning is called for each streaming reasoning/thinking chunk from the LLM.
+	OnReasoning(delta string)
 
 	// RequestSudoApproval is called before executing a shell command that requires sudo.
 	// The handler prompts the user for confirmation, then reads a hidden password if approved.
@@ -276,7 +278,11 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 
 		// Stream LLM response.
 		toolDefs := tools.AllToOpenAI(a.Tools)
-		resp, err := a.Provider.Stream(ctx, messages, toolDefs, a.Handler.OnContent)
+		var onReasoning func(string)
+		if a.Config.ShowReasoning {
+			onReasoning = a.Handler.OnReasoning
+		}
+		resp, err := a.Provider.Stream(ctx, messages, toolDefs, a.Handler.OnContent, onReasoning)
 		if err != nil && !errors.Is(err, provider.ErrAborted) {
 			return fmt.Errorf("LLM stream failed: %w", err)
 		}

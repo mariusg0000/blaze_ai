@@ -46,17 +46,17 @@ func (h *mockHandler) OnContent(delta string)                            {}
 func (h *mockHandler) OnToolCall(name string, args string)               {}
 func (h *mockHandler) OnToolResult(name string, result string)           {}
 func (h *mockHandler) OnUsage(promptTokens int)                          {}
+func (h *mockHandler) OnReasoning(delta string)                          {}
 func (h *mockHandler) RequestSudoApproval(command string) (bool, string) { return false, "" }
 
 // newConsole creates a Console with a buffer for output in TTY mode.
 func newConsole(agent *runtime.Agent) (*Console, *bytes.Buffer) {
 	out := &bytes.Buffer{}
 	return &Console{
-		Out:              out,
-		In:               strings.NewReader(""),
-		Agent:            agent,
-		Reader:           NewReader(strings.NewReader(""), true),
-		needContentLabel: true,
+		Out:    out,
+		In:     strings.NewReader(""),
+		Agent:  agent,
+		Reader: NewReader(strings.NewReader(""), true),
 	}, out
 }
 
@@ -259,8 +259,8 @@ func TestOnToolCall(t *testing.T) {
 		t.Errorf("lastToolArgs = %q, want 'inspect package.json scripts'", c.lastToolArgs)
 	}
 	plain := stripANSICodes(out.String())
-	if !strings.Contains(plain, "tools ") {
-		t.Errorf("output missing tools divider header: %q", out.String())
+	if !strings.Contains(plain, "💻 inspect package.json scripts …") {
+		t.Errorf("output missing tool purpose line: %q", out.String())
 	}
 }
 
@@ -282,8 +282,8 @@ func TestOnToolCallAfterContent(t *testing.T) {
 	c.OnToolCall("shell", "ls")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nok\n")
 	plain := stripANSICodes(out.String())
-	if !strings.Contains(plain, "hello\ntools ") {
-		t.Errorf("output missing newline before tool call block: %q", out.String())
+	if !strings.Contains(plain, "hello\n💻 ls …") {
+		t.Errorf("output missing newline before tool call: %q", out.String())
 	}
 }
 
@@ -358,27 +358,26 @@ func TestOnToolResultGenericError(t *testing.T) {
 	}
 }
 
-// TestOnToolRoundTripAfterContent verifies the full tool block: content, tool, result, separator.
+// TestOnToolRoundTripAfterContent verifies content, tool call, and CTX on result line.
 func TestOnToolRoundTripAfterContent(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnContent("hello")
 	c.OnUsage(11186)
 	c.OnToolCall("shell", "inspect package.json scripts")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nok\n")
-	c.closeToolGroup()
 	plain := stripANSICodes(out.String())
-	if !strings.Contains(plain, "hello\ntools ") {
-		t.Errorf("tool call block not separated from content: %q", plain)
+	if !strings.Contains(plain, "[BLAZE] hello") {
+		t.Errorf("content should show [BLAZE] label: %q", plain)
 	}
 	if !strings.Contains(plain, "💻 inspect package.json scripts … ✔️") {
 		t.Errorf("tool response formatting unexpected: %q", plain)
 	}
-	if !strings.Contains(plain, "✔️\nctx 11k") {
-		t.Errorf("tool group not closed with ctx separator: %q", plain)
+	if !strings.Contains(plain, "✔️  CTX: 11k") {
+		t.Errorf("CTX should appear on same line after checkmark: %q", plain)
 	}
 }
 
-// TestToolGroupConsecutive verifies multiple consecutive tools share one group.
+// TestToolGroupConsecutive verifies multiple consecutive tools each show CTX inline.
 func TestToolGroupConsecutive(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnUsage(11186)
@@ -386,13 +385,12 @@ func TestToolGroupConsecutive(t *testing.T) {
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\na\n")
 	c.OnToolCall("shell", "inspect config")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nb\n")
-	c.closeToolGroup()
 	plain := stripANSICodes(out.String())
-	if strings.Count(plain, "tools ") != 1 {
-		t.Errorf("expected one tools header, got %q", plain)
+	if strings.Contains(plain, "tools ") {
+		t.Errorf("expected no tools header, got %q", plain)
 	}
-	if strings.Count(plain, "ctx 11k") != 1 {
-		t.Errorf("expected one ctx separator, got %d: %q", strings.Count(plain, "ctx 11k"), plain)
+	if strings.Count(plain, "CTX: 11k") != 2 {
+		t.Errorf("expected CTX after each tool, got %d: %q", strings.Count(plain, "CTX: 11k"), plain)
 	}
 	if !strings.Contains(plain, "💻 list root … ✔️") {
 		t.Errorf("first tool call missing: %q", plain)
@@ -402,7 +400,7 @@ func TestToolGroupConsecutive(t *testing.T) {
 	}
 }
 
-// TestToolGroupInterruptedByContent verifies content between tools closes and reopens the group.
+// TestToolGroupInterruptedByContent verifies content between tools shows [BLAZE] on new line.
 func TestToolGroupInterruptedByContent(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnUsage(11186)
@@ -411,19 +409,21 @@ func TestToolGroupInterruptedByContent(t *testing.T) {
 	c.OnContent("continuing")
 	c.OnToolCall("shell", "inspect config")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nb\n")
-	c.closeToolGroup()
 	plain := stripANSICodes(out.String())
-	if strings.Count(plain, "tools ") != 2 {
-		t.Errorf("expected 2 tools headers, got %d: %q", strings.Count(plain, "tools "), plain)
+	if strings.Contains(plain, "tools ") {
+		t.Errorf("expected no tools header, got %q", plain)
 	}
-	if strings.Count(plain, "ctx 11k") != 2 {
-		t.Errorf("expected 2 ctx separators, got %d: %q", strings.Count(plain, "ctx 11k"), plain)
-	}
-	if !strings.Contains(plain, "continuing") {
-		t.Errorf("intermediate content missing: %q", plain)
+	if strings.Count(plain, "CTX: 11k") != 2 {
+		t.Errorf("expected CTX after each tool, got %d: %q", strings.Count(plain, "CTX: 11k"), plain)
 	}
 	if !strings.Contains(plain, "[BLAZE] continuing") {
-		t.Errorf("content after tool group should restart with [BLAZE]: %q", plain)
+		t.Errorf("content between tools should show [BLAZE] label: %q", plain)
+	}
+	if !strings.Contains(plain, "💻 list root … ✔️") {
+		t.Errorf("first tool call missing: %q", plain)
+	}
+	if !strings.Contains(plain, "💻 inspect config … ✔️") {
+		t.Errorf("second tool call missing: %q", plain)
 	}
 }
 

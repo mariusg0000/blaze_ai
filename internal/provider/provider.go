@@ -215,10 +215,11 @@ type streamChunk struct {
 // HOW:   POSTs to /chat/completions with stream=true, reads SSE line by line, parses JSON chunks.
 // PARAMS: messages — the full prompt message array; toolDefs — OpenAI tool definitions or nil;
 //
-//	onContent — callback called for each text delta (may be nil).
+//	onContent — callback called for each text delta (may be nil);
+//	onReasoning — callback called for each reasoning delta (may be nil).
 //
 // RETURNS: *Response — accumulated content, tool calls, and usage; error on HTTP or parse failure.
-func (c *Client) Stream(ctx context.Context, messages []session.Message, toolDefs []tools.OpenAITool, onContent func(string)) (*Response, error) {
+func (c *Client) Stream(ctx context.Context, messages []session.Message, toolDefs []tools.OpenAITool, onContent func(string), onReasoning func(string)) (*Response, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -257,7 +258,7 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, toolDef
 		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	return parseSSEStream(ctx, resp.Body, onContent)
+	return parseSSEStream(ctx, resp.Body, onContent, onReasoning)
 }
 
 // parseSSEStream reads an SSE stream, parses JSON chunks, and accumulates the response.
@@ -265,9 +266,12 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, toolDef
 // WHAT:  Parses the Server-Sent Events stream from the provider.
 // WHY:   OpenAI-compatible streaming uses SSE with "data: " prefixed JSON lines.
 // HOW:   Reads line by line, skips non-data lines, parses JSON, accumulates content and tool calls.
-// PARAMS: reader — the response body; onContent — callback for text deltas (may be nil).
+// PARAMS: reader — the response body; onContent — callback for text deltas (may be nil);
+//
+//	onReasoning — callback for reasoning deltas (may be nil).
+//
 // RETURNS: *Response — accumulated response; error on parse failure.
-func parseSSEStream(ctx context.Context, reader io.Reader, onContent func(string)) (*Response, error) {
+func parseSSEStream(ctx context.Context, reader io.Reader, onContent func(string), onReasoning func(string)) (*Response, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -309,6 +313,9 @@ func parseSSEStream(ctx context.Context, reader io.Reader, onContent func(string
 
 			if delta.ReasoningContent != "" {
 				result.Reasoning += delta.ReasoningContent
+				if onReasoning != nil {
+					onReasoning(delta.ReasoningContent)
+				}
 			}
 
 			for _, tc := range delta.ToolCalls {

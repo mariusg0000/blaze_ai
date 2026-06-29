@@ -84,7 +84,7 @@ func TestStreamReasoning(t *testing.T) {
 		t.Fatalf("NewClient() error: %v", err)
 	}
 
-	resp, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "what is the answer"}}, nil, nil)
+	resp, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "what is the answer"}}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Stream() error: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestStreamContent(t *testing.T) {
 	}
 
 	var contentDeltas []string
-	resp, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "hi"}}, nil, func(delta string) {
+	resp, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "hi"}}, nil, nil, func(delta string) {
 		contentDeltas = append(contentDeltas, delta)
 	})
 	if err != nil {
@@ -160,7 +160,7 @@ func TestStreamToolCall(t *testing.T) {
 		t.Fatalf("NewClient() error: %v", err)
 	}
 
-	resp, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "list files"}}, nil, nil)
+	resp, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "list files"}}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Stream() error: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestStreamErrorStatus(t *testing.T) {
 		t.Fatalf("NewClient() error: %v", err)
 	}
 
-	_, err = client.Stream(context.Background(), []session.Message{{Role: "user", Content: "hi"}}, nil, nil)
+	_, err = client.Stream(context.Background(), []session.Message{{Role: "user", Content: "hi"}}, nil, nil, nil)
 	if err == nil {
 		t.Fatal("Stream() expected error for 401, got nil")
 	}
@@ -231,7 +231,7 @@ func TestStreamMultipleToolCalls(t *testing.T) {
 		t.Fatalf("NewClient() error: %v", err)
 	}
 
-	resp, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "do two things"}}, nil, nil)
+	resp, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "do two things"}}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Stream() error: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestStreamNoUsage(t *testing.T) {
 		t.Fatalf("NewClient() error: %v", err)
 	}
 
-	resp, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "hi"}}, nil, nil)
+	resp, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "hi"}}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Stream() error: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestStreamAbortReturnsPartialResponse(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	resp, err := client.Stream(ctx, []session.Message{{Role: "user", Content: "hi"}}, nil, func(delta string) {
+	resp, err := client.Stream(ctx, []session.Message{{Role: "user", Content: "hi"}}, nil, nil, func(delta string) {
 		if delta == "Hello" {
 			cancel()
 		}
@@ -326,7 +326,7 @@ func TestStreamEmpty(t *testing.T) {
 		t.Fatalf("NewClient() error: %v", err)
 	}
 
-	resp, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "hi"}}, nil, nil)
+	resp, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "hi"}}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Stream() error: %v", err)
 	}

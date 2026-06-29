@@ -285,7 +285,7 @@ func (m *Manager) summarize(sessionFolder string, pruned []session.Message) (str
 			{Role: "system", Content: summaryPrompt},
 			{Role: "user", Content: "Summarize the above conversation segment."},
 		},
-		nil, nil,
+		nil, nil, nil,
 	)
 	if err != nil {
 		return "", fmt.Errorf("summarization LLM call failed: %w", err)
