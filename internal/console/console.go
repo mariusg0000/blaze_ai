@@ -462,6 +462,10 @@ func toolEmoji(name string) string {
 		return "📤"
 	case "replace_block":
 		return "📝"
+	case "run_skill":
+		return "🚀"
+	case "ask_a_friend":
+		return "🧠"
 	default:
 		return "🔧"
 	}
@@ -471,7 +475,7 @@ func toolEmoji(name string) string {
 // Prints a single line: tool emoji + purpose + status symbol.
 // Appends the status to the pending line printed by OnToolCall to avoid broken output
 // when the purpose wraps across multiple terminal lines.
-// Success: ✓. Error: ✗ <message>. Timeout: ⏱ <message>.
+// Success: ✔️. Error: ✖️ <message>. Timeout: ⏱ <message>.
 //
 // WHAT:  Displays tool result inline with the deferred tool call line.
 // PARAMS: name — tool name; result — the raw tool output.
@@ -488,11 +492,11 @@ func (c *Console) OnToolResult(name string, result string) {
 	switch badge {
 	case "DONE":
 		if args != "" {
-			fmt.Fprintf(c.Out, " %s\n", c.color(colorBrightGreen, "✓"))
+			fmt.Fprintf(c.Out, " %s\n", c.color(colorBrightGreen, "✔️"))
 		} else {
 			fmt.Fprintf(c.Out, "%s %s\n",
 				icon,
-				c.color(colorBrightGreen, "✓"),
+				c.color(colorBrightGreen, "✔️"),
 			)
 		}
 	case "ERROR":
@@ -504,13 +508,13 @@ func (c *Console) OnToolResult(name string, result string) {
 		}
 		if args != "" {
 			fmt.Fprintf(c.Out, " %s %s\n",
-				c.color(colorCode, "✗"),
+				c.color(colorCode, "✖️"),
 				c.color(colorCode, content),
 			)
 		} else {
 			fmt.Fprintf(c.Out, "%s %s %s\n",
 				icon,
-				c.color(colorCode, "✗"),
+				c.color(colorCode, "✖️"),
 				c.color(colorCode, content),
 			)
 		}

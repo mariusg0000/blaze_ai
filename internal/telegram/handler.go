@@ -431,6 +431,10 @@ func toolEmoji(name string) string {
 		return "📤"
 	case "replace_block":
 		return "📝"
+	case "run_skill":
+		return "🚀"
+	case "ask_a_friend":
+		return "🧠"
 	default:
 		return "🔧"
 	}

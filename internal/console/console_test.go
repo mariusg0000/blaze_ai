@@ -42,10 +42,10 @@ func mockAgent(t *testing.T) *runtime.Agent {
 // mockHandler is a no-op handler for agent construction.
 type mockHandler struct{}
 
-func (h *mockHandler) OnContent(delta string)                  {}
-func (h *mockHandler) OnToolCall(name string, args string)     {}
-func (h *mockHandler) OnToolResult(name string, result string) {}
-func (h *mockHandler) OnUsage(promptTokens int)                {}
+func (h *mockHandler) OnContent(delta string)                            {}
+func (h *mockHandler) OnToolCall(name string, args string)               {}
+func (h *mockHandler) OnToolResult(name string, result string)           {}
+func (h *mockHandler) OnUsage(promptTokens int)                          {}
 func (h *mockHandler) RequestSudoApproval(command string) (bool, string) { return false, "" }
 
 // newConsole creates a Console with a buffer for output in TTY mode.
@@ -293,7 +293,7 @@ func TestOnToolResultSuccess(t *testing.T) {
 	c.OnToolCall("shell", "inspect package.json scripts")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nhi\n")
 	plain := stripANSICodes(out.String())
-	if !strings.Contains(plain, "💻 inspect package.json scripts … ✓") {
+	if !strings.Contains(plain, "💻 inspect package.json scripts … ✔️") {
 		t.Errorf("output missing appended success line: %q", plain)
 	}
 	if strings.Contains(plain, "exit_code") {
@@ -311,7 +311,7 @@ func TestOnToolResultSuccessTTY(t *testing.T) {
 	if strings.Contains(output, "\r\033[K") {
 		t.Errorf("output should not clear and redraw the tool line: %q", output)
 	}
-	if !strings.Contains(plain, "💻 inspect package.json scripts … ✓\n") {
+	if !strings.Contains(plain, "💻 inspect package.json scripts … ✔️\n") {
 		t.Errorf("TTY output missing appended success status: %q", plain)
 	}
 	if strings.Count(plain, "inspect package.json scripts") != 1 {
@@ -319,14 +319,14 @@ func TestOnToolResultSuccessTTY(t *testing.T) {
 	}
 }
 
-// TestOnToolResultErrorExitCode verifies non-zero shell exit shows ✗ with message.
+// TestOnToolResultErrorExitCode verifies non-zero shell exit shows ✖️ with message.
 func TestOnToolResultErrorExitCode(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolCall("shell", "inspect config")
 	c.OnToolResult("shell", "exit_code: 1\nstderr:\nfile not found\n")
 	output := out.String()
-	if !strings.Contains(output, "✗") {
-		t.Errorf("output missing ✗ badge: %q", output)
+	if !strings.Contains(output, "✖️") {
+		t.Errorf("output missing ✖️ badge: %q", output)
 	}
 	if !strings.Contains(output, "file not found") {
 		t.Errorf("output missing stderr content: %q", output)
@@ -344,14 +344,14 @@ func TestOnToolResultTimeout(t *testing.T) {
 	}
 }
 
-// TestOnToolResultGenericError verifies error messages display ✗ badge.
+// TestOnToolResultGenericError verifies error messages display ✖️ badge.
 func TestOnToolResultGenericError(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolCall("shell", "run unknown command")
 	c.OnToolResult("shell", "error: unknown tool: x")
 	output := out.String()
-	if !strings.Contains(output, "✗") {
-		t.Errorf("output missing ✗ badge: %q", output)
+	if !strings.Contains(output, "✖️") {
+		t.Errorf("output missing ✖️ badge: %q", output)
 	}
 	if !strings.Contains(output, "unknown tool") {
 		t.Errorf("output missing error content: %q", output)
@@ -370,10 +370,10 @@ func TestOnToolRoundTripAfterContent(t *testing.T) {
 	if !strings.Contains(plain, "hello\ntools ") {
 		t.Errorf("tool call block not separated from content: %q", plain)
 	}
-	if !strings.Contains(plain, "💻 inspect package.json scripts … ✓") {
+	if !strings.Contains(plain, "💻 inspect package.json scripts … ✔️") {
 		t.Errorf("tool response formatting unexpected: %q", plain)
 	}
-	if !strings.Contains(plain, "✓\nctx 11k") {
+	if !strings.Contains(plain, "✔️\nctx 11k") {
 		t.Errorf("tool group not closed with ctx separator: %q", plain)
 	}
 }
@@ -394,10 +394,10 @@ func TestToolGroupConsecutive(t *testing.T) {
 	if strings.Count(plain, "ctx 11k") != 1 {
 		t.Errorf("expected one ctx separator, got %d: %q", strings.Count(plain, "ctx 11k"), plain)
 	}
-	if !strings.Contains(plain, "💻 list root … ✓") {
+	if !strings.Contains(plain, "💻 list root … ✔️") {
 		t.Errorf("first tool call missing: %q", plain)
 	}
-	if !strings.Contains(plain, "💻 inspect config … ✓") {
+	if !strings.Contains(plain, "💻 inspect config … ✔️") {
 		t.Errorf("second tool call missing: %q", plain)
 	}
 }
@@ -424,6 +424,26 @@ func TestToolGroupInterruptedByContent(t *testing.T) {
 	}
 	if !strings.Contains(plain, "[BLAZE] continuing") {
 		t.Errorf("content after tool group should restart with [BLAZE]: %q", plain)
+	}
+}
+
+// TestToolEmojiMapping verifies dedicated tool emoji assignments.
+func TestToolEmojiMapping(t *testing.T) {
+	tests := map[string]string{
+		"shell":         "💻",
+		"task_write":    "📋",
+		"task_read":     "📖",
+		"load_skill":    "📥",
+		"unload_skill":  "📤",
+		"replace_block": "📝",
+		"run_skill":     "🚀",
+		"ask_a_friend":  "🧠",
+		"unknown":       "🔧",
+	}
+	for name, want := range tests {
+		if got := toolEmoji(name); got != want {
+			t.Errorf("toolEmoji(%q) = %q, want %q", name, got, want)
+		}
 	}
 }
 

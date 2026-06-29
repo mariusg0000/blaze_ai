@@ -141,3 +141,23 @@ func TestToolActivitySummarizesErrors(t *testing.T) {
 		t.Fatalf("error edit missing summarized detail: %q", m.edits[0])
 	}
 }
+
+// TestToolEmojiMapping verifies Telegram tool emoji assignments match console output.
+func TestToolEmojiMapping(t *testing.T) {
+	tests := map[string]string{
+		"shell":         "💻",
+		"task_write":    "📋",
+		"task_read":     "📖",
+		"load_skill":    "📥",
+		"unload_skill":  "📤",
+		"replace_block": "📝",
+		"run_skill":     "🚀",
+		"ask_a_friend":  "🧠",
+		"unknown":       "🔧",
+	}
+	for name, want := range tests {
+		if got := toolEmoji(name); got != want {
+			t.Errorf("toolEmoji(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
