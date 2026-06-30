@@ -29,15 +29,15 @@ const (
 	colorReset       = "\033[0m"
 	colorBold        = "\033[1m"
 	colorItalic      = "\033[3m"
-	colorRed         = "\033[31m"
-	colorGreen       = "\033[32m"
-	colorBrightGreen = "\033[1;32m"
-	colorLightGray   = "\033[37m"
-	colorBlue        = "\033[34m"
-	colorPurple      = "\033[35m"
-	colorOrange      = "\033[33m"
-	colorBrightBlue  = "\033[1;34m"
-	colorReasoning   = "\033[38;5;244m"
+	colorRed         = "\033[1;31m"  // bold red
+	colorGreen       = "\033[1;32m"  // bold green
+	colorBrightGreen = "\033[1;32m"  // bold green (same as colorGreen, for checkmark)
+	colorLightGray   = "\033[37m"    // standard white (subtle separators)
+	colorBlue        = "\033[1;34m"  // bold blue
+	colorPurple      = "\033[1;35m"  // bold magenta
+	colorOrange      = "\033[1;33m"  // bold yellow
+	colorBrightBlue  = "\033[1;34m"  // bold blue (same as colorBlue, for borders)
+	colorReasoning   = "\033[90m"    // bright black (gray)
 	colorCtx         = "\033[1;96m"
 )
 
@@ -392,7 +392,7 @@ func (c *Console) OnToolCall(name string, args string) {
 	c.lastToolArgs = args
 
 	if args != "" {
-		fmt.Fprintf(c.Out, "%s %s …", c.color(colorGreen, toolEmoji(name)), args)
+		fmt.Fprintf(c.Out, "%s %s …", c.color(colorGreen, toolEmoji(name)), c.color(colorCtx, args))
 	}
 }
 
@@ -447,7 +447,7 @@ func (c *Console) OnToolResult(name string, result string) {
 	case "DONE":
 		ctx := ""
 		if c.lastPromptTokens > 0 {
-			ctx = "  " + c.color(colorCtx, "CTX: "+formatCompactInt(c.lastPromptTokens))
+			ctx = "  " + c.color(colorCtx, "CTX: "+formatCompactInt(c.lastPromptTokens)) + "\n"
 		}
 		if args != "" {
 			fmt.Fprintf(c.Out, " %s%s\n", c.color(colorBrightGreen, "✔️"), ctx)
