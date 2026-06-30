@@ -462,9 +462,9 @@ func TestSortedNames(t *testing.T) {
 // main skill file when the skill does not yet exist.
 func TestSeedBuiltinsCopiesSkillDocs(t *testing.T) {
 	templates := fstest.MapFS{
-		"customize-me.md":               &fstest.MapFile{Data: []byte("[DESCRIPTION]\nDesc.\n\n[BEHAVIOR]\nBody.")},
-		"customize-me/docs/telegram.md": &fstest.MapFile{Data: []byte("# Telegram\n")},
-		"customize-me/docs/helpers.md":  &fstest.MapFile{Data: []byte("# Helpers\n")},
+		"config-manager.md":               &fstest.MapFile{Data: []byte("[DESCRIPTION]\nDesc.\n\n[BEHAVIOR]\nBody.")},
+		"config-manager/docs/telegram.md": &fstest.MapFile{Data: []byte("# Telegram\n")},
+		"config-manager/docs/helpers.md":  &fstest.MapFile{Data: []byte("# Helpers\n")},
 	}
 
 	root := t.TempDir()
@@ -472,13 +472,13 @@ func TestSeedBuiltinsCopiesSkillDocs(t *testing.T) {
 		t.Fatalf("SeedBuiltins() unexpected error: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(root, "customize-me", "skill.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "config-manager", "skill.md")); err != nil {
 		t.Fatalf("seeded skill.md missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "customize-me", "docs", "telegram.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "config-manager", "docs", "telegram.md")); err != nil {
 		t.Fatalf("seeded telegram.md missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "customize-me", "docs", "helpers.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "config-manager", "docs", "helpers.md")); err != nil {
 		t.Fatalf("seeded helpers.md missing: %v", err)
 	}
 }
@@ -487,21 +487,21 @@ func TestSeedBuiltinsCopiesSkillDocs(t *testing.T) {
 // and no auxiliary subtree is copied over it.
 func TestSeedBuiltinsSkipsExistingSkill(t *testing.T) {
 	templates := fstest.MapFS{
-		"customize-me.md":               &fstest.MapFile{Data: []byte("[DESCRIPTION]\nBuiltin.\n\n[BEHAVIOR]\nBuiltin body.")},
-		"customize-me/docs/telegram.md": &fstest.MapFile{Data: []byte("# Telegram\n")},
+		"config-manager.md":               &fstest.MapFile{Data: []byte("[DESCRIPTION]\nBuiltin.\n\n[BEHAVIOR]\nBuiltin body.")},
+		"config-manager/docs/telegram.md": &fstest.MapFile{Data: []byte("# Telegram\n")},
 	}
 
 	root := t.TempDir()
-	writeCustomSkill(t, root, "customize-me", "[DESCRIPTION]\nCustom.\n\n[BEHAVIOR]\nCustom body.")
+	writeCustomSkill(t, root, "config-manager", "[DESCRIPTION]\nCustom.\n\n[BEHAVIOR]\nCustom body.")
 
 	if err := SeedBuiltins(templates, root); err != nil {
 		t.Fatalf("SeedBuiltins() unexpected error: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(root, "customize-me", "docs", "telegram.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(root, "config-manager", "docs", "telegram.md")); !os.IsNotExist(err) {
 		t.Fatalf("expected docs subtree to stay absent for existing skill, err=%v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(root, "customize-me", "skill.md"))
+	data, err := os.ReadFile(filepath.Join(root, "config-manager", "skill.md"))
 	if err != nil {
 		t.Fatalf("cannot read existing skill: %v", err)
 	}

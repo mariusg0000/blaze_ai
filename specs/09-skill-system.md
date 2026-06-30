@@ -102,8 +102,8 @@ seeded skill and restarting restores the original.
 
 Current builtins:
 - `skill-manager.md` — creates new skills, edits existing ones, validates format
-- `customize-me.md` — LLM-assisted configuration of modes, roles, providers
-- `session-retrospective.md` — retrospective session review via shell + ask_a_friend
+- `config-manager.md` — LLM-assisted configuration of modes, roles, providers
+- `audit-manager.md` — retrospective session review via shell + ask_a_friend
 - `specs-manager.md` — project context (map + specs) generation and maintenance
 
 ### Discovery Layout
@@ -113,7 +113,7 @@ is the skill name used in resolution.
 
 ```
 app_home/skills/
-  customize-me/
+  config-manager/
     skill.md
     docs/
       modes.md
@@ -125,7 +125,7 @@ seeding.
 
 ## Active Skills List
 
-`ActiveList` is an in-memory slice of scoped skill IDs (e.g. `"global/customize-me"`,
+`ActiveList` is an in-memory slice of scoped skill IDs (e.g. `"global/config-manager"`,
 `"project/my-tools"`). Properties:
 - Starts empty at session start
 - Modified only by `load_skill` / `unload_skill` tools
@@ -172,7 +172,7 @@ Skills appear in three places in the runtime prompt:
 Compact list in `{SKILLS_AVAILABLE}`:
 
 ```
-- customize-me = LLM-assisted configuration of modes, roles, providers
+- config-manager = LLM-assisted configuration of modes, roles, providers
 - skill-manager = create and edit skills, validate skill format
 ```
 
@@ -197,7 +197,7 @@ Only skills with `IsRunnable()` appear here.
 In `{SKILLS_ACTIVE}` when loaded:
 
 ```
-### customize-me
+### config-manager
 
 [BEHAVIOR]
 behavior content here

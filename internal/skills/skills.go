@@ -299,7 +299,7 @@ func SeedBuiltins(templatesFS fs.FS, appHomeSkillsDir string) error {
 
 // copyBuiltinSubtree copies an optional same-named subtree from the embedded builtin skill
 // templates into the seeded skill directory. It is used for auxiliary docs such as
-// customize-me/docs/*.md.
+// config-manager/docs/*.md.
 func copyBuiltinSubtree(templatesFS fs.FS, sourceDir, targetDir string) error {
 	entries, err := fs.ReadDir(templatesFS, sourceDir)
 	if err != nil {

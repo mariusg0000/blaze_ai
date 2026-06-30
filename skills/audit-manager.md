@@ -2,7 +2,7 @@
 Load when the user explicitly wants to analyze recent BlazeAI sessions for recurring issues, missing or weak skills, inefficient tool use, or cross-session workflow improvements. Use with `shell` and `ask_a_friend` to generate per-session review reports and a consolidated improvement plan. Do not use for normal code review, current-task debugging, project mapping, config editing, or direct skill creation.
 
 [BEHAVIOR]
-# Session Retrospective
+# Audit Manager
 
 ## Purpose
 
@@ -126,7 +126,7 @@ per_session_report_format:
 cross_session_output_format:
 
 ```md
-# Session Retrospective
+# Session Audit
 
 ## Priorities
 - highest payoff changes first

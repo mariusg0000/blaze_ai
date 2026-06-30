@@ -7,7 +7,7 @@
 | `firstrun.go` | Interactive setup: provider selection, API key, model retrieval, role assignment |
 | `firstrun_test.go` | Unit tests for all interactive steps |
 | `main.go` | Detection, setup trigger, startup sequence |
-| `internal/skills/customize-me.md` | Builtin skill for LLM-assisted reconfiguration |
+| `internal/skills/config-manager.md` | Builtin skill for LLM-assisted reconfiguration |
 
 ## Overview
 
@@ -150,9 +150,9 @@ Permissions:
 - `config.json`: 0600 (owner read/write only — contains API keys)
 - `modes.json`: 0644
 
-## Reconfiguration with customize-me
+## Reconfiguration with config-manager
 
-After first-run, the builtin `customize-me` skill provides LLM-assisted
+After first-run, the builtin `config-manager` skill provides LLM-assisted
 reconfiguration for:
 - Adding/modifying providers and API keys
 - Changing role assignments

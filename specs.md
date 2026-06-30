@@ -57,7 +57,7 @@
 - After provider selection: API key entry.
 - After API key: model retrieval from endpoint, selection by number.
 - Role assignment for `default`; `vision`, `summarization`, and `advisor` optional.
-- Builtin skill `customize-me` allows LLM-assisted configuration.
+- Builtin skill `config-manager` allows LLM-assisted configuration.
 
 ### App Home Bootstrap
 - Resolved from OS home directory + `blazeai` folder.
@@ -76,7 +76,7 @@
 - Format: Markdown with `[DESCRIPTION]` (required) and at least one of `[BEHAVIOR]` or `[DATA]`.
 - Discovery: builtin (embedded `skills/`), global (`app_home/skills/`), project (`<workdir>/.blazeai/skills/`). All read every build.
 - Collision: `skill-manager` forbids duplicates. If collision exists, custom wins.
-- Builtin skills: `skill-manager`, `customize-me`, `session-retrospective`, `specs-manager`.
+- Builtin skills: `skill-manager`, `config-manager`, `audit-manager`, `specs-manager`.
 - Active skills: in-memory list of names, starts empty per session, not persisted, not deduced from history.
 - `load_skill` / `unload_skill` only modify the in-memory list.
 

@@ -223,7 +223,7 @@ If promoting a project skill to global:
 
 ## Restoring Builtin Skills
 
-Builtin skills (`skill-manager`, `customize-me`, `setup_helpers`, `session-retrospective`, `specs-manager`, `telegram_bridge`) are seeded into `\{GLOBAL_SKILLS_DIR\}` on startup. To restore a builtin to its factory version, delete its folder and restart BlazeAI.
+Builtin skills (`skill-manager`, `config-manager`, `setup_helpers`, `audit-manager`, `specs-manager`, `telegram_bridge`) are seeded into `\{GLOBAL_SKILLS_DIR\}` on startup. To restore a builtin to its factory version, delete its folder and restart BlazeAI.
 
 [DATA]
 skill.format=folder/<name>/skill.md with \[DESCRIPTION\] (required) and at least one of \[BEHAVIOR\] or \[DATA\]
