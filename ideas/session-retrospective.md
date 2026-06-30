@@ -1,8 +1,8 @@
-# Session Learning Review
+# Session Retrospective
 
 ## Goal
 
-Add an explicit self-learning workflow that reviews recent BlazeAI sessions, extracts the useful execution flow, and produces actionable skill improvement reports.
+Add an explicit retrospective workflow that reviews recent BlazeAI sessions, extracts the useful execution flow, and produces actionable skill improvement reports.
 
 This should help answer:
 
@@ -18,33 +18,33 @@ This should help answer:
 
 Better candidates:
 
-- `session-learning-review`
-- `skill-learning-review`
+- `session-review`
+- `session-retrospective`
 - `self-review`
 
-Recommended name: `session-learning-review`.
+Recommended name: `session-retrospective`.
 
-It is specific enough to describe what is being reviewed and does not sound like a general-purpose learning subsystem.
+It is specific enough to describe what is being reviewed and does not sound like a general-purpose learning subsystem or an automatic training feature.
 
 ## High-Level Flow
 
 The workflow has two stages.
 
-### Stage 1: Per-Session Learning Report
+### Stage 1: Per-Session Review Report
 
 1. Scan `app_home/projects/*/sessions/` and `app_home/telegram/*/session/`.
 2. Sort sessions by recency.
 3. Take the newest 30 sessions.
 4. For each session:
-5. If `learning.md` already exists in that session folder, skip it.
+5. If `review.md` already exists in that session folder, skip it.
 6. Otherwise extract a compact transcript from `session.json`.
 7. Send the compact transcript to the summarization model.
 8. Ask the model to analyze skill usage, inefficiencies, and missing skill opportunities.
-9. Save the result as `learning.md` in that session folder.
+9. Save the result as `review.md` in that session folder.
 
 ### Stage 2: Cross-Session Improvement Plan
 
-1. Collect the newest 30 `learning.md` reports.
+1. Collect the newest 30 `review.md` reports.
 2. Send them to the current active model.
 3. Ask for a consolidated improvement plan.
 4. Present the result to the user.
@@ -137,12 +137,12 @@ Main questions:
 
 ## Per-Session Report Format
 
-Each `learning.md` should be structured and concise.
+Each `review.md` should be structured and concise.
 
 Suggested sections:
 
 ```md
-# Learning Report
+# Session Review Report
 
 ## Session
 - path
@@ -189,7 +189,7 @@ This stage should produce a user-facing plan, not direct changes.
 ## User Workflow
 
 1. User triggers the review explicitly.
-2. Runtime generates missing `learning.md` files for the newest 30 sessions.
+2. Runtime generates missing `review.md` files for the newest 30 sessions.
 3. Runtime runs the cross-session meta-review.
 4. User receives a Markdown improvement plan.
 5. User decides what should be implemented.
@@ -215,7 +215,7 @@ The exact failure policy should be chosen during implementation.
 ## Open Questions
 
 - Should the extractor be a standalone script under `app_home/scripts/` or a builtin runtime command?
-- Should `learning.md` be regenerated only manually, or also when stale?
-- Should skipped sessions with existing `learning.md` still be counted inside the newest 30?
+- Should `review.md` be regenerated only manually, or also when stale?
+- Should skipped sessions with existing `review.md` still be counted inside the newest 30?
 - Should the per-session report be strict Markdown only, or partially structured JSON inside Markdown?
 - Should memory-bank recommendations be kept distinct from skill recommendations in the final plan?

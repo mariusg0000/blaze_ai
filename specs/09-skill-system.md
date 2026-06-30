@@ -103,7 +103,7 @@ seeded skill and restarting restores the original.
 Current builtins:
 - `skill-manager.md` — creates new skills, edits existing ones, validates format
 - `customize-me.md` — LLM-assisted configuration of modes, roles, providers
-- `session-learning-review.md` — session review via shell + ask_a_friend
+- `session-retrospective.md` — retrospective session review via shell + ask_a_friend
 - `project-map.md` — project context initialization
 
 ### Discovery Layout

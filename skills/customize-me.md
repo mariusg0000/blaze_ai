@@ -54,14 +54,14 @@ Load for BlazeAI auto-configuration: providers, API keys, favorite models, role 
 ## Model Roles
 - `default`: required. Used for normal agent interaction and core runtime work.
 - `vision`: optional. Intended for vision tasks.
-- `summarization`: optional. Intended for summarization and compact review tasks. Used by `ask_a_friend(role="summarization")` for per-session learning reports.
-- `advisor`: optional. Intended for one-shot delegated analysis to a stronger model. Used by `ask_a_friend(role="advisor")` for cross-session synthesis and the `session-learning-review` meta-review step.
+- `summarization`: optional. Intended for summarization and compact review tasks. Used by `ask_a_friend(role="summarization")` for per-session review reports.
+- `advisor`: optional. Intended for one-shot delegated analysis to a stronger model. Used by `ask_a_friend(role="advisor")` for cross-session synthesis and the `session-retrospective` meta-review step.
 
 ### Role Configuration Rules
 - Each role must reference a valid `provider_name/model_name` that exists in the configured providers.
 - The same model can serve multiple roles (e.g., `summarization` and `advisor` can both point to the default model).
 - If `summarization` or `advisor` is unset, `ask_a_friend` calls targeting that role will fail with `model role is not configured: <role>`. No fallback is attempted.
-- The `session-learning-review` workflow depends on both `summarization` and `advisor`. If either is missing, the workflow stops at the first `ask_a_friend` call that needs it.
+- The `session-retrospective` workflow depends on both `summarization` and `advisor`. If either is missing, the workflow stops at the first `ask_a_friend` call that needs it.
 
 ### Recommended Configuration
 ```json

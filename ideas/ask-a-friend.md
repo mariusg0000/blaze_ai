@@ -125,7 +125,7 @@ This tool is a good fit for the planned session learning workflow.
 
 Examples:
 
-- per-session `learning.md` generation can use `role: summarization`
+- per-session `review.md` generation can use `role: summarization`
 - cross-session meta-review can use `role: friend` or the current active model
 
 That keeps the learning pipeline reusable without baking a special hardcoded LLM path for every future review feature.

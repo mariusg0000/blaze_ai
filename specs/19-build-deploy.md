@@ -82,7 +82,7 @@ matching `transport.<name>.md` file.
 |------|---------|
 | `skill-manager.md` | Manage skills listing, load, unload |
 | `customize-me.md` | LLM-assisted configuration |
-| `session-learning-review.md` | Review and consolidate session learnings |
+| `session-retrospective.md` | Review recent sessions and synthesize workflow improvements |
 
 Seeded to `app_home/skills/` at startup by `skills.SeedBuiltins()` if they
 don't already exist (user customizations take priority).
