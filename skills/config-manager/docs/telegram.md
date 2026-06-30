@@ -95,6 +95,22 @@ WantedBy=multi-user.target
 - Keep `Restart=always` so the service comes back even if the process exits after a signal.
 - The bridge retries transient `getUpdates` transport errors in-process, so resets like `connection reset by peer` should not require a manual restart.
 
+## Restart
+
+Service `blazeai-telegram@<instance>` has `Restart=always`. Best restart method **without sudo**:
+
+```sh
+kill $(pgrep -f "blazeai.*--telegram <instance>")
+```
+
+systemd respawns instantly. Verify with `pgrep -f "blazeai.*--telegram <instance>"`.
+
+If `sudo` is used, chain all commands in one call to prompt once:
+
+```sh
+sudo sh -c 'systemctl restart blazeai-telegram@<instance> && systemctl status blazeai-telegram@<instance> --no-pager'
+```
+
 ## Verification
 - Send a normal text message from the allowed chat.
 - Confirm the bot responds.
