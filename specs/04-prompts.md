@@ -8,6 +8,9 @@
 | `prompts/sysprompt.linux.md` | Linux-specific additions |
 | `prompts/sysprompt.darwin.md` | macOS-specific additions |
 | `prompts/sysprompt.windows.md` | Windows-specific additions |
+| `prompts/transport.console.md` | Console-specific formatting and interaction rules |
+| `prompts/transport.telegram.md` | Telegram-specific formatting and interaction rules |
+| `prompts/transport.web.md` | Web-specific formatting and interaction rules |
 | `internal/prompt/prompt.go` | Builder struct, Build(), BuildRuntimePart(), variable injection |
 | `internal/prompt/doc.go` | Package docs |
 | `internal/helpers/helpers.go` | Helper detection for {HOST_HELPERS_*} injection |
@@ -33,14 +36,15 @@ part (session history).
 
 1. **Universal sysprompt** — `sysprompt.md` (required, fails if missing)
 2. **OS-specific sysprompt** — `sysprompt.{os}.md` (required, fails if missing)
-3. **Host helpers advisory** — helper verification status (optional)
-4. **Host helpers available** — live-detected and available helpers (optional)
-5. **Host helpers optional** — missing helpers the user may want to install (optional)
-6. **Skills available** — descriptions of all discovered skills (optional)
-7. **Runnable skills section** — skills with [CODE] sections and their syntax (optional)
-8. **Skills active** — [BEHAVIOR] and [DATA] of loaded skills (optional)
-9. **Project map** — `project-map.md` from work folder (optional)
-10. **AGENTS.md** — project rules from work folder (optional)
+3. **Transport prompt** — `transport.{name}.md` selected by `Builder.TransportName` (required, fails if missing)
+4. **Host helpers advisory** — helper verification status (optional)
+5. **Host helpers available** — live-detected and available helpers (optional)
+6. **Host helpers optional** — missing helpers the user may want to install (optional)
+7. **Skills available** — descriptions of all discovered skills (optional)
+8. **Runnable skills section** — skills with [CODE] sections and their syntax (optional)
+9. **Skills active** — [BEHAVIOR] and [DATA] of loaded skills (optional)
+10. **Project map** — `project-map.md` from work folder (optional)
+11. **AGENTS.md** — project rules from work folder (optional)
 
 All optional sections disappear entirely if their content is empty (no empty
 placeholders or stale headers).
@@ -67,8 +71,8 @@ The universal sysprompt is an 112-line Markdown file with labelled sections and
 [ENVIRONMENT]          — OS, paths, working directory
 [SAFETY]               — destructive commands, backups, sudo, passwords
 [OS PROMPT]            — {OS_PROMPT} injection point
-[TRANSPORT]            — {TRANSPORT_CONTEXT} injection point
-[OUTPUT STYLE]         — Markdown rules, emoji guidance, structure
+[TRANSPORT]            — {TRANSPORT_PROMPT} + {TRANSPORT_CONTEXT}
+[OUTPUT STYLE]         — transport override rule + shared structure guidance
 [COMMUNICATION PROTOCOL] — message optimization rules (from AGENTS.md)
 [SKILLS]               — skill usage rules, {SKILLS_AVAILABLE}, {SKILLS_ACTIVE}, {RUNNABLE_SKILLS_SECTION}
 [SECONDARY MODEL CONSULTATION] — ask_a_friend and analyze_image guidance
@@ -88,6 +92,17 @@ Each OS file is short (~12 lines) and covers:
 - Script storage conventions
 - OS-specific notes (macOS coreutils, Windows case-insensitive paths, etc.)
 
+## Transport-Specific Prompts
+
+Each transport file is short and focused on transport-only constraints:
+
+- `transport.console.md` — terminal Markdown subset, streaming behavior, emoji guidance
+- `transport.telegram.md` — plain-text chat formatting, narrow-screen constraints, no Markdown reliance
+- `transport.web.md` — browser chat formatting without terminal assumptions
+
+Core behavior stays in `sysprompt.md`; transport files must not duplicate safety,
+tool, skill, or project rules.
+
 ## Variable Injection
 
 Variables are resolved at build time via `injectTemplateVariables()`. The function
@@ -103,6 +118,7 @@ template-specific extras.
 | `{PROJECT_SKILLS_DIR}` | `platform.ProjectDir()` + `/skills` | `"NULL"` if unresolvable |
 | `{WORK_DIR}` | `Builder.WorkDir` | `"NULL"` if empty |
 | `{OS_INFO}` | `platform.OSInfo()` | `"NULL"` if empty |
+| `{TRANSPORT_PROMPT}` | `transport.{name}.md` rendered through `Builder.TransportName` | required; build fails if missing |
 | `{TRANSPORT_CONTEXT}` | `Builder.TransportContext` | empty string (set per transport) |
 | `{SKILL_DIR}` | Skill's directory (per-skill injection) | `"NULL"` if not in skill context |
 | `{OS_PROMPT}` | OS-specific sysprompt content | injected directly |
@@ -147,19 +163,21 @@ Builder.Build(session, activeSkills)
   │    ├─ 1. readFileRequiredFS("sysprompt.md") → universal
   │    ├─ 2. readFileRequiredFS("sysprompt.{os}.md") → osPrompt
   │    │    └─ injectVariables(osPrompt)
-  │    ├─ 3. buildHostHelpersAdvisory()
-  │    ├─ 4. helpers.Detect(lookup) → statuses
+  │    ├─ 3. readFileRequiredFS("transport.{name}.md") → transportPrompt
+  │    │    └─ injectVariables(transportPrompt)
+  │    ├─ 4. buildHostHelpersAdvisory()
+  │    ├─ 5. helpers.Detect(lookup) → statuses
   │    │    └─ buildHostHelpersSection(statuses)
-  │    ├─ 5. buildSkillsSection(active)
+  │    ├─ 6. buildSkillsSection(active)
   │    │    ├─ skills.DiscoverAll(workDir) → all skills
   │    │    ├─ Format available skills list
   │    │    ├─ Format runnable skills section
   │    │    └─ Format active skills content
-  │    ├─ 6. readFileOptional("project-map.md")
-  │    ├─ 7. readFileOptional("AGENTS.md")
+  │    ├─ 7. readFileOptional("project-map.md")
+  │    ├─ 8. readFileOptional("AGENTS.md")
   │    │    └─ injectVariables(agents)
-  │    └─ 8. injectTemplateVariables(universal, {
-  │            OS_PROMPT, HOST_HELPERS_ADVISORY, HOST_HELPERS_AVAILABLE,
+  │    └─ 9. injectTemplateVariables(universal, {
+  │            OS_PROMPT, TRANSPORT_PROMPT, HOST_HELPERS_ADVISORY, HOST_HELPERS_AVAILABLE,
   │            HOST_HELPERS_OPTIONAL, SKILLS_AVAILABLE, RUNNABLE_SKILLS_SECTION,
   │            SKILLS_ACTIVE, PROJECT_MAP_CONTENT, AGENTS_CONTENT
   │         })

@@ -237,7 +237,10 @@ them in the chat UI.
 
 ## Transport Context
 
-A `TransportContext` string is injected into the prompt builder when the
+The Telegram bridge sets `Builder.TransportName = "telegram"`, which loads
+`prompts/transport.telegram.md` for chat-specific formatting rules.
+
+It also injects a `TransportContext` string with runtime details when the
 Telegram bridge starts:
 
 ```
@@ -253,7 +256,7 @@ image path, inspect it with analyze_image.
 Keep replies concise for chat and avoid unnecessary tool chatter.
 ```
 
-Injected via `{TRANSPORT_CONTEXT}` placeholder in `sysprompt.md`.
+Injected via `{TRANSPORT_CONTEXT}` alongside `{TRANSPORT_PROMPT}` in `sysprompt.md`.
 
 ## Model Management
 

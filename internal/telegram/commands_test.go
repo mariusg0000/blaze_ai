@@ -36,7 +36,7 @@ func newTelegramAgent(t *testing.T) (*runtime.Agent, *config.Config, *State, str
 		t.Fatalf("mkdir prompts: %v", err)
 	}
 	writePromptFixtures(t, promptsDir)
-	agent, err := runtime.NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), workDir, nil)
+	agent, err := runtime.NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), workDir, nil, "telegram")
 	if err != nil {
 		t.Fatalf("runtime.NewAgent() error: %v", err)
 	}
@@ -50,11 +50,20 @@ func newTelegramAgent(t *testing.T) (*runtime.Agent, *config.Config, *State, str
 
 func writePromptFixtures(t *testing.T, promptsDir string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("base\n{OS_PROMPT}\n{HOST_HELPERS_ADVISORY}\n{HOST_HELPERS_AVAILABLE}\n{HOST_HELPERS_OPTIONAL}\n{SKILLS_AVAILABLE}\n{SKILLS_ACTIVE}\n{MEMORIES_AVAILABLE}\n{MEMORIES_ACTIVE}\n{AGENTS_CONTENT}\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("base\n{OS_PROMPT}\n{TRANSPORT_PROMPT}\n{TRANSPORT_CONTEXT}\n{HOST_HELPERS_ADVISORY}\n{HOST_HELPERS_AVAILABLE}\n{HOST_HELPERS_OPTIONAL}\n{SKILLS_AVAILABLE}\n{SKILLS_ACTIVE}\n{MEMORIES_AVAILABLE}\n{MEMORIES_ACTIVE}\n{AGENTS_CONTENT}\n"), 0644); err != nil {
 		t.Fatalf("write sysprompt.md: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(promptsDir, "sysprompt.linux.md"), []byte("linux"), 0644); err != nil {
 		t.Fatalf("write sysprompt.linux.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(promptsDir, "transport.console.md"), []byte("console transport"), 0644); err != nil {
+		t.Fatalf("write transport.console.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(promptsDir, "transport.telegram.md"), []byte("telegram transport"), 0644); err != nil {
+		t.Fatalf("write transport.telegram.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(promptsDir, "transport.web.md"), []byte("web transport"), 0644); err != nil {
+		t.Fatalf("write transport.web.md: %v", err)
 	}
 }
 

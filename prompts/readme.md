@@ -7,6 +7,8 @@ This directory stores the runtime system prompt fragments used by BlazeAI.
 - `{OS_INFO}`: human-readable operating system info.
 - `{APP_HOME}`: BlazeAI app home path.
 - `{OS_PROMPT}`: rendered OS-specific prompt content.
+- `{TRANSPORT_PROMPT}`: rendered transport-specific prompt content.
+- `{TRANSPORT_CONTEXT}`: dynamic transport runtime details.
 - `{HOST_HELPERS_AVAILABLE}`: available host helper list content.
 - `{HOST_HELPERS_OPTIONAL}`: optional host helper warning content.
 - `{SKILLS_AVAILABLE}`: available skill list content.
@@ -17,3 +19,4 @@ This directory stores the runtime system prompt fragments used by BlazeAI.
 ## Files
 - `sysprompt.md`: universal prompt layout.
 - `sysprompt.linux.md`, `sysprompt.darwin.md`, `sysprompt.windows.md`: OS-specific prompt content.
+- `transport.console.md`, `transport.telegram.md`, `transport.web.md`: transport-specific prompt fragments.

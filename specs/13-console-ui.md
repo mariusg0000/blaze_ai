@@ -14,6 +14,9 @@ The console is a simple CLI REPL with Markdown rendering, colored labels, visual
 separators, and streaming output. It implements the Handler contract as the
 primary transport. TTY-only — always applies ANSI codes, no non-TTY mode.
 
+Prompt-specific console guidance lives in `prompts/transport.console.md` and is
+loaded through `Builder.TransportName = "console"`.
+
 ## Console Struct
 
 ```go

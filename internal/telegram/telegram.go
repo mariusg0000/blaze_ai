@@ -65,7 +65,7 @@ func Run(ctx context.Context, cfg *config.Config, osType platform.OS, promptsFS 
 	if err != nil {
 		return err
 	}
-	agent, err := runtime.NewAgent(cfg, sess, osType, promptsFS, bridgeCfg.WorkDir, nil)
+	agent, err := runtime.NewAgent(cfg, sess, osType, promptsFS, bridgeCfg.WorkDir, nil, "telegram")
 	if err != nil {
 		return fmt.Errorf("cannot create telegram agent: %w", err)
 	}

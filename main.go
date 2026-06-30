@@ -161,7 +161,7 @@ func prepareBuiltinAssets() (fs.FS, error) {
 func runConsole(cfg *config.Config, sess *session.Session, osType platform.OS, promptsFS fs.FS, workDir string, resume resumeOptions) error {
 
 	// Create agent and console.
-	agent, err := runtime.NewAgent(cfg, sess, osType, promptsFS, workDir, nil)
+	agent, err := runtime.NewAgent(cfg, sess, osType, promptsFS, workDir, nil, "console")
 	if err != nil {
 		return fmt.Errorf("cannot create agent: %w", err)
 	}

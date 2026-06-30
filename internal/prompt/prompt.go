@@ -1,6 +1,6 @@
 // prompt.go — prompt assembly from disk sources on every LLM call.
 // Rebuilds the runtime prompt part in spec order: universal sysprompt, OS sysprompt,
-// host helpers, skills section, project-map.md, AGENTS.md.
+// transport prompt, host helpers, skills section, project-map.md, AGENTS.md.
 // Replaces {VARIABLE_NAME} placeholders at build time.
 // The conversation part (session message history) is appended after the runtime part.
 // Layer: prompt construction. Dependencies: internal/skills, internal/platform.
@@ -28,6 +28,12 @@ var ErrUniversalPromptMissing = fmt.Errorf("universal system prompt missing")
 // ErrOSPromptMissing is returned when the OS-specific system prompt file does not exist.
 var ErrOSPromptMissing = fmt.Errorf("OS system prompt missing")
 
+// ErrTransportNameMissing is returned when the transport prompt name is not configured.
+var ErrTransportNameMissing = fmt.Errorf("transport prompt name is required")
+
+// ErrTransportPromptMissing is returned when the transport-specific prompt file does not exist.
+var ErrTransportPromptMissing = fmt.Errorf("transport system prompt missing")
+
 // variablePattern matches {VARIABLE_NAME} placeholders in prompt and skill text.
 var variablePattern = regexp.MustCompile(`\{([A-Z_][A-Z0-9_]*)\}`)
 
@@ -40,6 +46,7 @@ var variablePattern = regexp.MustCompile(`\{([A-Z_][A-Z0-9_]*)\}`)
 //	WorkDir — current work folder for project-map.md, AGENTS.md, and project skill discovery;
 //	OS — the detected operating system for selecting the OS-specific prompt;
 //	OSInfo — human-readable OS description injected as {OS_INFO};
+//	TransportName — required transport prompt selector for prompts/transport.<name>.md;
 //	TransportContext — optional transport-specific guidance injected as {TRANSPORT_CONTEXT};
 //	HelperSetup — user UX preferences for host helper installation prompts;
 //	HelperLookup — binary lookup function for helper detection (injectable for tests).
@@ -48,6 +55,7 @@ type Builder struct {
 	WorkDir          string
 	OS               platform.OS
 	OSInfo           string
+	TransportName    string
 	TransportContext string
 	HelperSetup      config.HelperSetup
 	HelperLookup     helpers.LookupFunc
@@ -121,6 +129,8 @@ func (b *Builder) injectTemplateVariables(text string, extra map[string]string, 
 			return b.OSInfo
 		case "TRANSPORT_CONTEXT":
 			return b.TransportContext
+		case "TRANSPORT_PROMPT":
+			return match
 		case "SKILL_DIR":
 			if skillDir != "" {
 				return skillDir
@@ -314,7 +324,7 @@ func (b *Builder) buildHostHelpersAdvisory() string {
 }
 
 // BuildRuntimePart assembles the runtime prompt part from all disk sources.
-// Order: universal → OS → helpers → skills → project-map.md → AGENTS.md.
+// Order: universal → OS → transport → helpers → skills → project-map.md → AGENTS.md.
 func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, error) {
 	// 1. Universal system prompt (required).
 	universal, err := readFileRequiredFS(b.PromptsFS, "sysprompt.md", ErrUniversalPromptMissing)
@@ -333,7 +343,22 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 		return "", err
 	}
 
-	// 3. Host helpers (optional).
+	// 3. Transport-specific prompt (required for the active transport).
+	transportName := strings.TrimSpace(b.TransportName)
+	if transportName == "" {
+		return "", ErrTransportNameMissing
+	}
+	transportPromptName := fmt.Sprintf("transport.%s.md", transportName)
+	transportPrompt, err := readFileRequiredFS(b.PromptsFS, transportPromptName, ErrTransportPromptMissing)
+	if err != nil {
+		return "", err
+	}
+	transportPrompt, err = b.injectVariables(transportPrompt)
+	if err != nil {
+		return "", err
+	}
+
+	// 4. Host helpers (optional).
 	lookup := b.HelperLookup
 	if lookup == nil {
 		lookup = helpers.DefaultLookup
@@ -345,13 +370,13 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 		return "", err
 	}
 
-	// 4. Skills section (optional, includes project-scoped).
+	// 5. Skills section (optional, includes project-scoped).
 	skillsAvailable, runnableSkillsAvailable, skillsActive, err := b.buildSkillsSection(activeSkills)
 	if err != nil {
 		return "", err
 	}
 
-	// 5. project-map.md from work folder (optional).
+	// 6. project-map.md from work folder (optional).
 	projectMap, err := readFileOptional(filepath.Join(b.WorkDir, "project-map.md"))
 	if err != nil {
 		return "", err
@@ -360,7 +385,7 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 		projectMap = fmt.Sprintf("---\nproject-map.md:\n\n%s\n---", projectMap)
 	}
 
-	// 6. AGENTS.md from work folder (optional).
+	// 7. AGENTS.md from work folder (optional).
 	agents, err := readFileOptional(filepath.Join(b.WorkDir, "AGENTS.md"))
 	if err != nil {
 		return "", err
@@ -375,6 +400,7 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 
 	rendered, err := b.injectTemplateVariables(universal, map[string]string{
 		"OS_PROMPT":               strings.TrimSpace(osPrompt),
+		"TRANSPORT_PROMPT":        strings.TrimSpace(transportPrompt),
 		"HOST_HELPERS_ADVISORY":   strings.TrimSpace(helperAdvisory),
 		"HOST_HELPERS_AVAILABLE":  strings.TrimSpace(helperAvailable),
 		"HOST_HELPERS_OPTIONAL":   strings.TrimSpace(helperOptional),

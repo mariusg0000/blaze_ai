@@ -226,7 +226,7 @@ main()
   │
   ├─ os.Getwd()  → workDir
   ├─ session.Create() / session.LastClean() / session.Last()
-  ├─ runtime.NewAgent(cfg, sess, osType, promptsFS, workDir, handler=nil)
+  ├─ runtime.NewAgent(cfg, sess, osType, promptsFS, workDir, handler=nil, transportName="console")
   │    ├─ Load modes (modes.json) or create default
   │    ├─ Resolve model: mode model > last_mode > roles.default
   │    ├─ Create provider client
@@ -234,6 +234,7 @@ main()
   │    ├─ Create prompt.Builder
   │    ├─ Create compaction.Manager
   │    ├─ Build tool registry (8 tools)
+  │    └─ Require a transport prompt via Builder.TransportName
   │    └─ Return Agent
   │
   ├─ Compactor.RebuildForResume() if -c or -r

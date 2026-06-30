@@ -75,7 +75,7 @@ func setupAgent(t *testing.T, handler http.HandlerFunc) (*Agent, *mockHandler, *
 	writePromptFixtures(t, promptsDir)
 
 	h := &mockHandler{}
-	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, h)
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, h, "console")
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
@@ -85,8 +85,11 @@ func setupAgent(t *testing.T, handler http.HandlerFunc) (*Agent, *mockHandler, *
 // writePromptFixtures creates the prompt templates required by runtime prompt assembly.
 func writePromptFixtures(t *testing.T, promptsDir string) {
 	t.Helper()
-	os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\nEach app-home folder has a `README.md` that documents its structure, use, and rules. When a task involves any of these folders, you MUST read its `README.md` first before inspecting or modifying any other file in that folder.\n\n## Tool Discipline\n- Keep relevant loaded skills active across follow-up turns on the same topic or task.\n- Do not unload a skill immediately after one successful action if the user is likely to continue in the same domain.\n- Unload a skill only when the user clearly changes topic or task, or when the loaded skill would interfere with the next turn.\n\n## Active State Rules\n- Only skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.\n- Only memories listed under `## Active Memories` are active right now. Do not infer current active memories from older `load_memory` or `unload_memory` tool results in the conversation history. If there is no `## Active Memories` section below, then no memories are currently active.\n\n{OS_PROMPT}\n\n## Host Environment Helpers\n{HOST_HELPERS_ADVISORY}\n\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nBefore performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first. Do not act on an unfamiliar domain without loading the relevant skill.\n\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n{RUNNABLE_SKILLS_SECTION}\n\n## Memories\nAvailable memories:\n{MEMORIES_AVAILABLE}\n\nActive memories:\n{MEMORIES_ACTIVE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n"), 0644)
+	os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\nEach app-home folder has a `README.md` that documents its structure, use, and rules. When a task involves any of these folders, you MUST read its `README.md` first before inspecting or modifying any other file in that folder.\n\n## Tool Discipline\n- Keep relevant loaded skills active across follow-up turns on the same topic or task.\n- Do not unload a skill immediately after one successful action if the user is likely to continue in the same domain.\n- Unload a skill only when the user clearly changes topic or task, or when the loaded skill would interfere with the next turn.\n\n## Active State Rules\n- Only skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.\n- Only memories listed under `## Active Memories` are active right now. Do not infer current active memories from older `load_memory` or `unload_memory` tool results in the conversation history. If there is no `## Active Memories` section below, then no memories are currently active.\n\n{OS_PROMPT}\n\n## Transport\n{TRANSPORT_PROMPT}\n\n{TRANSPORT_CONTEXT}\n\n## Host Environment Helpers\n{HOST_HELPERS_ADVISORY}\n\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nBefore performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first. Do not act on an unfamiliar domain without loading the relevant skill.\n\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n{RUNNABLE_SKILLS_SECTION}\n\n## Memories\nAvailable memories:\n{MEMORIES_AVAILABLE}\n\nActive memories:\n{MEMORIES_ACTIVE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n"), 0644)
 	os.WriteFile(filepath.Join(promptsDir, "sysprompt.linux.md"), []byte("linux"), 0644)
+	os.WriteFile(filepath.Join(promptsDir, "transport.console.md"), []byte("console transport"), 0644)
+	os.WriteFile(filepath.Join(promptsDir, "transport.telegram.md"), []byte("telegram transport"), 0644)
+	os.WriteFile(filepath.Join(promptsDir, "transport.web.md"), []byte("web transport"), 0644)
 }
 
 // TestRunTurnTextResponse verifies a turn with a text-only LLM response.
@@ -478,7 +481,7 @@ func TestNewAgentBadModel(t *testing.T) {
 
 	dir := t.TempDir()
 	sess, _ := session.CreateInDir(dir)
-	_, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(dir), dir, &mockHandler{})
+	_, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(dir), dir, &mockHandler{}, "console")
 	if err == nil {
 		t.Fatal("NewAgent() expected error for missing provider, got nil")
 	}
@@ -519,7 +522,7 @@ func TestNewAgentWithMode(t *testing.T) {
 	os.MkdirAll(promptsDir, 0755)
 	writePromptFixtures(t, promptsDir)
 
-	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{})
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{}, "console")
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
@@ -566,7 +569,7 @@ func TestNewAgentWithModeFallbackToFirstMode(t *testing.T) {
 	os.MkdirAll(promptsDir, 0755)
 	writePromptFixtures(t, promptsDir)
 
-	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{})
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{}, "console")
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
@@ -738,7 +741,7 @@ func TestNewAgentIgnoresLastModelWhenLastModeExists(t *testing.T) {
 	os.MkdirAll(promptsDir, 0755)
 	writePromptFixtures(t, promptsDir)
 
-	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{})
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{}, "console")
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
@@ -837,7 +840,7 @@ func TestNewAgentAutoCreatesDefaultMode(t *testing.T) {
 	os.MkdirAll(promptsDir, 0755)
 	writePromptFixtures(t, promptsDir)
 
-	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{})
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{}, "console")
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}

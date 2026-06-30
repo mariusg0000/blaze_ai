@@ -88,11 +88,12 @@ type Agent struct {
 // WHY:   The main entrypoint calls this to assemble the agent before starting the REPL.
 // PARAMS: cfg — loaded config; sess — session (new or resumed); os — detected platform;
 //
-//	promptsFS — filesystem with sysprompt.md and sysprompt.<os>.md;
-//	workDir — initial work folder; handler — transport implementation.
+//	promptsFS — filesystem with sysprompt.md, sysprompt.<os>.md, and transport.<name>.md;
+//	workDir — initial work folder; handler — transport implementation;
+//	transportName — required transport prompt selector like console or telegram.
 //
 // RETURNS: *Agent — ready to run; error if provider client cannot be created.
-func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, promptsFS fs.FS, workDir string, handler Handler) (*Agent, error) {
+func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, promptsFS fs.FS, workDir string, handler Handler, transportName string) (*Agent, error) {
 	modelID := cfg.Roles.Default
 
 	// Try migration first: extract modes from config.json if they exist there.
@@ -144,11 +145,12 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 	active := skills.NewActiveList()
 
 	builder := &prompt.Builder{
-		PromptsFS:   promptsFS,
-		WorkDir:     workDir,
-		OS:          os,
-		OSInfo:      platform.OSInfo(),
-		HelperSetup: cfg.HelperSetup,
+		PromptsFS:     promptsFS,
+		WorkDir:       workDir,
+		OS:            os,
+		OSInfo:        platform.OSInfo(),
+		TransportName: transportName,
+		HelperSetup:   cfg.HelperSetup,
 	}
 
 	agent := &Agent{

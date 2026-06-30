@@ -9,6 +9,7 @@
 | `main.go` | Entry point with CLI flags |
 | `internal/platform/platform.go` | App home, bootstrap, OS detection |
 | `internal/platform/apphome_readmes.go` | Seeded READMEs via `//go:embed` |
+| `internal/prompt/prompt.go` | Prompt builder with required transport prompt selection |
 | `deploy_nas.sh` | Linux amd64 build, remote installer packaging, NAS deploy |
 
 ## Build Requirements
@@ -64,12 +65,16 @@ var embeddedBuiltinSkills embed.FS
 | File | Purpose |
 |------|---------|
 | `sysprompt.md` | Universal system prompt |
-| `sysprompt-darwin.md` | macOS-specific prompt additions |
-| `sysprompt-linux.md` | Linux-specific prompt additions |
-| `sysprompt-windows.md` | Windows-specific prompt additions |
+| `sysprompt.darwin.md` | macOS-specific prompt additions |
+| `sysprompt.linux.md` | Linux-specific prompt additions |
+| `sysprompt.windows.md` | Windows-specific prompt additions |
+| `transport.console.md` | Console-specific prompt rules |
+| `transport.telegram.md` | Telegram-specific prompt rules |
+| `transport.web.md` | Web-specific prompt rules |
 
 Resolved at startup: `fs.Sub(embeddedPrompts, "prompts")` → passed to
-`prompt.Builder`.
+`prompt.Builder`, which then requires `Builder.TransportName` to select the
+matching `transport.<name>.md` file.
 
 ### skills/
 
@@ -137,7 +142,7 @@ main()
        │    ├─ session.Create(workDir)
        │    ├─ session.LastClean(workDir)
        │    └─ session.Last(workDir)
-       ├─ runtime.NewAgent(cfg, sess, osType, promptsFS, workDir, handler)
+       ├─ runtime.NewAgent(cfg, sess, osType, promptsFS, workDir, handler, "console")
        ├─ agent.Handler = console
        └─ console.Run()
 ```
@@ -157,6 +162,10 @@ main()
 The Telegram path diverges early — it does not call `openSession`,
 `runConsole`, or interact with the work directory beyond what
 `telegram.Run()` configures.
+
+Inside `telegram.Run()`, agent construction uses `transportName="telegram"`,
+which loads `transport.telegram.md` and applies the dynamic Telegram
+`TransportContext` string.
 
 ## Deploy
 
