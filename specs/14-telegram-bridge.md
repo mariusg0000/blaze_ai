@@ -5,6 +5,7 @@
 | File | Role |
 |------|------|
 | `internal/telegram/telegram.go` | Run(), polling loop, openTelegramSession, bot client, retry logic |
+| `internal/telegram/image_messages.go` | Image message download, attachment persistence, synthetic agent input |
 | `internal/telegram/handler.go` | Handler — runtime.Handler implementation with buffer/flush |
 | `internal/telegram/commands.go` | Bridge-local slash command handling (/help, /model, /clear, /exit) |
 | `internal/telegram/config.go` | BridgeConfig struct, LoadBridgeConfig, InstanceDir |
@@ -15,6 +16,13 @@
 
 Telegram is a secondary transport over the shared `runtime.Handler` contract.
 Each bot instance is one process, one chat, one agent.
+
+Inbound messages may be:
+
+- plain text messages
+- photo messages with optional caption
+- image documents (`mime_type` starts with `image/`)
+- `channel_post` entries using the same message parsing path
 
 Started via `--telegram <instance>` CLI flag in `main.go`.
 
@@ -45,6 +53,7 @@ BlazeAI (one process)
 app_home/telegram/<instance>/
   bridge.json     — static config (bot token, allowed chat ID, workdir)
   state.json      — mutable state (selected_model, resolved)
+  attachments/    — downloaded Telegram images kept for analyze_image follow-ups
   session/
     session.json  — single fixed session (not a collection of rotating folders)
 ```
@@ -113,6 +122,51 @@ This prevents stale commands from being replayed after a restart.
 Only one message is processed at a time. The polling loop blocks on
 `agent.RunTurn()` and resumes polling after the turn completes. Commands are
 handled bridge-locally and skip the LLM.
+
+## Input Handling
+
+The polling loop first normalizes the incoming Telegram update into one `Message`:
+
+- `update.message` when present
+- otherwise `update.channel_post`
+
+Then it builds the agent input with this priority:
+
+1. Non-empty `message.text` -> sent directly to `agent.RunTurn()`
+2. Photo or image document -> downloaded locally and converted into a synthetic user message
+3. Anything else -> ignored
+
+### Image Download Flow
+
+For image-bearing messages:
+
+1. Select the largest `photo[]` variant, or use `document` when `mime_type` starts with `image/`
+2. Call Telegram `getFile`
+3. Require a non-empty `file_path`
+4. Download the remote file into `app_home/telegram/<instance>/attachments/`
+5. Build a synthetic user turn that tells the main agent to use `analyze_image`
+
+The downloaded file is kept on disk so later follow-up turns can still reference the same local path from session history.
+
+### Caption Behavior
+
+Image caption is optional.
+
+- Without caption: the main LLM generates the effective `analyze_image.question` from the current conversation context and visible image content.
+- With caption: the main LLM still generates the effective question itself, but it also uses the user caption as additional guidance.
+
+The transport does not call `analyze_image` directly. It only injects a synthetic text turn that includes the local path and explicit instruction to use `analyze_image`. This keeps the normal tool loop, activity bubble, and session persistence unchanged.
+
+### Image Errors
+
+Image-specific failures are reported back to the allowed chat as plain `error: ...` messages:
+
+- non-image document attachment
+- missing `file_id`
+- missing Telegram `file_path`
+- file metadata lookup failure
+- file download failure
+- local attachment directory creation failure
 
 ## Handler (Output)
 
@@ -194,6 +248,8 @@ Exactly one configured chat can reach this instance.
 Do not start, restart, or duplicate BlazeAI or Telegram bridge processes
 unless the user explicitly asks.
 Do not treat generic greetings or /start as setup instructions.
+Users may send images; when the latest user message contains a local Telegram
+image path, inspect it with analyze_image.
 Keep replies concise for chat and avoid unnecessary tool chatter.
 ```
 
@@ -241,3 +297,4 @@ Run(ctx, cfg, osType, promptsFS, instance)
 - `RequestSudoApproval` prompts user via Telegram (no hidden input channel available).
 - Bot token stored in `bridge.json` (0600 perms if created by skill).
 - Secrets never in session JSON or prompt text.
+- Telegram images are downloaded only for the configured allowed chat.

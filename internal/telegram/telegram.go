@@ -36,6 +36,8 @@ type telegramClient interface {
 	EditMessage(ctx context.Context, chatID int64, messageID int, text string) error
 	SetCommands(ctx context.Context, commands []botCommand) error
 	SendChatAction(ctx context.Context, chatID int64, action string) error
+	GetFile(ctx context.Context, fileID string) (*TelegramFile, error)
+	DownloadFile(ctx context.Context, filePath string, destinationPath string) error
 }
 
 // Run starts one Telegram bridge instance and blocks in the polling loop.
@@ -73,6 +75,7 @@ Replies are sent into a Telegram chat, not an interactive terminal.
 Exactly one configured chat can reach this instance.
 Do not start, restart, or duplicate BlazeAI or Telegram bridge processes unless the user explicitly asks.
 Do not treat generic greetings or /start as setup instructions.
+Users may send images; when the latest user message contains a local Telegram image path, inspect it with analyze_image.
 Keep replies concise for chat and avoid unnecessary tool chatter.`, instance))
 	if resumed && agent.Compactor != nil {
 		if err := agent.Compactor.RebuildForResume(sess); err != nil {
@@ -88,7 +91,7 @@ Keep replies concise for chat and avoid unnecessary tool chatter.`, instance))
 	}
 	handler := NewHandler(client, bridgeCfg.AllowedChatID)
 	agent.Handler = handler
-	return runPolling(ctx, client, bridgeCfg, state, statePath, agent, cfg, handler)
+	return runPolling(ctx, client, bridgeCfg, state, statePath, agent, cfg, handler, filepath.Join(instanceDir, "attachments"))
 }
 
 func publishTelegramCommands(ctx context.Context, client telegramClient) error {
@@ -120,7 +123,7 @@ func openTelegramSession(sessionDir string) (*session.Session, bool, error) {
 	return sess, false, nil
 }
 
-func runPolling(ctx context.Context, client telegramClient, bridgeCfg *BridgeConfig, state *State, statePath string, agent *runtime.Agent, cfg *config.Config, handler *Handler) error {
+func runPolling(ctx context.Context, client telegramClient, bridgeCfg *BridgeConfig, state *State, statePath string, agent *runtime.Agent, cfg *config.Config, handler *Handler, attachmentsDir string) error {
 	offset, err := drainPendingUpdates(ctx, client)
 	if err != nil {
 		return fmt.Errorf("cannot drain pending telegram updates: %w", err)
@@ -134,13 +137,24 @@ func runPolling(ctx context.Context, client telegramClient, bridgeCfg *BridgeCon
 			if update.UpdateID >= offset {
 				offset = update.UpdateID + 1
 			}
-			if update.Message == nil || strings.TrimSpace(update.Message.Text) == "" {
+			message := updateMessage(update)
+			if message == nil {
 				continue
 			}
-			if update.Message.Chat.ID != bridgeCfg.AllowedChatID {
+			if message.Chat.ID != bridgeCfg.AllowedChatID {
 				continue
 			}
-			text := strings.TrimSpace(update.Message.Text)
+			text, err := buildTelegramTurnInput(ctx, client, attachmentsDir, message)
+			if err != nil {
+				if _, sendErr := client.SendMessage(ctx, bridgeCfg.AllowedChatID, "error: "+err.Error()); sendErr != nil {
+					return fmt.Errorf("telegram image handling failed: %v; cannot send error to chat: %w", err, sendErr)
+				}
+				continue
+			}
+			text = strings.TrimSpace(text)
+			if text == "" {
+				continue
+			}
 			if strings.HasPrefix(text, "/") {
 				handled, response, err := HandleCommand(ctx, text, agent, cfg, state, statePath)
 				if err != nil {
@@ -160,14 +174,14 @@ func runPolling(ctx context.Context, client telegramClient, bridgeCfg *BridgeCon
 			}
 
 			handler.BeginTurn(ctx)
-			err := agent.RunTurn(ctx, text)
+			turnErr := agent.RunTurn(ctx, text)
 			flushErr := handler.FinishTurn()
 			if flushErr != nil {
 				return flushErr
 			}
-			if err != nil {
-				if _, sendErr := client.SendMessage(ctx, bridgeCfg.AllowedChatID, "error: "+err.Error()); sendErr != nil {
-					return fmt.Errorf("telegram turn failed: %v; cannot send error to chat: %w", err, sendErr)
+			if turnErr != nil {
+				if _, sendErr := client.SendMessage(ctx, bridgeCfg.AllowedChatID, "error: "+turnErr.Error()); sendErr != nil {
+					return fmt.Errorf("telegram turn failed: %v; cannot send error to chat: %w", turnErr, sendErr)
 				}
 			}
 		}
@@ -242,29 +256,53 @@ func nextOffsetFromUpdates(updates []Update, initial int) int {
 // WHY:   The bridge needs only a small subset of the Telegram API in v1.
 // PARAMS: baseURL — bot API prefix; httpClient — HTTP transport.
 type BotClient struct {
-	baseURL    string
-	httpClient *http.Client
+	baseURL     string
+	fileBaseURL string
+	httpClient  *http.Client
 }
 
 // NewBotClient creates a Telegram API client for one bot token.
 func NewBotClient(token string) *BotClient {
 	return &BotClient{
-		baseURL:    "https://api.telegram.org/bot" + token,
-		httpClient: &http.Client{Timeout: 35 * time.Second},
+		baseURL:     "https://api.telegram.org/bot" + token,
+		fileBaseURL: "https://api.telegram.org/file/bot" + token,
+		httpClient:  &http.Client{Timeout: 35 * time.Second},
 	}
 }
 
 // Update is the subset of Telegram update fields used by the bridge.
 type Update struct {
-	UpdateID int      `json:"update_id"`
-	Message  *Message `json:"message,omitempty"`
+	UpdateID    int      `json:"update_id"`
+	Message     *Message `json:"message,omitempty"`
+	ChannelPost *Message `json:"channel_post,omitempty"`
 }
 
 // Message is the subset of Telegram message fields used by the bridge.
 type Message struct {
-	MessageID int    `json:"message_id"`
-	Text      string `json:"text,omitempty"`
-	Chat      Chat   `json:"chat"`
+	MessageID int         `json:"message_id"`
+	Text      string      `json:"text,omitempty"`
+	Caption   string      `json:"caption,omitempty"`
+	Chat      Chat        `json:"chat"`
+	Photo     []PhotoSize `json:"photo,omitempty"`
+	Document  *Document   `json:"document,omitempty"`
+}
+
+// PhotoSize is one Telegram-hosted resized photo variant.
+type PhotoSize struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id"`
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+	FileSize     int    `json:"file_size,omitempty"`
+}
+
+// Document is one Telegram generic file attachment.
+type Document struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id"`
+	FileName     string `json:"file_name,omitempty"`
+	MimeType     string `json:"mime_type,omitempty"`
+	FileSize     int    `json:"file_size,omitempty"`
 }
 
 // Chat identifies a Telegram chat.
@@ -287,6 +325,20 @@ type sendMessageResponse struct {
 type apiResponse struct {
 	OK          bool   `json:"ok"`
 	Description string `json:"description,omitempty"`
+}
+
+type getFileResponse struct {
+	OK          bool         `json:"ok"`
+	Result      TelegramFile `json:"result"`
+	Description string       `json:"description,omitempty"`
+}
+
+// TelegramFile is the Bot API file metadata used for downloads.
+type TelegramFile struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id,omitempty"`
+	FileSize     int    `json:"file_size,omitempty"`
+	FilePath     string `json:"file_path,omitempty"`
 }
 
 // GetUpdates fetches long-poll updates from Telegram.
@@ -384,6 +436,58 @@ func (c *BotClient) SendChatAction(ctx context.Context, chatID int64, action str
 	}
 	if !resp.OK {
 		return fmt.Errorf("telegram sendChatAction failed: %s", resp.Description)
+	}
+	return nil
+}
+
+// GetFile resolves a Telegram file ID into downloadable file metadata.
+func (c *BotClient) GetFile(ctx context.Context, fileID string) (*TelegramFile, error) {
+	values := url.Values{}
+	values.Set("file_id", fileID)
+	body, err := c.doJSONRequest(ctx, "getFile", values)
+	if err != nil {
+		return nil, err
+	}
+	var resp getFileResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("cannot parse getFile response: %w", err)
+	}
+	if !resp.OK {
+		return nil, fmt.Errorf("telegram getFile failed: %s", resp.Description)
+	}
+	return &resp.Result, nil
+}
+
+// DownloadFile downloads a Telegram-hosted file into a local path.
+func (c *BotClient) DownloadFile(ctx context.Context, filePath string, destinationPath string) error {
+	if err := os.MkdirAll(filepath.Dir(destinationPath), 0755); err != nil {
+		return fmt.Errorf("cannot create download directory for %s: %w", destinationPath, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.fileBaseURL+"/"+strings.TrimPrefix(filePath, "/"), nil)
+	if err != nil {
+		return fmt.Errorf("cannot create telegram file download request: %w", err)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("telegram file download failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("telegram file download returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	file, err := os.Create(destinationPath)
+	if err != nil {
+		return fmt.Errorf("cannot create destination file %s: %w", destinationPath, err)
+	}
+	if _, err := io.Copy(file, resp.Body); err != nil {
+		file.Close()
+		_ = os.Remove(destinationPath)
+		return fmt.Errorf("cannot write destination file %s: %w", destinationPath, err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(destinationPath)
+		return fmt.Errorf("cannot close destination file %s: %w", destinationPath, err)
 	}
 	return nil
 }

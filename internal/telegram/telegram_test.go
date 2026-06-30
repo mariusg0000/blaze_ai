@@ -60,6 +60,14 @@ func (m *mockUpdateClient) SendChatAction(_ context.Context, _ int64, _ string) 
 	return nil
 }
 
+func (m *mockUpdateClient) GetFile(_ context.Context, _ string) (*TelegramFile, error) {
+	return nil, nil
+}
+
+func (m *mockUpdateClient) DownloadFile(_ context.Context, _, _ string) error {
+	return nil
+}
+
 func TestDrainPendingUpdatesUsesLatestUpdateID(t *testing.T) {
 	client := &mockUpdateClient{updates: []Update{{UpdateID: 41}, {UpdateID: 44}, {UpdateID: 43}}}
 	offset, err := drainPendingUpdates(context.Background(), client)
