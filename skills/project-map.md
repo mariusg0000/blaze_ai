@@ -1,5 +1,5 @@
 [DESCRIPTION]
-Load when the user wants a project overview, repository map, codebase tree, architecture map, or a generated `project-map.md`. Use for scanning the current working directory, filtering noise, and writing a concise Markdown structure map.
+Load when the user wants a project overview, repository map, codebase tree, architecture map, or a generated `project-map.md`. Use for scanning the current working directory, filtering noise, and writing a concise Markdown structure map. The generated file is auto-injected into every prompt as project-local context, so keep it tight.
 
 [BEHAVIOR]
 # Project Map
@@ -7,6 +7,8 @@ Load when the user wants a project overview, repository map, codebase tree, arch
 ## Purpose
 
 Generate `project-map.md` in the current working directory. Make it a fast orientation map. Describe important folders and files without dumping every path.
+
+`project-map.md` is auto-injected into every LLM prompt as project-local context under `[PROJECT MAP]`. Keep the map concise so it does not waste tokens on every call. Target 20-40 lines, never exceed 60 lines.
 
 ## Workflow
 
@@ -23,6 +25,7 @@ Generate `project-map.md` in the current working directory. Make it a fast orien
 - Give each important folder or file one short sentence explaining its role.
 - Summarize noisy subtrees at folder level instead of listing every file.
 - Go deeper only where structure alone is not enough to understand purpose.
+- Target 20-40 lines. Never exceed 60 lines. If the project is too large to fit, summarize at higher level and offer to drill into subtrees on request.
 - Do not include secrets, `.env` values, copied file contents, or large code excerpts.
 
 ## Scanning Guidance
@@ -31,6 +34,14 @@ Generate `project-map.md` in the current working directory. Make it a fast orien
 - If helpers are missing, use safe OS-native shell listing commands.
 - Avoid broad deep reads before the structure is clear.
 - Avoid reading large generated files unless the user explicitly asks.
+
+## Usage
+
+When `project-map.md` already exists, read it first before broad file exploration. Use it to locate files, understand module boundaries, and find relevant code faster.
+
+## Staleness
+
+If `project-map.md` already exists and is older than ~7 days, or if the user mentions new folders, moved files, or structure changes, suggest regeneration before relying on the old map.
 
 ## Validation
 

@@ -112,4 +112,6 @@ Already verified — no need to check availability. Prefer these helpers over th
 
 [PROJECT MAP]
 
+Project-local structure context from `{WORK_DIR}/project-map.md`. Use this to orient yourself: locate files, understand module boundaries, and find relevant code without broad exploration. If empty, the map does not exist in the current workdir.
+
 {PROJECT_MAP_CONTENT}
