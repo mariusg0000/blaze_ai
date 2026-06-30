@@ -35,6 +35,7 @@ If a legacy `project-map.md` exists, migrate its content into the Map section of
 
 3. **Scan the project structure:**
    - Identify the top-level layout: entry points (`main.go`, `cmd/`, `src/`, `index.*`), important folders (`internal/`, `pkg/`, `api/`, `config/`, `docs/`), build/test files, and noisy areas (vendored deps, generated output, caches, assets).
+   - Check for a `decisions/` folder. If present, list its contents. Read only decisions relevant to the current section: for the Description, a few key architectural choices; for Map-only, decisions are not required — structure alone suffices; for individual spec files, only decisions related to that concept. If no `decisions/`, run `git log --oneline`. If neither exists, rely on code only.
    - Prefer `fd -t d -d 2` or `ls -la` for fast discovery. Use `rg --files` to sample relevant files.
    - Read a small sample of high-value files only when needed to explain their role.
 
@@ -53,13 +54,19 @@ Slow (~10+ minutes). Deep architecture documentation.
 
 5. Wait for user choice. If user chooses "short", go to **Path A-Short**. If "full", go to **Path A-Full**.
 
+6. **Ask for User Directives:**
+   - Before writing any file, ask: "Do you have any project-specific directives or rules you want included in the User Directives section? (no, or yes: <text>)"
+   - If the user provides text: note it. You may clarify and restructure the text for readability without distorting the meaning. Mark items with !!IMPORTANT!! or !!MANDATORY!! as appropriate.
+   - If the user says no: use the default placeholder.
+   - Whether writing Path A-Short (step 9) or Path A-Full (step 15), include the `## User Directives` section with the user's text or placeholder between the title and Description.
+
 #### Path A-Short: Map Only
 
-6. **Write the Description section:**
+7. **Write the Description section:**
    - 1-2 paragraphs: what the project does, primary language/framework, entry points, key technologies.
    - Be factual, not marketing. Extract from README and AGENTS.md if available.
 
-7. **Write the Map section:**
+8. **Write the Map section:**
    - Tree-like Markdown bullet structure.
    - One short sentence per important folder or file explaining its role.
    - Summarize noisy subtrees at folder level (e.g. `node_modules/`, `vendor/`, `dist/`, `__pycache__/`).
@@ -67,15 +74,15 @@ Slow (~10+ minutes). Deep architecture documentation.
    - Target 20-40 lines. Never exceed 60 lines. If the project is too large, summarize at higher level and offer to drill into subtrees on request.
    - Do not include secrets, `.env` values, copied file contents, or large code excerpts.
 
-8. **Write `specs.md`** following the template in `[DATA]`. Omit the Specs section and replace it with the placeholder sentence: `*No detailed specs yet. Run the skill with full analysis to generate them.*`
+9. **Write `specs.md`** following the template in `[DATA]`. Omit the Specs section and replace it with the placeholder sentence: `*No detailed specs yet. Run the skill with full analysis to generate them.*`
 
-9. Done. Ask if user wants to add Specs later.
+10. Done. Ask if user wants to add Specs later.
 
 #### Path A-Full: Map + Specs
 
-10. **Write Description + Map** (same as Path A-Short steps 6-7).
+11. **Write Description + Map** (same as Path A-Short steps 7-8).
 
-11. **Identify concepts for specs (max 20):**
+12. **Identify concepts for specs (max 20):**
     - Group packages and code areas into discrete architectural concepts.
     - One concept = one spec file in `specs/`.
     - Assign 5-15 keywords per concept using real technical terms from the codebase.
@@ -89,9 +96,9 @@ Slow (~10+ minutes). Deep architecture documentation.
 | ... | ... | ... | ... |
 ```
 
-12. User approves, reorders, merges, or removes entries.
+13. User approves, reorders, merges, or removes entries.
 
-13. For each approved concept, generate the spec file:
+14. For each approved concept, generate the spec file:
     - Find relevant source files from the package mapping.
     - Read key types, interfaces, constants, config structs, and public functions.
     - Find and read test files for behavioral contracts and edge cases.
@@ -99,48 +106,48 @@ Slow (~10+ minutes). Deep architecture documentation.
     - Incremental mode (default): one spec at a time, user confirms each.
     - Batch mode: only if user explicitly says "generate all specs".
 
-14. Write `specs.md` with full Description + Map + Specs index table. Specs section lists each file by its relative path (`specs/NN-concept.md`).
+15. Write `specs.md` with full Description + Map + Specs index table. Specs section lists each file by its relative path (`specs/NN-concept.md`).
 
 ---
 
 ### Path B: Only `specs.md` Exists (Map Update, Propose Specs)
 
-15. **Read existing `specs.md`** — note what Description and Map currently contain.
+16. **Read existing `specs.md`** — note what Description and Map currently contain.
 
-16. **Update the Description** if the project has changed (new entry points, new technologies). If unchanged, keep as-is.
+17. **Update the Description** if the project has changed (new entry points, new technologies). If unchanged, keep as-is.
 
-17. **Update the Map section:**
+18. **Update the Map section:**
     - Re-scan the project structure.
     - Compare with the existing Map. Add new folders/files that appeared. Remove ones that were deleted. Update descriptions for changed roles.
     - Keep the same format and style as the existing Map.
 
-18. **Write updated `specs.md`.** The Specs section (if present) is untouched. If the Specs section is the placeholder sentence, keep it.
+19. **Write updated `specs.md`.** The Specs section (if present) is untouched. If the Specs section is the placeholder sentence, keep it.
 
-19. **After updating, propose Specs generation:**
+20. **After updating, propose Specs generation:**
     - "The Map is updated. The Specs section is still empty. Would you like to generate detailed architecture specifications now? This will create a `specs/` folder with individual spec files."
 
-20. If user says yes, execute **Path A-Full** from step 11 onward (concept identification and spec generation).
+21. If user says yes, execute **Path A-Full** from step 12 onward (concept identification and spec generation).
 
 ---
 
 ### Path C: Full Update (`specs.md` + `specs/`)
 
-21. **Read existing `specs.md`** and all files in `specs/`.
+22. **Read existing `specs.md`** and all files in `specs/`.
 
-22. **Update Description** — same as step 16.
+23. **Update Description** — same as step 17.
 
-23. **Update Map** — same as step 17.
+24. **Update Map** — same as step 18.
 
-24. **Update Specs section:**
+25. **Update Specs section:**
     - Check which source files have changed since the specs were last written (compare spec content against current code, or use file modification timestamps).
     - Propose which specs need updating. Do not update all blindly.
     - For each affected spec: re-read the source files, update the spec file, re-write it.
     - If new packages or modules appeared that are not covered by any existing spec, propose adding them (within the max 20 limit).
     - If packages were removed, propose removing the corresponding spec file and updating the index.
 
-25. **Update the Specs index table** in `specs.md` to reflect any new, removed, or renamed spec files.
+26. **Update the Specs index table** in `specs.md` to reflect any new, removed, or renamed spec files.
 
-26. **If user says "regenerate spec for X"** — re-read the source files for that concept and rewrite the spec file completely.
+27. **If user says "regenerate spec for X"** — re-read the source files for that concept and rewrite the spec file completely.
 
 ---
 
@@ -184,6 +191,7 @@ Slow (~10+ minutes). Deep architecture documentation.
 ## Scanner Rules
 
 - Start with a fast shallow scan: top-level listing, entry point files, config files.
+- Discover project rationale: if a `decisions/` folder exists, list the files but read only those relevant to the section being written. For the Description, a few key architectural decisions may help. For Map-only generation, decisions are not needed — rely on README/AGENTS.md and code structure. For individual spec files, read only decisions relevant to that concept. If no `decisions/` folder exists, run `git log --oneline` to infer project intent. If neither is available, rely strictly on source code.
 - Identify important directories versus noisy directories quickly.
 - Read only the minimum number of lines from internal files needed to understand their role.
 - Stop scanning and ask the user if the repository is too large or key areas stay unclear after the shallow scan.
@@ -191,6 +199,7 @@ Slow (~10+ minutes). Deep architecture documentation.
 
 ## Safety Rules
 
+- The `## User Directives` section in `specs.md` is user-owned. Read and follow its directives. Modify ONLY when the user explicitly requests it (e.g., "add a directive", "remove directive X", "update the User Directives"). When the user provides new text for this section, you may clarify and restructure it for readability without distorting the meaning. Never add, change, or remove directives on your own initiative.
 - Do not read or write secrets, `.env` files, encrypted config values, API keys, or tokens.
 - Do not modify source code files. Specs are documentation only.
 - Do not create more than 20 spec files in `specs/`.
@@ -201,6 +210,10 @@ Slow (~10+ minutes). Deep architecture documentation.
 specs_dot_md_template:
 ```markdown
 # Project: `<name>`
+
+## User Directives
+
+*No user directives yet. Mark items with !!IMPORTANT!! or !!MANDATORY!!.*
 
 ## Description
 
