@@ -110,8 +110,8 @@ Already verified — no need to check availability. Prefer these helpers over th
 
 {AGENTS_CONTENT}
 
-[PROJECT MAP]
+[PROJECT CONTEXT]
 
-Project-local structure context from `{WORK_DIR}/project-map.md`. Use this to orient yourself: locate files, understand module boundaries, and find relevant code without broad exploration. If empty, the map does not exist in the current workdir.
+Project-local context from `{WORK_DIR}/specs.md`. Contains Description (what the project does), Map (folder/file structure), and Specs (architecture spec index). Use this to orient yourself before exploring broadly. If empty, no project context has been generated yet.
 
-{PROJECT_MAP_CONTENT}
+{PROJECT_CONTEXT}

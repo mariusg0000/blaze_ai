@@ -43,7 +43,7 @@ part (session history).
 7. **Skills available** — descriptions of all discovered skills (optional)
 8. **Runnable skills section** — skills with [CODE] sections and their syntax (optional)
 9. **Skills active** — [BEHAVIOR] and [DATA] of loaded skills (optional)
-10. **Project map** — `project-map.md` from work folder (optional)
+10. **Project context** — `specs.md` from work folder (optional)
 11. **AGENTS.md** — project rules from work folder (optional)
 
 All optional sections disappear entirely if their content is empty (no empty
@@ -78,7 +78,7 @@ The universal sysprompt is an 112-line Markdown file with labelled sections and
 [SECONDARY MODEL CONSULTATION] — ask_a_friend and analyze_image guidance
 [HOST ENVIRONMENT HELPERS] — {HOST_HELPERS_ADVISORY}, available, optional
 [PROJECT RULES]        — {AGENTS_CONTENT}
-[PROJECT MAP]          — {PROJECT_MAP_CONTENT}
+[PROJECT CONTEXT]      — {PROJECT_CONTENT}
 ```
 
 ## OS-Specific Prompts
@@ -128,7 +128,7 @@ template-specific extras.
 | `{SKILLS_AVAILABLE}` | all discovered skill descriptions | empty string (allows empty) |
 | `{RUNNABLE_SKILLS_SECTION}` | runnable skills [SYNTAX] list | empty string (allows empty) |
 | `{SKILLS_ACTIVE}` | loaded skills [BEHAVIOR]/[DATA] | empty string (allows empty) |
-| `{PROJECT_MAP_CONTENT}` | project-map.md content | empty string |
+| `{PROJECT_CONTENT}` | specs.md content | empty string |
 | `{AGENTS_CONTENT}` | AGENTS.md content with variable injection | empty string |
 
 Variables that are `"NULL"` render literally as `NULL` in the prompt — the LLM
@@ -173,13 +173,13 @@ Builder.Build(session, activeSkills)
   │    │    ├─ Format available skills list
   │    │    ├─ Format runnable skills section
   │    │    └─ Format active skills content
-  │    ├─ 7. readFileOptional("project-map.md")
+   │    ├─ 7. readFileOptional("specs.md")
   │    ├─ 8. readFileOptional("AGENTS.md")
   │    │    └─ injectVariables(agents)
   │    └─ 9. injectTemplateVariables(universal, {
   │            OS_PROMPT, TRANSPORT_PROMPT, HOST_HELPERS_ADVISORY, HOST_HELPERS_AVAILABLE,
   │            HOST_HELPERS_OPTIONAL, SKILLS_AVAILABLE, RUNNABLE_SKILLS_SECTION,
-  │            SKILLS_ACTIVE, PROJECT_MAP_CONTENT, AGENTS_CONTENT
+   │            SKILLS_ACTIVE, PROJECT_CONTENT, AGENTS_CONTENT
   │         })
   └─ return []Message{system(runtimePart)} + session.Messages
 ```

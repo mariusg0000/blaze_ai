@@ -19,7 +19,7 @@
 | `internal/helpers/` | `helpers.go` | Host helper detection (rg, fd, jq, git, etc.) |
 | `internal/provider/` | (provider package) | LLM provider client creation from config |
 | `prompts/` | `sysprompt.md`, `sysprompt.linux.md`, `sysprompt.darwin.md`, `sysprompt.windows.md` | System prompt templates (embedded in binary) |
-| `skills/` | `skill-manager.md`, `customize-me.md`, `session-retrospective.md`, `project-map.md` | Builtin skill templates (embedded, seeded to app_home) |
+| `skills/` | `skill-manager.md`, `customize-me.md`, `session-retrospective.md`, `specs-manager.md` | Builtin skill templates (embedded, seeded to app_home) |
 
 ## Module Dependency Graph
 
@@ -113,8 +113,8 @@ Single file `runtime.go` containing:
 ### Layer 5 — Prompt Assembly (`internal/prompt/`)
 - `Builder` struct with `Build()` and `BuildRuntimePart()` methods
 - Prompt rebuilt on every LLM call from disk sources
-- Build order: universal sysprompt → OS sysprompt → host helpers → skills (available + active) → project-map.md → AGENTS.md → conversation history
-- Variable injection: `{APP_HOME}`, `{WORK_DIR}`, `{OS_INFO}`, `{SKILLS_AVAILABLE}`, `{SKILLS_ACTIVE}`, `{RUNNABLE_SKILLS_SECTION}`, `{AGENTS_CONTENT}`, `{PROJECT_MAP_CONTENT}`, `{HOST_HELPERS_*}`, `{TRANSPORT_CONTEXT}`, `{SKILL_DIR}`
+- Build order: universal sysprompt → OS sysprompt → host helpers → skills (available + active) → specs.md → AGENTS.md → conversation history
+- Variable injection: `{APP_HOME}`, `{WORK_DIR}`, `{OS_INFO}`, `{SKILLS_AVAILABLE}`, `{SKILLS_ACTIVE}`, `{RUNNABLE_SKILLS_SECTION}`, `{AGENTS_CONTENT}`, `{PROJECT_CONTENT}`, `{HOST_HELPERS_*}`, `{TRANSPORT_CONTEXT}`, `{SKILL_DIR}`
 
 ### Layer 6 — Supporting Packages
 
@@ -177,7 +177,7 @@ Agent.RunTurn(ctx, userInput)
     │       ├─ Read OS sysprompt (fs.FS)
     │       ├─ Detect host helpers (exec.LookPath)
     │       ├─ Discover skills (filesystem scan)
-    │       ├─ Read project-map.md (optional)
+    │       ├─ Read specs.md (optional)
     │       ├─ Read AGENTS.md (optional)
     │       ├─ Inject variables → runtime prompt part
     │       └─ Prepend as system message + session messages → []Message
