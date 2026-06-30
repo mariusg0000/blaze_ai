@@ -875,7 +875,9 @@ func (c *Console) Run() error {
 // WHY:   Tab key requires raw terminal mode to detect.
 func (c *Console) runTTY() error {
 	for {
-		fmt.Fprint(c.Out, c.promptLabel())
+		prompt := c.promptLabel()
+		fmt.Fprint(c.Out, prompt)
+		c.Reader.SetPrompt(prompt)
 		line, event, err := c.Reader.ReadEvent()
 		if err == io.EOF {
 			fmt.Fprintln(c.Out)
