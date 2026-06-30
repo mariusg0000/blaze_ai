@@ -1,5 +1,5 @@
 [DESCRIPTION]
-Load when the user message contains one of the trigger words: specs, specifications, specificații, specificatie, spezifikationen, spécifications, especificaciones, especificações, specifiche, map, project map, analyze project, project overview, architecture overview, codebase analysis, proiect, hartă, analiză, analiza, hartă proiect, overview, or any recognizable multilingual form of "specifications" or "map". Use for generating, updating, or maintaining project context documents (`specs.md` and optionally `specs/` folder with detailed specification files). Do not use for normal code review, README edits, one-function documentation, config editing, skill creation, or routine file operations.
+Load when the user wants to understand, map, analyze, document, update specs, or create project documentation for the project — regardless of language. Use for generating, updating, or maintaining project context documents (`specs.md` and optionally `specs/` folder with detailed specification files). Do not use for normal code review, README edits, one-function documentation, config editing, skill creation, or routine file operations.
 
 [BEHAVIOR]
 # Specs Manager
@@ -7,29 +7,6 @@ Load when the user message contains one of the trigger words: specs, specificati
 ## Purpose
 
 Generate and maintain project context documentation: a single `specs.md` file at the project root containing project description, file structure map, and an optional index of detailed architecture specification files. When the user requests full analysis, also create individual spec files under `specs/`. The skill provides two paths: short (map only) or full (map + detailed specs). Max 20 spec files in `specs/`.
-
-## When To Use
-
-**Trigger words (must be present in the user message):**
-
-- English: specs, specifications, map, project map, analyze project, project overview, architecture overview, codebase analysis, overview
-- Romanian: specificații, specificatie, hartă, hartă proiect, analiză proiect, analiza, proiect, prezentare generală
-- German: spezifikationen, spezifikation, projektübersicht, übersicht
-- French: spécifications, spécification, carte, aperçu du projet, analyser le projet
-- Spanish: especificaciones, especificación, mapa, mapa del proyecto, análisis del proyecto
-- Portuguese: especificações, especificação, mapa, mapa do projeto, análise do projeto
-- Italian: specifiche, specifica, mappa, mappa del progetto, analisi del progetto
-- Other close variants of "specification" or "map" in the user's language
-
-**Do not load for:**
-
-- writing or editing `README.md`
-- documenting one function or one file
-- normal code review or debugging
-- inline code comments
-- editing config, provider, model, or mode settings
-- creating or editing skills
-- routine shell commands or file operations
 
 ## Workflow
 
