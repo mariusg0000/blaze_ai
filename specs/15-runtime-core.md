@@ -249,6 +249,7 @@ NewAgent(cfg, sess, os, promptsFS, workDir, handler)
   ├─ skills.DiscoverAll(workDir)    → skill resolvers
   ├─ tools.NewRegistry()
   │    ├─ shell, load_skill, unload_skill, run_skill
+  │    ├─ analyze_image (with oneShotCaller via llmcall, forced vision role)
   │    ├─ ask_a_friend (with oneShotCaller via llmcall)
   │    ├─ replace_block, task_write, task_read
   └─ Return agent

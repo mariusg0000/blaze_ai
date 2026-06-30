@@ -117,9 +117,9 @@ func TestStreamContent(t *testing.T) {
 	}
 
 	var contentDeltas []string
-	resp, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "hi"}}, nil, nil, func(delta string) {
+	resp, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "hi"}}, nil, func(delta string) {
 		contentDeltas = append(contentDeltas, delta)
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Stream() error: %v", err)
 	}
@@ -295,11 +295,11 @@ func TestStreamAbortReturnsPartialResponse(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	resp, err := client.Stream(ctx, []session.Message{{Role: "user", Content: "hi"}}, nil, nil, func(delta string) {
+	resp, err := client.Stream(ctx, []session.Message{{Role: "user", Content: "hi"}}, nil, func(delta string) {
 		if delta == "Hello" {
 			cancel()
 		}
-	})
+	}, nil)
 	if !errors.Is(err, ErrAborted) {
 		t.Fatalf("Stream() error = %v, want ErrAborted", err)
 	}

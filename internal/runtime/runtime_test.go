@@ -451,6 +451,9 @@ func TestNewAgent(t *testing.T) {
 	if agent.Tools.Get("ask_a_friend") == nil {
 		t.Error("ask_a_friend tool not registered")
 	}
+	if agent.Tools.Get("analyze_image") == nil {
+		t.Error("analyze_image tool not registered")
+	}
 	if agent.Active == nil {
 		t.Error("Active skills list is nil")
 	}

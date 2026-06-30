@@ -1,6 +1,6 @@
 // llmcall.go — one-shot secondary LLM consultation helper.
 // Resolves a configured role to a model, builds a strict no-tools prompt, and returns
-// plain text for ask_a_friend or other focused review paths.
+// plain text for ask_a_friend, analyze_image, or other focused review paths.
 // Layer: secondary LLM calling. Dependencies: internal/config, internal/provider,
 // internal/session, internal/tools.
 package llmcall
@@ -27,16 +27,18 @@ type ClientFactory func(cfg *config.Config, modelID string) (StreamClient, error
 // Request describes one one-shot delegated LLM call.
 //
 // WHAT:  Bundles the user-facing consultation inputs for a secondary model.
-// WHY:   ask_a_friend and future review helpers need one stable request shape.
+// WHY:   ask_a_friend, analyze_image, and future review helpers need one stable request shape.
 // PARAMS: Role — configured model role; Purpose — concise objective; Question — focused ask;
 //
-//	Context — supporting evidence; OutputFormat — exact requested answer format.
+//	Context — supporting evidence; OutputFormat — exact requested answer format;
+//	ImageDataURL — optional OpenAI-compatible image_url payload.
 type Request struct {
 	Role         string
 	Purpose      string
 	Question     string
 	Context      string
 	OutputFormat string
+	ImageDataURL string
 }
 
 // Caller resolves configured roles and performs strict one-shot model calls.
@@ -54,11 +56,11 @@ func New(cfg *config.Config, factory ClientFactory) *Caller {
 	return &Caller{cfg: cfg, factory: factory}
 }
 
-// Call sends one strict text-only consultation to the configured role model.
+// Call sends one strict consultation to the configured role model.
 //
 // WHAT:  Builds a no-tools request and returns the final assistant text.
 // WHY:   Secondary consultation must stay narrow, deterministic, and non-recursive.
-// PARAMS: ctx — cancellation context; req — role, purpose, question, context, and format.
+// PARAMS: ctx — cancellation context; req — role, purpose, question, context, format, and optional image.
 // RETURNS: string — consultant answer; error if config, provider, or response is invalid.
 func (c *Caller) Call(ctx context.Context, req Request) (string, error) {
 	if c == nil {
@@ -98,6 +100,18 @@ func (c *Caller) Call(ctx context.Context, req Request) (string, error) {
 	return content, nil
 }
 
+// messageContentPart is one OpenAI-compatible multimodal user content block.
+type messageContentPart struct {
+	Type     string                  `json:"type"`
+	Text     string                  `json:"text,omitempty"`
+	ImageURL *messageContentImageURL `json:"image_url,omitempty"`
+}
+
+// messageContentImageURL holds the data URL for one image_url block.
+type messageContentImageURL struct {
+	URL string `json:"url"`
+}
+
 // buildMessages creates the strict system and user messages for one-shot consultation.
 func buildMessages(req Request) []session.Message {
 	return []session.Message{
@@ -110,8 +124,15 @@ Do not invent hidden steps.
 If the supplied context is insufficient, say so briefly and explain exactly what is missing.`),
 		},
 		{
-			Role: "user",
-			Content: strings.TrimSpace(fmt.Sprintf(`Purpose:
+			Role:    "user",
+			Content: buildUserContent(req),
+		},
+	}
+}
+
+// buildUserContent creates either a text-only user message or a multimodal text+image payload.
+func buildUserContent(req Request) interface{} {
+	text := strings.TrimSpace(fmt.Sprintf(`Purpose:
 %s
 
 Question:
@@ -121,7 +142,12 @@ Context:
 %s
 
 Required output format:
-%s`, req.Purpose, req.Question, req.Context, req.OutputFormat)),
-		},
+%s`, req.Purpose, req.Question, req.Context, req.OutputFormat))
+	if strings.TrimSpace(req.ImageDataURL) == "" {
+		return text
+	}
+	return []messageContentPart{
+		{Type: "text", Text: text},
+		{Type: "image_url", ImageURL: &messageContentImageURL{URL: req.ImageDataURL}},
 	}
 }

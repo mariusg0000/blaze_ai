@@ -71,7 +71,7 @@ The universal sysprompt is an 112-line Markdown file with labelled sections and
 [OUTPUT STYLE]         — Markdown rules, emoji guidance, structure
 [COMMUNICATION PROTOCOL] — message optimization rules (from AGENTS.md)
 [SKILLS]               — skill usage rules, {SKILLS_AVAILABLE}, {SKILLS_ACTIVE}, {RUNNABLE_SKILLS_SECTION}
-[SECONDARY MODEL CONSULTATION] — ask_a_friend guidance
+[SECONDARY MODEL CONSULTATION] — ask_a_friend and analyze_image guidance
 [HOST ENVIRONMENT HELPERS] — {HOST_HELPERS_ADVISORY}, available, optional
 [PROJECT RULES]        — {AGENTS_CONTENT}
 [PROJECT MAP]          — {PROJECT_MAP_CONTENT}

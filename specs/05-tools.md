@@ -5,6 +5,7 @@
 | File | Contents |
 |------|----------|
 | `internal/tools/tools.go` | Tool interface, Registry, OpenAITool format, ParseToolCallArgs, truncateDisplay |
+| `internal/tools/analyze_image.go` | analyze_image implementation |
 | `internal/tools/task_tools.go` | task_read, task_write implementations |
 | `internal/tools/tools_test.go` | FormatArgs tests, schema validation |
 
@@ -47,13 +48,14 @@ type Registry struct {
 - `All()` — returns all registered tools
 - `FormatArgs(name, args)` — delegates to tool's FormatArgs, falls back to raw JSON string
 
-All 8 tools are registered at agent construction in `runtime.NewAgent()`:
+All 9 tools are registered at agent construction in `runtime.NewAgent()`:
 
 ```go
 registry.Register(NewShellTool(os))
 registry.Register(NewLoadSkillTool(active, skillResolver))
 registry.Register(NewUnloadSkillTool(active, skillResolver))
 registry.Register(NewRunSkillTool(os, runnableSkillResolver, workDirGetter))
+registry.Register(NewAnalyzeImageTool(oneShotCaller))
 registry.Register(NewAskFriendTool(oneShotCaller))
 registry.Register(NewReplaceBlockTool(workDirGetter))
 registry.Register(NewTaskWriteTool(workDirGetter))
@@ -138,6 +140,7 @@ Each tool has a dedicated emoji for console and Telegram display:
 | `run_skill` | `🚀` | `🚀 purpose …` |
 | `replace_block` | `📝` | `📝 purpose …` |
 | `ask_a_friend` | `🧠` | `🧠 purpose …` |
+| `analyze_image` | `🖼` | `🖼 image analysis …` |
 | `task_read` | `📋` | `📋 purpose …` |
 | `task_write` | `📋` | `📋 purpose …` |
 | Unknown | `🔧` | `🔧 name …` (generic fallback) |
@@ -145,6 +148,21 @@ Each tool has a dedicated emoji for console and Telegram display:
 Mappings are defined in both `internal/console/console.go` and
 `internal/telegram/handler.go` — identical so the same tool feels the same
 across transports.
+
+## Image Analysis Tool
+
+### analyze_image
+
+- **Description**: `vision role → analyze one local image file`
+- **Parameters**: `{ input_file: string, question: string }`
+- **FormatArgs**: `"Analyzing image: <name> — <question excerpt>"`
+- **Execute**:
+  - Requires `input_file` and `question`
+  - Detects the real image format from file headers
+  - Accepts supported image inputs (`png`, `jpeg`, `gif`)
+  - Resizes to max `1200px` on the longest side
+  - Encodes the processed image as JPEG and sends it as a multimodal `image_url` data URL to the configured `vision` role
+  - Unsupported format, decode failure, missing role, or provider rejection return clear errors with no fallback
 
 ## Task Tools
 

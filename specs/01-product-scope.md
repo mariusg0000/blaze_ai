@@ -59,8 +59,8 @@ Git workflows.
 - **Python**: last resort only, in a lazily-created venv under `app_home/scripts/venv/`
 - **Host helpers** (rg, fd, jq, git, curl, pandoc, sqlite3): detected at startup,
   listed in prompt so the LLM knows they are available without checking
-- **Native tools**: 8 hardcoded tools (shell, load_skill, unload_skill, run_skill,
-  replace_block, ask_a_friend, task_read, task_write)
+- **Native tools**: 9 hardcoded tools (shell, load_skill, unload_skill, run_skill,
+  replace_block, ask_a_friend, analyze_image, task_read, task_write)
 - OpenAI-compatible tool calling with multi-tool-call per turn
 - Default tool timeout: 60s. Timeout returns `"timeout <N>s exceeded"`
 - Shell output capped at 150kB (combined stdout + stderr)

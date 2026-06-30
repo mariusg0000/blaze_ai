@@ -110,3 +110,38 @@ func TestCallerCallFactoryError(t *testing.T) {
 		t.Fatal("Call() expected error for factory failure, got nil")
 	}
 }
+
+// TestCallerCallVisionImageRequest verifies multimodal user content for vision requests.
+func TestCallerCallVisionImageRequest(t *testing.T) {
+	fakeClient := &fakeStreamClient{resp: &provider.Response{Content: "Image answer"}}
+	caller := New(&config.Config{Roles: config.Roles{Vision: "test/vision-model"}}, func(cfg *config.Config, modelID string) (StreamClient, error) {
+		return fakeClient, nil
+	})
+	result, err := caller.Call(context.Background(), Request{
+		Role:         "vision",
+		Purpose:      "analyze a screenshot",
+		Question:     "Describe the visible text",
+		Context:      "local screenshot metadata",
+		OutputFormat: "concise markdown",
+		ImageDataURL: "data:image/jpeg;base64,abc",
+	})
+	if err != nil {
+		t.Fatalf("Call() error: %v", err)
+	}
+	if result != "Image answer" {
+		t.Fatalf("Call() = %q, want %q", result, "Image answer")
+	}
+	parts, ok := fakeClient.messages[1].Content.([]messageContentPart)
+	if !ok {
+		t.Fatalf("user content type = %T, want []messageContentPart", fakeClient.messages[1].Content)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("content parts = %d, want 2", len(parts))
+	}
+	if parts[0].Type != "text" || parts[1].Type != "image_url" {
+		t.Fatalf("unexpected part types: %#v", parts)
+	}
+	if parts[1].ImageURL == nil || parts[1].ImageURL.URL != "data:image/jpeg;base64,abc" {
+		t.Fatalf("unexpected image URL payload: %#v", parts[1].ImageURL)
+	}
+}

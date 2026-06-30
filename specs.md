@@ -32,7 +32,7 @@
 - Main tool: `shell`.
 - Inline shell for simple tasks, OS-native scripts for complex tasks.
 - Python is last resort only, in a lazily-created venv under `app_home/scripts/venv`.
-- Native tools remain hardcoded and compact. Current runtime tools include `shell`, `load_skill`, `unload_skill`, `run_skill`, `replace_block`, `ask_a_friend`, `task_read`, and `task_write`.
+- Native tools remain hardcoded and compact. Current runtime tools include `shell`, `load_skill`, `unload_skill`, `run_skill`, `replace_block`, `ask_a_friend`, `analyze_image`, `task_read`, and `task_write`.
 - OpenAI-compatible tool calling, multi tool call per turn, optional `timeout` parameter per call.
 - Default tool timeout: 60s. Timeout returns `timeout <N>s exceeded`.
 

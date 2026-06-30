@@ -85,10 +85,10 @@ type Console struct {
 // RETURNS: *Console — ready to run.
 func NewConsole(agent *runtime.Agent) *Console {
 	return &Console{
-		Out:     os.Stdout,
-		In:      os.Stdin,
-		Agent:   agent,
-		Reader:  NewReader(os.Stdin, true),
+		Out:      os.Stdout,
+		In:       os.Stdin,
+		Agent:    agent,
+		Reader:   NewReader(os.Stdin, true),
 		lineOpen: false,
 	}
 }
@@ -418,6 +418,8 @@ func toolEmoji(name string) string {
 		return "🚀"
 	case "ask_a_friend":
 		return "🧠"
+	case "analyze_image":
+		return "🖼"
 	default:
 		return "🔧"
 	}

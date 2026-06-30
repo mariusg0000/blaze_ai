@@ -438,6 +438,7 @@ func TestToolEmojiMapping(t *testing.T) {
 		"replace_block": "📝",
 		"run_skill":     "🚀",
 		"ask_a_friend":  "🧠",
+		"analyze_image": "🖼",
 		"unknown":       "🔧",
 	}
 	for name, want := range tests {

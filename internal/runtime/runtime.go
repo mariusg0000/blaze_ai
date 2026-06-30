@@ -198,6 +198,26 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 	registry.Register(tools.NewLoadSkillTool(active, skillResolver))
 	registry.Register(tools.NewUnloadSkillTool(active, skillResolver))
 	registry.Register(tools.NewRunSkillTool(os, runnableSkillResolver, func() string { return agent.WorkDir }))
+	registry.Register(tools.NewAnalyzeImageTool(func(ctx context.Context, req tools.AnalyzeImageRequest) (string, error) {
+		return oneShotCaller.Call(ctx, llmcall.Request{
+			Role:     "vision",
+			Purpose:  "Analyze one local image file with the configured vision model.",
+			Question: strings.TrimSpace(req.Question),
+			Context: strings.TrimSpace(fmt.Sprintf(
+				"Local image path: %s\nSource media type: %s\nSource size bytes: %d\nOriginal dimensions: %dx%d\nPrepared dimensions: %dx%d\nThe image was resized to a maximum long side of %d pixels and encoded as JPEG before upload.",
+				req.InputFile,
+				req.SourceMediaType,
+				req.SourceSizeBytes,
+				req.SourceWidth,
+				req.SourceHeight,
+				req.OutputWidth,
+				req.OutputHeight,
+				1200,
+			)),
+			OutputFormat: "Answer the user's question directly in concise Markdown. If the image is unreadable or the requested detail is not visible, say exactly what is unclear.",
+			ImageDataURL: req.ImageDataURL,
+		})
+	}))
 	registry.Register(tools.NewAskFriendTool(func(ctx context.Context, args tools.AskFriendArgs) (string, error) {
 		return oneShotCaller.Call(ctx, llmcall.Request{
 			Role:         strings.TrimSpace(args.Role),

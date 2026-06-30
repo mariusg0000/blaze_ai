@@ -1,7 +1,7 @@
 // ask_friend.go — ask_a_friend tool implementation.
-// Delegates one focused subproblem to a configured secondary model role and returns the
-// plain-text answer as a normal tool result. Layer: tool execution. Dependencies:
-// internal/llmcall.
+// Delegates one focused text-only subproblem to a configured secondary model role and
+// returns the plain-text answer as a normal tool result. Layer: tool execution.
+// Dependencies: internal/llmcall.
 package tools
 
 import (
@@ -14,12 +14,8 @@ import (
 )
 
 const (
-	maxAskFriendPurposeChars      = 500
-	maxAskFriendQuestionChars     = 4000
-	maxAskFriendContextChars      = 24000
-	maxAskFriendOutputFormatChars = 1000
-	maxAskFriendResponseChars     = 12000
-	maxAskFriendInputFileBytes    = 150000
+	maxAskFriendContextChars   = 300000
+	maxAskFriendInputFileBytes = 500000
 )
 
 // AskFriendArgs are the arguments for ask_a_friend.
@@ -41,7 +37,7 @@ type AskFriendArgs struct {
 // AskFriendTool delegates one no-tools consultation to a configured secondary role.
 //
 // WHAT:  Validates ask_a_friend arguments and returns one consultant answer.
-// WHY:   Some tasks need a stronger or specialized second opinion without a nested agent.
+// WHY:   Some text-heavy tasks need a stronger or specialized second opinion without a nested agent.
 // PARAMS: caller — secondary LLM helper used for role resolution and API calls.
 type AskFriendTool struct {
 	caller func(ctx context.Context, args AskFriendArgs) (string, error)
@@ -79,7 +75,7 @@ func (t *AskFriendTool) FormatArgs(args json.RawMessage) string {
 
 // Description returns the human-readable description for the LLM.
 func (t *AskFriendTool) Description() string {
-	return "Delegate one focused question to a configured secondary model role with no tools. Use it only when an independent summarization, review, risk check, or trade-off analysis would improve the current task. Provide all required context because the secondary model cannot see the current conversation."
+	return "Delegate one focused text-only question to a configured secondary model role with no tools. Use it only when an independent summarization, review, risk check, or trade-off analysis would improve the current task. Provide all required context because the secondary model cannot see the current conversation. For screenshots, photos, charts, or other images, use analyze_image instead."
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -105,7 +101,7 @@ func (t *AskFriendTool) Parameters() json.RawMessage {
 			},
 			"input_file": {
 				"type": "string",
-				"description": "input_file = optional readable file path to include in the consultation; max size = 150000 bytes"
+				"description": "input_file = optional readable text file path to include in the consultation; max size = 500000 bytes; images must use analyze_image instead"
 			},
 			"output_format": {
 				"type": "string",
@@ -155,9 +151,6 @@ func (t *AskFriendTool) Execute(ctx context.Context, args json.RawMessage) strin
 		}
 		return fmt.Sprintf("error: %v", err)
 	}
-	if len(result) > maxAskFriendResponseChars {
-		return fmt.Sprintf("error: ask_a_friend response exceeded %d characters", maxAskFriendResponseChars)
-	}
 	return result
 }
 
@@ -174,6 +167,13 @@ func prepareAskFriendArgs(args AskFriendArgs) (AskFriendArgs, error) {
 	}
 	if !stat.Mode().IsRegular() {
 		return AskFriendArgs{}, fmt.Errorf("input_file is not a regular file: %s", inputFile)
+	}
+	mediaType, err := detectInputMediaType(inputFile)
+	if err != nil {
+		return AskFriendArgs{}, err
+	}
+	if isImageMediaType(mediaType) {
+		return AskFriendArgs{}, fmt.Errorf("input_file is an image; use analyze_image: %s", inputFile)
 	}
 	if stat.Size() > maxAskFriendInputFileBytes {
 		return AskFriendArgs{}, fmt.Errorf("input_file exceeds %d bytes: %s", maxAskFriendInputFileBytes, inputFile)
@@ -195,23 +195,32 @@ func validateAskFriendArgs(args AskFriendArgs) error {
 	default:
 		return fmt.Errorf("role must be one of advisor, summarization, or vision")
 	}
-	if err := validateSizedField("purpose", args.Purpose, maxAskFriendPurposeChars); err != nil {
+	if err := validateRequiredField("purpose", args.Purpose); err != nil {
 		return err
 	}
-	if err := validateSizedField("question", args.Question, maxAskFriendQuestionChars); err != nil {
+	if err := validateRequiredField("question", args.Question); err != nil {
 		return err
 	}
-	if err := validateSizedField("context", args.Context, maxAskFriendContextChars); err != nil {
+	if err := validateMaxField("context", args.Context, maxAskFriendContextChars); err != nil {
 		return err
 	}
-	if err := validateSizedField("output_format", args.OutputFormat, maxAskFriendOutputFormatChars); err != nil {
+	if err := validateRequiredField("output_format", args.OutputFormat); err != nil {
 		return err
 	}
 	return nil
 }
 
-// validateSizedField rejects empty or oversized string fields.
-func validateSizedField(name, value string, maxChars int) error {
+// validateRequiredField rejects empty string fields.
+func validateRequiredField(name, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fmt.Errorf("%s is required", name)
+	}
+	return nil
+}
+
+// validateMaxField rejects empty or oversized string fields.
+func validateMaxField(name, value string, maxChars int) error {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return fmt.Errorf("%s is required", name)

@@ -9,6 +9,7 @@
 | `main.go` | Entry point with CLI flags |
 | `internal/platform/platform.go` | App home, bootstrap, OS detection |
 | `internal/platform/apphome_readmes.go` | Seeded READMEs via `//go:embed` |
+| `deploy_nas.sh` | Linux amd64 build, remote installer packaging, NAS deploy |
 
 ## Build Requirements
 
@@ -26,13 +27,14 @@ build environment.
 
 ```
 require (
+    golang.org/x/image v0.43.0   // direct — high-quality image resize for analyze_image
     golang.org/x/sys v0.46.0   // indirect — syscall wrappers (process group kill)
     golang.org/x/term v0.44.0   // indirect — raw terminal mode (hidden input)
 )
 ```
 
-Minimal external dependencies. Both are `golang.org/x` subrepos (not third-party).
-Only two indirect dependencies — no direct runtime dependencies beyond stdlib.
+Minimal external dependencies. All are `golang.org/x` subrepos (not third-party).
+One small direct dependency is used for image resizing in multimodal vision input.
 
 ## Build Flags
 
@@ -171,6 +173,35 @@ CGO_ENABLED=0 go build -o blazeai .
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o blazeai-linux-amd64 .
 ```
 
+### NAS Deploy Script
+
+The repository includes `deploy_nas.sh` for the common Linux/NAS deployment path:
+
+```sh
+./deploy_nas.sh
+./deploy_nas.sh user@host
+```
+
+Current behavior:
+
+1. Builds `linux/amd64` with `CGO_ENABLED=0`
+2. Writes the binary to `/tmp/blazeai-bin`
+3. Base64-embeds that binary into `/tmp/blazeai_deploy/install.sh`
+4. Copies the installer to `~/blazeai_installer/install.sh` on the remote host
+5. Runs the remote installer over SSH
+
+Default SSH target is `nas@192.168.0.104` when no argument is provided.
+
+### Remote Installer Behavior
+
+The generated remote installer:
+
+- installs BlazeAI to `${HOME}/.local/bin/blazeai`
+- removes any previous target binary before copying the new one
+- ensures executable mode `0755`
+- appends a guarded `${HOME}/.local/bin` PATH block to `${HOME}/.profile` when needed
+- prints a final reminder to start a new shell or `source ~/.profile`
+
 ### Telegram Bridge Service
 
 The Telegram bridge is typically run as a systemd service:
@@ -193,6 +224,3 @@ WantedBy=default.target
 `Restart=always` is recommended because the bridge has in-process retry for
 transient polling failures, but systemd provides an additional recovery layer
 for fatal process exits.
-
-No deployment script or Makefile is currently checked into the repository.
-Deployment is manual or via custom workflows.
