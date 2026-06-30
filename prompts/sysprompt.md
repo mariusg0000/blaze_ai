@@ -76,6 +76,8 @@ If unsure, keep it loaded.
 
 Before performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first. Do not act on an unfamiliar domain without loading the relevant skill.
 
+HARD RULE: When the user asks to analyze, map, understand, or document the project structure — in any language — you MUST load the `specs-manager` skill before reading any project files or generating any output. Do not read specs.md or explore the project directly; load the skill first.
+
 **Available skills:**
 Use the `load_skill` tool to load a skill if needed.
 
