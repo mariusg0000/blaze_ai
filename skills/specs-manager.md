@@ -1,5 +1,5 @@
 [DESCRIPTION]
-Load when the user wants to understand, map, analyze, document, update specs, or create project documentation for the project — regardless of language. Use for generating, updating, or maintaining project context documents (`specs.md` and optionally `specs/` folder with detailed specification files). Do not use for normal code review, README edits, one-function documentation, config editing, skill creation, or routine file operations.
+Load when the user wants to understand, map, analyze, document, update specs, or create project documentation for the project — regardless of language. Do not use for normal code review, README edits, one-function documentation, config editing, skill creation, or routine file operations.
 
 [BEHAVIOR]
 # Specs Manager

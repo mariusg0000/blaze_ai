@@ -303,8 +303,8 @@ func TestBuildRuntimePartNoAgentsMD(t *testing.T) {
 	if !strings.Contains(result, "Project Rules (AGENTS.md)") {
 		t.Error("runtime part missing AGENTS.md section")
 	}
-	if !strings.Contains(result, "Project Rules (AGENTS.md)\nNULL") {
-		t.Error("runtime part should render NULL for missing AGENTS.md")
+	if strings.Contains(result, "Project Rules (AGENTS.md)\nNULL") {
+		t.Error("runtime part should not render NULL for missing AGENTS.md")
 	}
 }
 

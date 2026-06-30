@@ -110,8 +110,6 @@ Already verified — no need to check availability. Prefer these helpers over th
 
 {AGENTS_CONTENT}
 
-[PROJECT CONTEXT]
+[PROJECT CONTENT]
 
-Project-local context from `{WORK_DIR}/specs.md`. Contains Description (what the project does), Map (folder/file structure), and Specs (architecture spec index). Use this to orient yourself before exploring broadly. If empty, no project context has been generated yet.
-
-{PROJECT_CONTEXT}
+{PROJECT_CONTENT}

@@ -156,6 +156,10 @@ func allowsEmptyTemplateValue(name string) bool {
 		return true
 	case "SKILLS_ACTIVE":
 		return true
+	case "PROJECT_CONTENT":
+		return true
+	case "AGENTS_CONTENT":
+		return true
 	default:
 		return false
 	}
