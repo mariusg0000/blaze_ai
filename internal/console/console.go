@@ -37,7 +37,7 @@ const (
 	colorPurple      = "\033[1;35m"  // bold magenta
 	colorOrange      = "\033[1;33m"  // bold yellow
 	colorBrightBlue  = "\033[1;34m"  // bold blue (same as colorBlue, for borders)
-	colorReasoning   = "\033[90m"    // bright black (gray)
+	colorReasoning   = "\033[38;5;244m" // medium gray
 	colorCtx         = "\033[1;96m"
 )
 
