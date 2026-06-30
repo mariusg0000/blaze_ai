@@ -122,7 +122,7 @@ Slow (~10+ minutes). Deep architecture documentation.
     - Incremental mode (default): one spec at a time, user confirms each.
     - Batch mode: only if user explicitly says "generate all specs".
 
-14. Write `specs.md` with full Description + Map + Specs index table. Specs section links to each file with a relative path (`[specs/NN-concept.md](specs/NN-concept.md)`).
+14. Write `specs.md` with full Description + Map + Specs index table. Specs section lists each file by its relative path (`specs/NN-concept.md`).
 
 ---
 
@@ -248,8 +248,8 @@ specs_dot_md_template:
 
 | # | File | Concept | Keywords |
 |---|------|---------|----------|
-| 01 | [specs/01-architecture.md](specs/01-architecture.md) | Architecture | modules, layers, dependency, data flow |
-| 02 | [specs/02-config-schema.md](specs/02-config-schema.md) | Config Schema | provider, model, roles, config.json |
+| 01 | specs/01-architecture.md | Architecture | modules, layers, dependency, data flow |
+| 02 | specs/02-config-schema.md | Config Schema | provider, model, roles, config.json |
 
 *No detailed specs yet. Run the skill with full analysis to generate them.*
 ```
