@@ -51,19 +51,19 @@ func TestDetectNoneAvailable(t *testing.T) {
 
 // TestAvailableCoreHelpers verifies available core helpers appear when detected.
 func TestAvailableCoreHelpers(t *testing.T) {
-	statuses := Detect(fakeLookup([]string{"rg", "fd", "jq", "git", "curl", "pandoc", "sqlite3"}))
+	statuses := Detect(fakeLookup([]string{"xh", "rg", "fd", "jq", "git", "pandoc", "sqlite3"}))
 	available := Available(statuses, "/tmp")
 	if len(available) != 7 {
 		t.Fatalf("Available() returned %d helpers, want 7", len(available))
 	}
-	if available[0].Name != "curl" || available[6].Name != "sqlite3" {
+	if available[0].Name != "fd" || available[6].Name != "xh" {
 		t.Fatalf("Available() not sorted by name: first=%q last=%q", available[0].Name, available[6].Name)
 	}
 }
 
 // TestMissingCoreHelpers verifies missing core helpers are returned when unavailable.
 func TestMissingCoreHelpers(t *testing.T) {
-	statuses := Detect(fakeLookup([]string{"git", "curl"}))
+	statuses := Detect(fakeLookup([]string{"git", "xh"}))
 	missing := MissingCore(statuses, config.HelperSetup{})
 	if len(missing) == 0 {
 		t.Fatal("MissingCore() returned no helpers, want missing core helpers")
@@ -75,7 +75,7 @@ func TestMissingCoreHelpers(t *testing.T) {
 
 // TestMissingCoreHelpersDeclined verifies declined helpers are excluded.
 func TestMissingCoreHelpersDeclined(t *testing.T) {
-	statuses := Detect(fakeLookup([]string{"curl"}))
+	statuses := Detect(fakeLookup([]string{"xh"}))
 	missing := MissingCore(statuses, config.HelperSetup{Declined: []string{"rg", "fd"}})
 	for _, s := range missing {
 		if s.Name == "rg" || s.Name == "fd" {
@@ -86,7 +86,7 @@ func TestMissingCoreHelpersDeclined(t *testing.T) {
 
 // TestMissingCoreHelpersNoMissing verifies empty result when nothing is missing.
 func TestMissingCoreHelpersNoMissing(t *testing.T) {
-	statuses := Detect(fakeLookup([]string{"rg", "fd", "jq", "git", "curl", "pandoc", "sqlite3"}))
+	statuses := Detect(fakeLookup([]string{"rg", "fd", "jq", "git", "pandoc", "sqlite3", "xh"}))
 	missing := MissingCore(statuses, config.HelperSetup{})
 	if len(missing) != 0 {
 		t.Fatalf("MissingCore() returned %d helpers, want 0", len(missing))

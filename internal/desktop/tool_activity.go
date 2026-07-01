@@ -116,15 +116,20 @@ func decodeReplayToolCalls(raw interface{}, registry *tools.Registry) []replayTo
 
 func formatPendingToolLine(name string, args string) string {
 	icon := toolEmoji(name)
-	text := summarizeToolArgs(args)
-	if text == "" {
+	if args == "" {
 		return icon + " " + name + "..."
 	}
-	return icon + " " + text + "..."
+	return icon + " " + args + "..."
 }
 
 func formatCompletedToolLine(name string, args string, badge string, detail string) string {
-	base := strings.TrimSuffix(formatPendingToolLine(name, args), "...")
+	icon := toolEmoji(name)
+	var base string
+	if args == "" {
+		base = icon + " " + name
+	} else {
+		base = icon + " " + args
+	}
 	switch badge {
 	case "ERROR":
 		if detail != "" {
@@ -139,18 +144,6 @@ func formatCompletedToolLine(name string, args string, badge string, detail stri
 	default:
 		return base + " ✅"
 	}
-}
-
-func summarizeToolArgs(args string) string {
-	text := strings.TrimSpace(args)
-	if text == "" {
-		return ""
-	}
-	text = strings.Join(strings.Fields(text), " ")
-	if len(text) > 90 {
-		return text[:87] + "..."
-	}
-	return text
 }
 
 func toolEmoji(name string) string {
@@ -185,7 +178,7 @@ func parseToolResultSummary(result string) (badge string, detail string) {
 		return "TIMEOUT", strings.TrimSpace(strings.TrimPrefix(result, "timeout"))
 	}
 	if strings.HasPrefix(result, "error:") {
-		return "ERROR", summarizeToolDetail(strings.TrimSpace(strings.TrimPrefix(result, "error:")))
+		return "ERROR", strings.TrimSpace(strings.TrimPrefix(result, "error:"))
 	}
 	if strings.HasPrefix(result, "exit_code:") {
 		rest := strings.TrimSpace(strings.TrimPrefix(result, "exit_code:"))
@@ -202,10 +195,10 @@ func parseToolResultSummary(result string) (badge string, detail string) {
 			return "DONE", ""
 		}
 		if stderr != "" {
-			return "ERROR", summarizeToolDetail(stderr)
+			return "ERROR", stderr
 		}
 		if stdout != "" {
-			return "ERROR", summarizeToolDetail(stdout)
+			return "ERROR", stdout
 		}
 		return "ERROR", "exit code " + exitCodeStr
 	}
@@ -213,18 +206,6 @@ func parseToolResultSummary(result string) (badge string, detail string) {
 		return "DONE", ""
 	}
 	return "DONE", ""
-}
-
-func summarizeToolDetail(text string) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return ""
-	}
-	text = strings.Join(strings.Fields(text), " ")
-	if len(text) > 120 {
-		return text[:117] + "..."
-	}
-	return text
 }
 
 func extractToolSection(text string, label string) string {

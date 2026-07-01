@@ -72,9 +72,9 @@ var Known = []Helper{
 		Kind:        KindCore,
 	},
 	{
-		Name:        "curl",
-		Description: "HTTP requests, API calls, and downloads",
-		Instruction: "Use curl for HTTP requests, API checks, and downloads.",
+		Name:        "xh",
+		Description: "HTTP requests with JSON shorthand (Rust, cross-platform curl alternative)",
+		Instruction: "Use xh for HTTP and API requests.",
 		Kind:        KindCore,
 	},
 	{

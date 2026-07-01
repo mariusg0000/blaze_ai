@@ -80,13 +80,14 @@ __HIGHLIGHT_LIGHT_CSS__
       --row-tool: #2d2f29;
       --row-reasoning: #28241f;
       --text: #fbf4db;
-      --text-muted: #8a8a7a;
-      --text-dim: #a09c8e;
+      --text-muted: #75715e;
+      --text-dim: #a6a297;
       --accent: #66d9ef;
       --accent-2: #a6e22e;
-      --title: #f4a030;
+      --user-text: #cde6ba;
       --reasoning-text: #99948a;
-      --tool-text: #b0cc7e;
+      --tool-prefix: #5abdde;
+      --tool-text: #add8e6;
       --border: #35362f;
       --panel: #1e1f1c;
       --panel-2: #32332e;
@@ -107,9 +108,10 @@ __HIGHLIGHT_LIGHT_CSS__
       --text-dim: #5a5648;
       --accent: #2978a0;
       --accent-2: #4a7a2c;
-      --title: #c8701e;
+      --user-text: #4a7a2c;
       --reasoning-text: #a0988a;
-      --tool-text: #558a28;
+      --tool-prefix: #297898;
+      --tool-text: #3a80a0;
       --border: #e4e2d5;
       --panel: #f4f2f0;
       --panel-2: #e4e2d5;
@@ -141,9 +143,10 @@ __HIGHLIGHT_LIGHT_CSS__
     }
     .topbar .title {
       font-weight: 700;
-      color: var(--title);
       margin-right: 4px;
     }
+    html[data-theme="dark"] .topbar .title { color: #f4a030; }
+    html[data-theme="light"] .topbar .title { color: #c8701e; }
     .topbar .workdir {
       flex: 1 1 200px;
       min-width: 0;
@@ -199,10 +202,10 @@ __HIGHLIGHT_LIGHT_CSS__
       flex-direction: column;
       gap: 4px;
     }
-    .row-user { background: var(--row-user); }
-    .row-assistant { background: var(--row-assistant); }
+    .row-user { background: var(--row-user); color: var(--user-text); }
+    .row-assistant { background: var(--row-assistant); color: var(--text); }
     .row-system { background: var(--row-system); color: var(--text-dim); }
-    .row-tool { background: var(--row-tool); color: var(--tool-text); font-weight: 700; }
+    .row-tool { background: var(--row-tool); color: var(--tool-text); }
     .row-reasoning { background: var(--row-reasoning); color: var(--reasoning-text); }
 
     .row .prefix {
@@ -213,8 +216,11 @@ __HIGHLIGHT_LIGHT_CSS__
       color: var(--text-muted);
     }
     .row-user .prefix { color: var(--accent-2); }
+    .row-assistant .prefix { color: inherit; }
+    html[data-theme="dark"] .row-assistant .prefix { color: #f4a030; }
+    html[data-theme="light"] .row-assistant .prefix { color: #c8701e; }
     .row-reasoning .prefix { color: var(--reasoning-text); }
-    .row-tool .prefix { color: var(--tool-text); }
+    .row-tool .prefix { color: var(--tool-prefix); }
 
     .row .content { width: 100%; }
     .row .content > *:first-child { margin-top: 0; }
