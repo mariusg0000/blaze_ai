@@ -14,7 +14,11 @@ import (
 	"blazeai/internal/platform"
 )
 
-const configFileName = "config.json"
+const (
+	configFileName = "config.json"
+	saveFileMode   = 0600
+	dirFileMode    = 0755
+)
 
 // Config holds the static configuration for the singleton desktop transport.
 //
@@ -91,6 +95,36 @@ func LoadConfigFrom(path string) (*Config, error) {
 		return nil, fmt.Errorf("invalid desktop config %s: %w", path, err)
 	}
 	return &cfg, nil
+}
+
+// SaveTo persists the config atomically to the given file path.
+//
+// WHAT:  Writes config.json to disk with an atomic write (tmp + rename).
+// WHY:   Runtime workdir changes (via directory picker) must survive restarts without
+// corrupting the config file on partial writes.
+// PARAMS: path — absolute config file path.
+// RETURNS: error if validate, marshal, write, or rename fails.
+func (c *Config) SaveTo(path string) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, dirFileMode); err != nil {
+		return fmt.Errorf("cannot create config directory %s: %w", dir, err)
+	}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return fmt.Errorf("cannot marshal desktop config: %w", err)
+	}
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, saveFileMode); err != nil {
+		return fmt.Errorf("cannot write temp config %s: %w", tmpPath, err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("cannot commit config %s: %w", path, err)
+	}
+	return nil
 }
 
 // Validate checks desktop config fields strictly.

@@ -35,17 +35,19 @@ type ShellArgs struct {
 //
 // WHAT:  Runs a shell command with timeout and returns raw output.
 // WHY:   Shell is the primary tool for the agent — most tasks go through it.
-// PARAMS: os — the detected OS for shell selection.
+// HOW:   Uses workDir as the shell's working directory when non-empty.
+// PARAMS: os — the detected OS for shell selection; workDir — closure returning the current project directory.
 type ShellTool struct {
-	os platform.OS
+	os      platform.OS
+	workDir func() string
 }
 
-// NewShellTool creates a ShellTool for the given OS.
+// NewShellTool creates a ShellTool for the given OS and workdir accessor.
 //
-// PARAMS: os — the detected operating system.
+// PARAMS: os — the detected operating system; workDir — closure returning the current project directory.
 // RETURNS: *ShellTool — ready to execute commands.
-func NewShellTool(os platform.OS) *ShellTool {
-	return &ShellTool{os: os}
+func NewShellTool(os platform.OS, workDir func() string) *ShellTool {
+	return &ShellTool{os: os, workDir: workDir}
 }
 
 // Name returns the tool's unique identifier.
@@ -118,7 +120,15 @@ func (s *ShellTool) Execute(ctx context.Context, args json.RawMessage) string {
 	if parsed.Timeout != nil && *parsed.Timeout > 0 {
 		timeoutSec = *parsed.Timeout
 	}
-	return executeShell(ctx, s.os, parsed.Command, "", nil, timeoutSec)
+	return executeShell(ctx, s.os, parsed.Command, s.currentWorkDir(), nil, timeoutSec)
+}
+
+// currentWorkDir resolves the current project directory for shell execution.
+func (s *ShellTool) currentWorkDir() string {
+	if s.workDir == nil {
+		return ""
+	}
+	return s.workDir()
 }
 
 // executeShell runs shell input with the shared timeout, output, and cancellation rules.

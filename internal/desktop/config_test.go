@@ -5,6 +5,7 @@
 package desktop
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,5 +124,87 @@ func TestParseHotkeyConfigNormalizesShortcut(t *testing.T) {
 	}
 	if spec.Display != "Ctrl+Alt+B" {
 		t.Fatalf("spec.Display = %q, want %q", spec.Display, "Ctrl+Alt+B")
+	}
+}
+
+func TestLoadStateFromRejectsInvalidTheme(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(path, []byte(`{"selected_model":"openai/gpt-5","theme":"solarized"}`), 0644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+	globalCfg := &runtimecfg.Config{
+		Providers: []runtimecfg.Provider{{Name: "openai", Endpoint: "https://example.com", APIKey: "k"}},
+	}
+	_, err := LoadStateFrom(path, globalCfg)
+	if err == nil {
+		t.Fatal("LoadStateFrom() error = nil, want invalid theme error")
+	}
+	if !strings.Contains(err.Error(), "theme must be one of dark, light") {
+		t.Fatalf("LoadStateFrom() error = %v, want theme validation", err)
+	}
+}
+
+func TestLoadStateFromAcceptsBlankAndKnownTheme(t *testing.T) {
+	globalCfg := &runtimecfg.Config{
+		Providers: []runtimecfg.Provider{{Name: "openai", Endpoint: "https://example.com", APIKey: "k"}},
+	}
+	for _, theme := range []string{"", "dark", "light"} {
+		path := filepath.Join(t.TempDir(), "state.json")
+		payload := `{"selected_model":"openai/gpt-5","theme":` + "\"" + theme + "\"}"
+		if err := os.WriteFile(path, []byte(payload), 0644); err != nil {
+			t.Fatalf("WriteFile() error: %v", err)
+		}
+		state, err := LoadStateFrom(path, globalCfg)
+		if err != nil {
+			t.Fatalf("LoadStateFrom(theme=%q) error: %v", theme, err)
+		}
+		want := theme
+		if want == "" {
+			want = DarkTheme
+		}
+		if got := state.ThemeValue(); got != want {
+			t.Fatalf("ThemeValue() = %q, want %q (theme=%q)", got, want, theme)
+		}
+	}
+}
+
+func TestLoadStateFromRejectsInvalidFontSize(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(path, []byte(`{"selected_model":"openai/gpt-5","font_size":25}`), 0644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+	globalCfg := &runtimecfg.Config{
+		Providers: []runtimecfg.Provider{{Name: "openai", Endpoint: "https://example.com", APIKey: "k"}},
+	}
+	_, err := LoadStateFrom(path, globalCfg)
+	if err == nil {
+		t.Fatal("LoadStateFrom() error = nil, want font_size validation error")
+	}
+	if !strings.Contains(err.Error(), "font_size must be between") {
+		t.Fatalf("LoadStateFrom() error = %v, want font_size validation", err)
+	}
+}
+
+func TestLoadStateFromAcceptsValidFontSize(t *testing.T) {
+	globalCfg := &runtimecfg.Config{
+		Providers: []runtimecfg.Provider{{Name: "openai", Endpoint: "https://example.com", APIKey: "k"}},
+	}
+	for _, fs := range []float64{0, 11, 12, 13.5, 15, 17} {
+		path := filepath.Join(t.TempDir(), "state.json")
+		payload := `{"selected_model":"openai/gpt-5","font_size":` + fmt.Sprintf("%g", fs) + `}`
+		if err := os.WriteFile(path, []byte(payload), 0644); err != nil {
+			t.Fatalf("WriteFile() error: %v", err)
+		}
+		state, err := LoadStateFrom(path, globalCfg)
+		if err != nil {
+			t.Fatalf("LoadStateFrom(font_size=%v) error: %v", fs, err)
+		}
+		want := fs
+		if fs <= 0 {
+			want = defaultFontSize
+		}
+		if got := state.FontSizeValue(); got != want {
+			t.Fatalf("FontSizeValue() = %v, want %v (font_size=%v)", got, want, fs)
+		}
 	}
 }

@@ -30,6 +30,24 @@ static void desktopHideWindow(GtkWindow* window) {
 	gtk_widget_hide(GTK_WIDGET(window));
 }
 
+static char* desktopPickDirectory(const char* title, const char* defaultPath) {
+	GtkWidget* dialog = gtk_file_chooser_dialog_new(
+		title, NULL, GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
+		"_Cancel", GTK_RESPONSE_CANCEL,
+		"_Select", GTK_RESPONSE_ACCEPT,
+		NULL
+	);
+	if (defaultPath != NULL && g_file_test(defaultPath, G_FILE_TEST_IS_DIR)) {
+		gtk_file_chooser_set_filename(GTK_FILE_CHOOSER(dialog), defaultPath);
+	}
+	gchar* result = NULL;
+	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+		result = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
+	}
+	gtk_widget_destroy(dialog);
+	return result;
+}
+
 static gboolean desktopWindowVisible(GtkWindow* window) {
 	return gtk_widget_get_visible(GTK_WIDGET(window));
 }
@@ -145,6 +163,22 @@ func (p *linuxDesktopPlatform) Shutdown() {
 		_ = p.ui.flushState()
 		systray.Quit()
 	})
+}
+
+// pickDirectoryNative opens a GTK directory chooser on the main thread and returns
+// the selected directory path (or "" if cancelled). Must be called from within
+// view.Dispatch or another GTK main thread context.
+func pickDirectoryNative(title, defaultPath string) (string, error) {
+	cTitle := C.CString(title)
+	cDefault := C.CString(defaultPath)
+	defer C.free(unsafe.Pointer(cTitle))
+	defer C.free(unsafe.Pointer(cDefault))
+	cPath := C.desktopPickDirectory(cTitle, cDefault)
+	if cPath == nil {
+		return "", nil
+	}
+	defer C.g_free(C.gpointer(cPath))
+	return C.GoString(cPath), nil
 }
 
 func (p *linuxDesktopPlatform) onTrayReady() {

@@ -19,17 +19,44 @@ const stateFileName = "state.json"
 
 // State holds mutable local desktop transport state.
 //
-// WHAT:  Stores the selected model and persistent window geometry for the desktop transport.
-// WHY:   Desktop-local model changes and window layout should survive restarts.
+// WHAT:  Stores the selected model, UI theme, font size, and persistent window geometry for the desktop transport.
+// WHY:   Desktop-local model changes, theme preference, font size, and window layout should survive restarts.
 // PARAMS: SelectedModel — active provider/model_name for the desktop app;
+// Theme — UI theme id ("dark" or "light"); empty treated as defaultDarkTheme at render time;
+// FontSize — base font size in px; 0 treated as defaultFontSize at render time;
 // Window — last persisted window coordinates and size.
 type State struct {
 	SelectedModel string      `json:"selected_model"`
+	Theme         string      `json:"theme"`
+	FontSize      float64     `json:"font_size"`
 	Window        WindowState `json:"window"`
 
 	mu     sync.Mutex `json:"-"`
 	saveMu sync.Mutex `json:"-"`
 }
+
+// defaultFontSize is the cosmetic default for a blank or zero font_size.
+const defaultFontSize = 13.5
+
+// font size range constraints for validation.
+const (
+	minFontSize = 10.0
+	maxFontSize = 20.0
+)
+
+// Desktop theme ids used by the UI renderer.
+const (
+	DarkTheme  = "dark"
+	LightTheme = "light"
+)
+
+// themes maps accepted theme ids to themselves for validation.
+var themes = map[string]struct{}{DarkTheme: {}, LightTheme: {}}
+
+// defaultTheme is the cosmetic default applied when the stored theme is blank.
+// This is a UI preference, not a critical config fallback: a blank value is allowed
+// in persisted state and resolved at render time.
+const defaultTheme = DarkTheme
 
 // WindowState holds the persisted desktop window geometry.
 //
@@ -102,13 +129,12 @@ func LoadStateFrom(path string, cfg *config.Config) (*State, error) {
 
 // Validate checks the selected model against global providers.
 //
-// WHAT:  Validates the desktop-local selected model and optional stored window geometry.
+// WHAT:  Validates the desktop-local selected model, theme, and optional stored window geometry.
 // WHY:   The transport must stop instead of silently falling back to another model or broken bounds.
 // PARAMS: cfg — loaded global runtime config.
 // RETURNS: error if the selected model is missing or invalid.
 func (s *State) Validate(cfg *config.Config) error {
-	snapshot := s.snapshot()
-	return snapshot.validate(cfg)
+	return validatePersisted(s.snapshot(), cfg)
 }
 
 func (s *State) validate(cfg *config.Config) error {
@@ -126,6 +152,12 @@ func (s *State) validate(cfg *config.Config) error {
 	if cfg.ProviderByName(providerName) == nil {
 		return fmt.Errorf("selected_model provider not found: %s", providerName)
 	}
+	if err := validateTheme(s.Theme); err != nil {
+		return err
+	}
+	if err := validateFontSize(s.FontSize); err != nil {
+		return err
+	}
 	if s.Window.Initialized {
 		if s.Window.Width <= 0 {
 			return fmt.Errorf("window.width must be greater than zero")
@@ -133,6 +165,62 @@ func (s *State) validate(cfg *config.Config) error {
 		if s.Window.Height <= 0 {
 			return fmt.Errorf("window.height must be greater than zero")
 		}
+	}
+	return nil
+}
+
+// validatePersisted runs the same validation against the lock-free snapshot.
+func validatePersisted(p persistedState, cfg *config.Config) error {
+	if cfg == nil {
+		return fmt.Errorf("global config is required")
+	}
+	modelID := strings.TrimSpace(p.SelectedModel)
+	if modelID == "" {
+		return fmt.Errorf("selected_model is required")
+	}
+	providerName, modelName := config.SplitModelID(modelID)
+	if providerName == "" || modelName == "" || strings.Contains(modelName, "/") {
+		return fmt.Errorf("selected_model must be in provider/model_name format")
+	}
+	if cfg.ProviderByName(providerName) == nil {
+		return fmt.Errorf("selected_model provider not found: %s", providerName)
+	}
+	if err := validateTheme(p.Theme); err != nil {
+		return err
+	}
+	if err := validateFontSize(p.FontSize); err != nil {
+		return err
+	}
+	if p.Window.Initialized {
+		if p.Window.Width <= 0 {
+			return fmt.Errorf("window.width must be greater than zero")
+		}
+		if p.Window.Height <= 0 {
+			return fmt.Errorf("window.height must be greater than zero")
+		}
+	}
+	return nil
+}
+
+// validateFontSize accepts 0 (resolved to defaultFontSize at render time) or a value in [minFontSize, maxFontSize].
+func validateFontSize(fs float64) error {
+	if fs == 0 {
+		return nil
+	}
+	if fs < minFontSize || fs > maxFontSize {
+		return fmt.Errorf("font_size must be between %.1f and %.1f or 0 (default %.1f)", minFontSize, maxFontSize, defaultFontSize)
+	}
+	return nil
+}
+
+// validateTheme accepts a blank value (resolved to default at render time) or a known id.
+func validateTheme(theme string) error {
+	theme = strings.TrimSpace(theme)
+	if theme == "" {
+		return nil
+	}
+	if _, ok := themes[theme]; !ok {
+		return fmt.Errorf("theme must be one of dark, light: %s", theme)
 	}
 	return nil
 }
@@ -148,6 +236,24 @@ func (s *State) SelectedModelValue() string {
 func (s *State) SetSelectedModel(modelID string) {
 	s.mu.Lock()
 	s.SelectedModel = modelID
+	s.mu.Unlock()
+}
+
+// ThemeValue returns the resolved UI theme id, applying the default for blank values.
+func (s *State) ThemeValue() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	theme := strings.TrimSpace(s.Theme)
+	if theme == "" {
+		return defaultTheme
+	}
+	return theme
+}
+
+// SetTheme updates the persisted UI theme id safely.
+func (s *State) SetTheme(theme string) {
+	s.mu.Lock()
+	s.Theme = theme
 	s.mu.Unlock()
 }
 
@@ -180,10 +286,43 @@ func (s *State) UpdateWindowBounds(bounds WindowBounds) bool {
 	return changed
 }
 
-func (s *State) snapshot() State {
+func (s *State) snapshot() persistedState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return State{SelectedModel: s.SelectedModel, Window: s.Window}
+	return persistedState{
+		SelectedModel: s.SelectedModel,
+		Theme:         s.Theme,
+		FontSize:      s.FontSize,
+		Window:        s.Window,
+	}
+}
+
+// persistedState is the lock-free JSON view of State.
+//
+// WHAT:  Holds only the serializable desktop state fields.
+// WHY:   Marshalling State directly copies its sync.Mutex fields; this type avoids the copy.
+type persistedState struct {
+	SelectedModel string      `json:"selected_model"`
+	Theme         string      `json:"theme"`
+	FontSize      float64     `json:"font_size"`
+	Window        WindowState `json:"window"`
+}
+
+// FontSizeValue returns the resolved font size, applying the default for zero values.
+func (s *State) FontSizeValue() float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.FontSize <= 0 {
+		return defaultFontSize
+	}
+	return s.FontSize
+}
+
+// SetFontSize updates the persisted font size safely.
+func (s *State) SetFontSize(fs float64) {
+	s.mu.Lock()
+	s.FontSize = fs
+	s.mu.Unlock()
 }
 
 // SaveTo writes state.json atomically to an explicit path.
@@ -195,15 +334,15 @@ func (s *State) snapshot() State {
 func (s *State) SaveTo(path string, cfg *config.Config) error {
 	s.saveMu.Lock()
 	defer s.saveMu.Unlock()
-	snapshot := s.snapshot()
-	if err := snapshot.validate(cfg); err != nil {
+	snap := s.snapshot()
+	if err := validatePersisted(snap, cfg); err != nil {
 		return err
 	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("cannot create desktop state directory %s: %w", dir, err)
 	}
-	data, err := json.MarshalIndent(snapshot, "", "  ")
+	data, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
 		return fmt.Errorf("cannot marshal desktop state: %w", err)
 	}

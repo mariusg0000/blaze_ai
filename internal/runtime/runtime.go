@@ -196,7 +196,7 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 	})
 
 	registry := tools.NewRegistry()
-	registry.Register(tools.NewShellTool(os))
+	registry.Register(tools.NewShellTool(os, func() string { return agent.WorkDir }))
 	registry.Register(tools.NewLoadSkillTool(active, skillResolver))
 	registry.Register(tools.NewUnloadSkillTool(active, skillResolver))
 	registry.Register(tools.NewRunSkillTool(os, runnableSkillResolver, func() string { return agent.WorkDir }))

@@ -152,7 +152,7 @@ func TestRegistryFormatArgsMissingTool(t *testing.T) {
 
 // TestShellFormatArgs verifies shell tool prefers purpose for display.
 func TestShellFormatArgs(t *testing.T) {
-	s := NewShellTool(platform.Linux)
+	s := NewShellTool(platform.Linux, nil)
 	result := s.FormatArgs(json.RawMessage(`{"purpose":"Inspect package.json scripts","command":"cat '/path/file'"}`))
 	if result != "Inspect package.json scripts" {
 		t.Errorf("FormatArgs() = %q, want %q", result, "Inspect package.json scripts")
@@ -161,7 +161,7 @@ func TestShellFormatArgs(t *testing.T) {
 
 // TestShellFormatArgsFallback verifies shell falls back to command when purpose is missing.
 func TestShellFormatArgsFallback(t *testing.T) {
-	s := NewShellTool(platform.Linux)
+	s := NewShellTool(platform.Linux, nil)
 	result := s.FormatArgs(json.RawMessage(`{"command":"cat '/path/file'"}`))
 	if result != "cat '/path/file'" {
 		t.Errorf("FormatArgs() = %q, want %q", result, "cat '/path/file'")
@@ -170,7 +170,7 @@ func TestShellFormatArgsFallback(t *testing.T) {
 
 // TestShellFormatArgsFallbackTruncated verifies shell fallback is truncated at 50 chars.
 func TestShellFormatArgsFallbackTruncated(t *testing.T) {
-	s := NewShellTool(platform.Linux)
+	s := NewShellTool(platform.Linux, nil)
 	longCmd := "echo "
 	for i := 0; i < 60; i++ {
 		longCmd += "x"

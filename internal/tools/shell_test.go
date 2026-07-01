@@ -13,7 +13,7 @@ import (
 
 // TestShellExecuteSuccess verifies a simple command runs and returns output.
 func TestShellExecuteSuccess(t *testing.T) {
-	tool := NewShellTool(platform.Linux)
+	tool := NewShellTool(platform.Linux, nil)
 	args := json.RawMessage(`{"command":"echo hello"}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "hello") {
@@ -26,7 +26,7 @@ func TestShellExecuteSuccess(t *testing.T) {
 
 // TestShellExecuteStderr verifies stderr is captured.
 func TestShellExecuteStderr(t *testing.T) {
-	tool := NewShellTool(platform.Linux)
+	tool := NewShellTool(platform.Linux, nil)
 	args := json.RawMessage(`{"command":"echo error_msg >&2"}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error_msg") {
@@ -36,7 +36,7 @@ func TestShellExecuteStderr(t *testing.T) {
 
 // TestShellExecuteNonZeroExit verifies non-zero exit code is captured.
 func TestShellExecuteNonZeroExit(t *testing.T) {
-	tool := NewShellTool(platform.Linux)
+	tool := NewShellTool(platform.Linux, nil)
 	args := json.RawMessage(`{"command":"exit 42"}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "exit_code: 42") {
@@ -46,7 +46,7 @@ func TestShellExecuteNonZeroExit(t *testing.T) {
 
 // TestShellExecuteTimeout verifies timeout returns the correct message.
 func TestShellExecuteTimeout(t *testing.T) {
-	tool := NewShellTool(platform.Linux)
+	tool := NewShellTool(platform.Linux, nil)
 	// Use a 1-second timeout with a 5-second sleep.
 	args := json.RawMessage(`{"command":"sleep 5","timeout":1}`)
 	result := tool.Execute(context.Background(), args)
@@ -59,7 +59,7 @@ func TestShellExecuteTimeout(t *testing.T) {
 // TestShellExecuteTimeoutKillsBackgroundChildren verifies timeout returns even when the
 // shell command leaves a background child running.
 func TestShellExecuteTimeoutKillsBackgroundChildren(t *testing.T) {
-	tool := NewShellTool(platform.Linux)
+	tool := NewShellTool(platform.Linux, nil)
 	args := json.RawMessage(`{"command":"sleep 30 & sleep 30","timeout":1}`)
 	resultCh := make(chan string, 1)
 	go func() {
@@ -78,7 +78,7 @@ func TestShellExecuteTimeoutKillsBackgroundChildren(t *testing.T) {
 
 // TestShellExecuteUserAbort verifies cancellation returns partial aborted output instead of timeout.
 func TestShellExecuteUserAbort(t *testing.T) {
-	tool := NewShellTool(platform.Linux)
+	tool := NewShellTool(platform.Linux, nil)
 	args := json.RawMessage(`{"command":"echo start; sleep 30","timeout":60}`)
 	ctx, cancel := context.WithCancel(context.Background())
 	resultCh := make(chan string, 1)
@@ -103,7 +103,7 @@ func TestShellExecuteUserAbort(t *testing.T) {
 
 // TestShellExecuteDefaultTimeout verifies default timeout is used when not specified.
 func TestShellExecuteDefaultTimeout(t *testing.T) {
-	tool := NewShellTool(platform.Linux)
+	tool := NewShellTool(platform.Linux, nil)
 	// Just verify the tool works without a timeout parameter.
 	args := json.RawMessage(`{"command":"echo quick"}`)
 	result := tool.Execute(context.Background(), args)
@@ -114,7 +114,7 @@ func TestShellExecuteDefaultTimeout(t *testing.T) {
 
 // TestShellExecuteEmptyCommand verifies error on empty command.
 func TestShellExecuteEmptyCommand(t *testing.T) {
-	tool := NewShellTool(platform.Linux)
+	tool := NewShellTool(platform.Linux, nil)
 	args := json.RawMessage(`{"command":""}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error") {
@@ -124,7 +124,7 @@ func TestShellExecuteEmptyCommand(t *testing.T) {
 
 // TestShellExecuteInvalidArgs verifies error on invalid JSON.
 func TestShellExecuteInvalidArgs(t *testing.T) {
-	tool := NewShellTool(platform.Linux)
+	tool := NewShellTool(platform.Linux, nil)
 	args := json.RawMessage(`{invalid}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "error") {
@@ -134,7 +134,7 @@ func TestShellExecuteInvalidArgs(t *testing.T) {
 
 // TestShellName verifies the tool name.
 func TestShellName(t *testing.T) {
-	tool := NewShellTool(platform.Linux)
+	tool := NewShellTool(platform.Linux, nil)
 	if tool.Name() != "shell" {
 		t.Errorf("Name() = %q, want 'shell'", tool.Name())
 	}
@@ -142,7 +142,7 @@ func TestShellName(t *testing.T) {
 
 // TestShellDescription verifies description is non-empty.
 func TestShellDescription(t *testing.T) {
-	tool := NewShellTool(platform.Linux)
+	tool := NewShellTool(platform.Linux, nil)
 	if tool.Description() == "" {
 		t.Error("Description() is empty")
 	}
@@ -150,7 +150,7 @@ func TestShellDescription(t *testing.T) {
 
 // TestShellParameters verifies parameters is valid JSON.
 func TestShellParameters(t *testing.T) {
-	tool := NewShellTool(platform.Linux)
+	tool := NewShellTool(platform.Linux, nil)
 	params := tool.Parameters()
 	if !json.Valid(params) {
 		t.Errorf("Parameters() is not valid JSON: %s", params)
@@ -160,7 +160,7 @@ func TestShellParameters(t *testing.T) {
 
 // TestShellExecuteMultilineOutput verifies multiline command output.
 func TestShellExecuteMultilineOutput(t *testing.T) {
-	tool := NewShellTool(platform.Linux)
+	tool := NewShellTool(platform.Linux, nil)
 	args := json.RawMessage(`{"command":"echo line1 && echo line2"}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "line1") || !strings.Contains(result, "line2") {
@@ -170,7 +170,7 @@ func TestShellExecuteMultilineOutput(t *testing.T) {
 
 // TestShellExecuteOutputLimitStdout verifies broad stdout output is stopped at the hard cap.
 func TestShellExecuteOutputLimitStdout(t *testing.T) {
-	tool := NewShellTool(platform.Linux)
+	tool := NewShellTool(platform.Linux, nil)
 	args := json.RawMessage(`{"command":"yes x | head -c 200000"}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "shell output exceeded the 150 kB limit") {
@@ -186,7 +186,7 @@ func TestShellExecuteOutputLimitStdout(t *testing.T) {
 
 // TestShellExecuteOutputLimitStderr verifies broad stderr output is stopped at the hard cap.
 func TestShellExecuteOutputLimitStderr(t *testing.T) {
-	tool := NewShellTool(platform.Linux)
+	tool := NewShellTool(platform.Linux, nil)
 	args := json.RawMessage(`{"command":"yes x | head -c 200000 1>&2"}`)
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "shell output exceeded the 150 kB limit") {

@@ -6,17 +6,19 @@ package desktop
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 )
 
 type transcriptSink interface {
 	AppendUser(text string)
 	AppendSystem(text string)
-	AppendTool(text string)
 	StartAssistant()
 	AppendAssistant(delta string)
 	FinishAssistant()
+	StartReasoning()
+	AppendReasoning(delta string)
+	FinishReasoning()
+	SetToolActivity(text string)
 	SetStatus(text string)
 	SetBusy(active bool)
 }
@@ -29,10 +31,12 @@ type transcriptSink interface {
 type Handler struct {
 	sink transcriptSink
 
-	mu               sync.Mutex
-	assistantStarted bool
-	lastTokens       int
-	lastErr          error
+	mu                sync.Mutex
+	assistantStarted  bool
+	reasoningStarted  bool
+	lastTokens        int
+	lastErr           error
+	activity          toolActivity
 }
 
 // NewHandler creates a desktop runtime handler.
@@ -52,8 +56,10 @@ func NewHandler(sink transcriptSink) *Handler {
 func (h *Handler) BeginTurn() {
 	h.mu.Lock()
 	h.assistantStarted = false
+	h.reasoningStarted = false
 	h.lastTokens = 0
 	h.lastErr = nil
+	h.activity.Reset()
 	h.mu.Unlock()
 	if h.sink != nil {
 		h.sink.SetBusy(true)
@@ -74,6 +80,7 @@ func (h *Handler) FinishTurn(err error) {
 	if h.sink == nil {
 		return
 	}
+	h.sink.FinishReasoning()
 	h.sink.FinishAssistant()
 	h.sink.SetBusy(false)
 	if err != nil {
@@ -88,15 +95,21 @@ func (h *Handler) FinishTurn(err error) {
 }
 
 // OnContent appends one streamed assistant text delta.
+// A pending reasoning block is closed before the assistant block opens.
 func (h *Handler) OnContent(delta string) {
 	h.mu.Lock()
 	started := h.assistantStarted
+	reasoningActive := h.reasoningStarted
 	if !started {
 		h.assistantStarted = true
+		h.activity.Reset()
 	}
 	h.mu.Unlock()
 	if h.sink == nil {
 		return
+	}
+	if reasoningActive {
+		h.sink.FinishReasoning()
 	}
 	if !started {
 		h.sink.StartAssistant()
@@ -104,30 +117,26 @@ func (h *Handler) OnContent(delta string) {
 	h.sink.AppendAssistant(delta)
 }
 
-// OnToolCall appends a short tool activity line to the transcript.
+// OnToolCall updates the compact desktop activity block for one pending tool call.
 func (h *Handler) OnToolCall(name string, args string) {
-	if h.sink == nil {
-		return
+	h.mu.Lock()
+	h.activity.AddCall("", name, args)
+	activityText := h.activity.Render()
+	h.mu.Unlock()
+	if h.sink != nil {
+		h.sink.SetToolActivity(activityText)
 	}
-	args = strings.TrimSpace(args)
-	if args == "" {
-		h.sink.AppendTool(fmt.Sprintf("Running %s", name))
-		return
-	}
-	h.sink.AppendTool(fmt.Sprintf("Running %s\n%s", name, args))
 }
 
-// OnToolResult appends a short tool result line to the transcript.
+// OnToolResult replaces the pending tool line with a compact completed summary.
 func (h *Handler) OnToolResult(name string, result string) {
-	if h.sink == nil {
-		return
+	h.mu.Lock()
+	h.activity.ApplyResult("", name, result)
+	activityText := h.activity.Render()
+	h.mu.Unlock()
+	if h.sink != nil {
+		h.sink.SetToolActivity(activityText)
 	}
-	result = strings.TrimSpace(result)
-	if result == "" {
-		h.sink.AppendTool(fmt.Sprintf("%s completed", name))
-		return
-	}
-	h.sink.AppendTool(fmt.Sprintf("%s result\n%s", name, result))
 }
 
 // OnUsage stores prompt token usage for the last provider response.
@@ -137,9 +146,21 @@ func (h *Handler) OnUsage(promptTokens int) {
 	h.mu.Unlock()
 }
 
-// OnReasoning does not display hidden reasoning blocks in the desktop transport.
+// OnReasoning appends one streamed reasoning/thinking chunk as its own transcript row.
 func (h *Handler) OnReasoning(delta string) {
-	_ = delta
+	h.mu.Lock()
+	started := h.reasoningStarted
+	if !started {
+		h.reasoningStarted = true
+	}
+	h.mu.Unlock()
+	if h.sink == nil {
+		return
+	}
+	if !started {
+		h.sink.StartReasoning()
+	}
+	h.sink.AppendReasoning(delta)
 }
 
 // RequestSudoApproval denies sudo because the desktop transport has no secure password flow yet.
