@@ -37,7 +37,7 @@ func HandleCommand(input string, agent *runtime.Agent, cfg *config.Config, state
 		if err := agent.SetModelLocal(arg); err != nil {
 			return true, "", fmt.Errorf("cannot set model: %w", err)
 		}
-		state.SelectedModel = arg
+		state.SetSelectedModel(arg)
 		if err := state.SaveTo(statePath, cfg); err != nil {
 			return true, "", fmt.Errorf("cannot persist desktop state: %w", err)
 		}

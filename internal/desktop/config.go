@@ -1,6 +1,6 @@
 // config.go — desktop companion config loading and validation.
-// Loads app_home/desktop/config.json, validates required fields strictly, and
-// stops startup on any missing or invalid value.
+// Loads app_home/desktop/config.json, validates required fields and optional
+// hotkey settings strictly, and stops startup on any missing or invalid value.
 // Layer: transport configuration. Dependencies: internal/platform.
 package desktop
 
@@ -18,11 +18,24 @@ const configFileName = "config.json"
 
 // Config holds the static configuration for the singleton desktop transport.
 //
-// WHAT:  Desktop workdir binding for the local companion app.
-// WHY:   The desktop transport must run against one explicit project folder.
-// PARAMS: WorkDir — absolute project work directory used by the runtime.
+// WHAT:  Desktop workdir binding and optional global hotkey settings.
+// WHY:   The desktop transport must run against one explicit project folder and
+// optionally expose one explicit show/hide shortcut.
+// PARAMS: WorkDir — absolute project work directory used by the runtime;
+// ToggleHotkey — explicit desktop toggle shortcut configuration.
 type Config struct {
-	WorkDir string `json:"workdir"`
+	WorkDir      string       `json:"workdir"`
+	ToggleHotkey HotkeyConfig `json:"toggle_hotkey"`
+}
+
+// HotkeyConfig holds the optional desktop toggle shortcut configuration.
+//
+// WHAT:  Enables or disables one global show/hide hotkey for the desktop app.
+// WHY:   The user approved an explicit configurable shortcut instead of a hardcoded one.
+// PARAMS: Enabled — whether to register the hotkey; Shortcut — accelerator text like Ctrl+Shift+Space.
+type HotkeyConfig struct {
+	Enabled  bool   `json:"enabled"`
+	Shortcut string `json:"shortcut"`
 }
 
 // InstanceDir resolves the singleton desktop instance folder under app home.
@@ -98,6 +111,9 @@ func (c *Config) Validate() error {
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("workdir is not a directory: %s", c.WorkDir)
+	}
+	if err := validateHotkeyConfig(c.ToggleHotkey); err != nil {
+		return err
 	}
 	return nil
 }

@@ -30,7 +30,7 @@ func TestLoadConfigFromRequiresAbsoluteExistingWorkDir(t *testing.T) {
 func TestLoadConfigFromLoadsValidConfig(t *testing.T) {
 	workDir := t.TempDir()
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{"workdir":`+"\""+workDir+"\""+`}`), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(`{"workdir":`+"\""+workDir+"\""+`,"toggle_hotkey":{"enabled":true,"shortcut":"Ctrl+Shift+Space"}}`), 0644); err != nil {
 		t.Fatalf("WriteFile() error: %v", err)
 	}
 	cfg, err := LoadConfigFrom(path)
@@ -39,6 +39,24 @@ func TestLoadConfigFromLoadsValidConfig(t *testing.T) {
 	}
 	if cfg.WorkDir != workDir {
 		t.Fatalf("cfg.WorkDir = %q, want %q", cfg.WorkDir, workDir)
+	}
+	if !cfg.ToggleHotkey.Enabled || cfg.ToggleHotkey.Shortcut != "Ctrl+Shift+Space" {
+		t.Fatalf("cfg.ToggleHotkey = %+v, want enabled Ctrl+Shift+Space", cfg.ToggleHotkey)
+	}
+}
+
+func TestLoadConfigFromRejectsEnabledHotkeyWithoutShortcut(t *testing.T) {
+	workDir := t.TempDir()
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"workdir":`+"\""+workDir+"\""+`,"toggle_hotkey":{"enabled":true}}`), 0644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+	_, err := LoadConfigFrom(path)
+	if err == nil {
+		t.Fatal("LoadConfigFrom() error = nil, want missing hotkey shortcut error")
+	}
+	if !strings.Contains(err.Error(), "toggle_hotkey.shortcut is required") {
+		t.Fatalf("LoadConfigFrom() error = %v, want hotkey shortcut validation", err)
 	}
 }
 
@@ -59,7 +77,7 @@ func TestLoadStateFromRejectsUnknownProvider(t *testing.T) {
 
 func TestLoadStateFromLoadsValidState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	if err := os.WriteFile(path, []byte(`{"selected_model":"openai/gpt-5"}`), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(`{"selected_model":"openai/gpt-5","window":{"initialized":true,"x":10,"y":20,"width":900,"height":700}}`), 0644); err != nil {
 		t.Fatalf("WriteFile() error: %v", err)
 	}
 	globalCfg := &runtimecfg.Config{
@@ -71,5 +89,39 @@ func TestLoadStateFromLoadsValidState(t *testing.T) {
 	}
 	if state.SelectedModel != "openai/gpt-5" {
 		t.Fatalf("state.SelectedModel = %q, want %q", state.SelectedModel, "openai/gpt-5")
+	}
+	bounds, ok := state.WindowBoundsValue()
+	if !ok {
+		t.Fatal("state.WindowBoundsValue() ok = false, want true")
+	}
+	if bounds.Width != 900 || bounds.Height != 700 || bounds.X != 10 || bounds.Y != 20 {
+		t.Fatalf("state.WindowBoundsValue() = %+v, want {X:10 Y:20 Width:900 Height:700}", bounds)
+	}
+}
+
+func TestLoadStateFromRejectsInvalidWindowGeometry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(path, []byte(`{"selected_model":"openai/gpt-5","window":{"initialized":true,"width":0,"height":700}}`), 0644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+	globalCfg := &runtimecfg.Config{
+		Providers: []runtimecfg.Provider{{Name: "openai", Endpoint: "https://example.com", APIKey: "k"}},
+	}
+	_, err := LoadStateFrom(path, globalCfg)
+	if err == nil {
+		t.Fatal("LoadStateFrom() error = nil, want invalid window geometry error")
+	}
+	if !strings.Contains(err.Error(), "window.width must be greater than zero") {
+		t.Fatalf("LoadStateFrom() error = %v, want window geometry validation", err)
+	}
+}
+
+func TestParseHotkeyConfigNormalizesShortcut(t *testing.T) {
+	spec, err := ParseHotkeyConfig(HotkeyConfig{Enabled: true, Shortcut: " ctrl + alt + b "})
+	if err != nil {
+		t.Fatalf("ParseHotkeyConfig() error: %v", err)
+	}
+	if spec.Display != "Ctrl+Alt+B" {
+		t.Fatalf("spec.Display = %q, want %q", spec.Display, "Ctrl+Alt+B")
 	}
 }

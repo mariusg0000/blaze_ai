@@ -32,7 +32,7 @@
 - `internal/tools/` implements shell execution, skill tools, ask_a_friend, analyze_image, replace_block, and task tools.
 - `internal/console/` is a terminal-only REPL transport with raw input, slash commands, Markdown rendering, and streaming output.
 - `internal/telegram/` is a long-polling bridge that enforces one chat, accepts text and images, and adapts runtime streaming into Telegram messages.
-- `internal/desktop/` is a singleton embedded desktop transport that opens one fixed persistent session from `app_home/desktop/session` and serves a local chat UI inside one dedicated app window.
+- `internal/desktop/` is a singleton embedded desktop transport that opens one fixed persistent session from `app_home/desktop/session`, shows one dedicated app window, hides to tray, and can restore through tray or one explicit global hotkey.
 - `internal/llmcall/` provides one-shot secondary model calls for role-based delegation.
 - `internal/memory/` reads persistent memory text into prompt builds without automatic writes.
 
@@ -73,7 +73,7 @@
 - `internal/runtime/` - Agent core orchestration loop and transport handler contract. Builds prompts, calls providers, handles tool calls, persists session messages, and triggers compaction. Keywords: runtime, loop, provider, tools, compaction, handler
 - `internal/console/` - Terminal REPL transport implementing `OnContent`, `OnToolCall`, and `OnToolResult`. Handles raw input, slash commands, and Markdown rendering. Keywords: console, REPL, ANSI, raw mode, streaming, slash-commands
 - `internal/telegram/` - Telegram bridge transport with long polling, single-chat enforcement, text/image handling, and streaming output adaptation. Keywords: telegram, bridge, polling, images, handler, transport
-- `internal/desktop/` - Singleton embedded desktop transport with strict `config.json` and `state.json`, a fixed `session/` folder, local slash commands, and a dedicated app window UI. Keywords: desktop, embedded, singleton, local-ui, session, transport
+- `internal/desktop/` - Singleton embedded desktop transport with strict `config.json` and `state.json`, a fixed `session/` folder, local slash commands, tray integration, optional global hotkey, and a dedicated app window UI with persisted geometry. Keywords: desktop, embedded, tray, hotkey, singleton, local-ui, session, transport
 - `internal/prompt/` - Rebuilds the runtime prompt from disk sources on every LLM call and injects variables. Keywords: prompt, sysprompt, variables, skills, AGENTS, specs
 - `internal/config/` - Loads and validates runtime config and work modes, including providers, roles, compaction settings, and first-run conditions. Keywords: config, validation, modes, roles, providers, compaction, first-run
 - `internal/session/` - File-based session persistence under project-scoped session folders. Keywords: sessions, JSON, persistence, resume, clean-close

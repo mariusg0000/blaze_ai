@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	webview "github.com/webview/webview_go"
 
@@ -266,6 +267,12 @@ const desktopPage = `<!doctype html>
 </html>
 `
 
+const (
+	defaultDesktopWindowWidth  = 1100
+	defaultDesktopWindowHeight = 760
+	windowStateWriteDelay      = 350 * time.Millisecond
+)
+
 type stateResponse struct {
 	Transcript string   `json:"transcript"`
 	Status     string   `json:"status"`
@@ -315,7 +322,7 @@ Keep replies readable in plain text and avoid unnecessary tool chatter.`)
 			return fmt.Errorf("cannot rebuild summaries for desktop resume: %w", err)
 		}
 	}
-	if err := agent.SetModelLocal(state.SelectedModel); err != nil {
+	if err := agent.SetModelLocal(state.SelectedModelValue()); err != nil {
 		return fmt.Errorf("cannot apply desktop model: %w", err)
 	}
 
@@ -325,13 +332,28 @@ Keep replies readable in plain text and avoid unnecessary tool chatter.`)
 	if view == nil {
 		return fmt.Errorf("cannot create desktop window")
 	}
-	defer view.Destroy()
+	destroyed := false
+	defer func() {
+		if !destroyed {
+			view.Destroy()
+		}
+	}()
 	view.SetTitle("BlazeAI Desktop")
-	view.SetSize(1100, 760, webview.HintNone)
+	initialBounds := WindowBounds{Width: defaultDesktopWindowWidth, Height: defaultDesktopWindowHeight}
+	if storedBounds, ok := state.WindowBoundsValue(); ok {
+		initialBounds.Width = storedBounds.Width
+		initialBounds.Height = storedBounds.Height
+	}
+	view.SetSize(initialBounds.Width, initialBounds.Height, webview.HintNone)
 	view.SetHtml(desktopPage)
 	if err := ui.attach(view); err != nil {
 		return err
 	}
+	platformUI, err := startDesktopPlatform(view, ui, desktopCfg, osType)
+	if err != nil {
+		return err
+	}
+	defer platformUI.Shutdown()
 
 	if ctx == nil {
 		ctx = context.Background()
@@ -345,6 +367,11 @@ Keep replies readable in plain text and avoid unnecessary tool chatter.`)
 		view.Terminate()
 	}()
 	view.Run()
+	view.Destroy()
+	destroyed = true
+	if err := ui.flushState(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -384,6 +411,7 @@ type desktopUI struct {
 	transcriptText string
 	status         string
 	busy           bool
+	saveTimer      *time.Timer
 }
 
 func newDesktopUI(agent *runtimecore.Agent, cfg *config.Config, state *State, statePath string) *desktopUI {
@@ -445,8 +473,8 @@ func (ui *desktopUI) changeModel(modelID string) (stateResponse, error) {
 	if err := ui.agent.SetModelLocal(modelID); err != nil {
 		return stateResponse{}, err
 	}
-	ui.state.SelectedModel = modelID
-	if err := ui.state.SaveTo(ui.statePath, ui.cfg); err != nil {
+	ui.state.SetSelectedModel(modelID)
+	if err := ui.flushState(); err != nil {
 		return stateResponse{}, err
 	}
 	ui.AppendSystem("Model set to: " + modelID)
@@ -481,8 +509,7 @@ func (ui *desktopUI) quitApp() (stateResponse, error) {
 	if ui.isBusy() {
 		return stateResponse{}, fmt.Errorf("wait for the current turn to finish before quitting")
 	}
-	ui.AppendSystem("Desktop app is shutting down.")
-	ui.quitOnce.Do(func() { close(ui.quitCh) })
+	ui.requestQuit("Desktop app is shutting down.")
 	return ui.snapshot(), nil
 }
 
@@ -635,6 +662,43 @@ func (ui *desktopUI) SetBusy(active bool) {
 	ui.mu.Lock()
 	ui.busy = active
 	ui.mu.Unlock()
+}
+
+func (ui *desktopUI) rememberWindowBounds(bounds WindowBounds) {
+	if bounds.Width <= 0 || bounds.Height <= 0 {
+		return
+	}
+	if !ui.state.UpdateWindowBounds(bounds) {
+		return
+	}
+	ui.mu.Lock()
+	if ui.saveTimer == nil {
+		ui.saveTimer = time.AfterFunc(windowStateWriteDelay, func() {
+			_ = ui.flushState()
+		})
+	} else {
+		ui.saveTimer.Reset(windowStateWriteDelay)
+	}
+	ui.mu.Unlock()
+}
+
+func (ui *desktopUI) flushState() error {
+	ui.mu.Lock()
+	if ui.saveTimer != nil {
+		ui.saveTimer.Stop()
+	}
+	ui.mu.Unlock()
+	if err := ui.state.SaveTo(ui.statePath, ui.cfg); err != nil {
+		return fmt.Errorf("cannot persist desktop state: %w", err)
+	}
+	return nil
+}
+
+func (ui *desktopUI) requestQuit(message string) {
+	if strings.TrimSpace(message) != "" {
+		ui.AppendSystem(message)
+	}
+	ui.quitOnce.Do(func() { close(ui.quitCh) })
 }
 
 func modelOptions(cfg *config.Config, selected string) []string {

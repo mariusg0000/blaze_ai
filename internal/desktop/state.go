@@ -1,6 +1,6 @@
 // state.go — desktop companion state loading and saving.
 // Loads app_home/desktop/state.json, validates the selected model against the
-// global provider config, and persists desktop-local model changes.
+// global provider config, and persists desktop-local model changes plus window geometry.
 // Layer: transport state. Dependencies: internal/config.
 package desktop
 
@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"blazeai/internal/config"
 )
@@ -18,11 +19,42 @@ const stateFileName = "state.json"
 
 // State holds mutable local desktop transport state.
 //
-// WHAT:  Stores the selected model for the desktop transport.
-// WHY:   Desktop model changes should stay local to this transport instance.
-// PARAMS: SelectedModel — active provider/model_name for the desktop app.
+// WHAT:  Stores the selected model and persistent window geometry for the desktop transport.
+// WHY:   Desktop-local model changes and window layout should survive restarts.
+// PARAMS: SelectedModel — active provider/model_name for the desktop app;
+// Window — last persisted window coordinates and size.
 type State struct {
-	SelectedModel string `json:"selected_model"`
+	SelectedModel string      `json:"selected_model"`
+	Window        WindowState `json:"window"`
+
+	mu     sync.Mutex `json:"-"`
+	saveMu sync.Mutex `json:"-"`
+}
+
+// WindowState holds the persisted desktop window geometry.
+//
+// WHAT:  Tracks the last known desktop window position and size.
+// WHY:   The desktop companion should reopen where the user left it.
+// PARAMS: Initialized — whether bounds have been captured before; X/Y — top-left coordinates;
+// Width/Height — saved window size in pixels.
+type WindowState struct {
+	Initialized bool `json:"initialized"`
+	X           int  `json:"x"`
+	Y           int  `json:"y"`
+	Width       int  `json:"width"`
+	Height      int  `json:"height"`
+}
+
+// WindowBounds is the in-memory window geometry passed to the native layer.
+//
+// WHAT:  Carries window coordinates and size without JSON concerns.
+// WHY:   Native callbacks should use one small transport-local struct.
+// PARAMS: X/Y — top-left coordinates; Width/Height — size in pixels.
+type WindowBounds struct {
+	X      int
+	Y      int
+	Width  int
+	Height int
 }
 
 // LoadState loads and validates the singleton desktop state.
@@ -70,11 +102,16 @@ func LoadStateFrom(path string, cfg *config.Config) (*State, error) {
 
 // Validate checks the selected model against global providers.
 //
-// WHAT:  Validates the desktop-local selected model.
-// WHY:   The transport must stop instead of silently falling back to another model.
+// WHAT:  Validates the desktop-local selected model and optional stored window geometry.
+// WHY:   The transport must stop instead of silently falling back to another model or broken bounds.
 // PARAMS: cfg — loaded global runtime config.
 // RETURNS: error if the selected model is missing or invalid.
 func (s *State) Validate(cfg *config.Config) error {
+	snapshot := s.snapshot()
+	return snapshot.validate(cfg)
+}
+
+func (s *State) validate(cfg *config.Config) error {
 	if cfg == nil {
 		return fmt.Errorf("global config is required")
 	}
@@ -89,24 +126,84 @@ func (s *State) Validate(cfg *config.Config) error {
 	if cfg.ProviderByName(providerName) == nil {
 		return fmt.Errorf("selected_model provider not found: %s", providerName)
 	}
+	if s.Window.Initialized {
+		if s.Window.Width <= 0 {
+			return fmt.Errorf("window.width must be greater than zero")
+		}
+		if s.Window.Height <= 0 {
+			return fmt.Errorf("window.height must be greater than zero")
+		}
+	}
 	return nil
+}
+
+// SelectedModelValue returns the active desktop-local model safely.
+func (s *State) SelectedModelValue() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.SelectedModel
+}
+
+// SetSelectedModel updates the active desktop-local model safely.
+func (s *State) SetSelectedModel(modelID string) {
+	s.mu.Lock()
+	s.SelectedModel = modelID
+	s.mu.Unlock()
+}
+
+// WindowBoundsValue returns the persisted bounds and whether they are initialized.
+func (s *State) WindowBoundsValue() (WindowBounds, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.Window.Initialized {
+		return WindowBounds{}, false
+	}
+	return WindowBounds{X: s.Window.X, Y: s.Window.Y, Width: s.Window.Width, Height: s.Window.Height}, true
+}
+
+// UpdateWindowBounds stores the latest window geometry and reports whether it changed.
+func (s *State) UpdateWindowBounds(bounds WindowBounds) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := !s.Window.Initialized ||
+		s.Window.X != bounds.X ||
+		s.Window.Y != bounds.Y ||
+		s.Window.Width != bounds.Width ||
+		s.Window.Height != bounds.Height
+	s.Window = WindowState{
+		Initialized: true,
+		X:           bounds.X,
+		Y:           bounds.Y,
+		Width:       bounds.Width,
+		Height:      bounds.Height,
+	}
+	return changed
+}
+
+func (s *State) snapshot() State {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return State{SelectedModel: s.SelectedModel, Window: s.Window}
 }
 
 // SaveTo writes state.json atomically to an explicit path.
 //
-// WHAT:  Persists desktop-local selected model changes.
-// WHY:   UI model switches must survive restarts without touching global config.
+// WHAT:  Persists desktop-local selected model changes and window geometry.
+// WHY:   UI model switches and native window changes must survive restarts without touching global config.
 // PARAMS: path — absolute state file path; cfg — loaded global runtime config.
 // RETURNS: error if validation or persistence fails.
 func (s *State) SaveTo(path string, cfg *config.Config) error {
-	if err := s.Validate(cfg); err != nil {
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
+	snapshot := s.snapshot()
+	if err := snapshot.validate(cfg); err != nil {
 		return err
 	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("cannot create desktop state directory %s: %w", dir, err)
 	}
-	data, err := json.MarshalIndent(s, "", "  ")
+	data, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
 		return fmt.Errorf("cannot marshal desktop state: %w", err)
 	}
