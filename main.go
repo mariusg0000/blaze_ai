@@ -42,6 +42,11 @@ func main() {
 // HOW:   Bootstrap app home → detect OS → load/first-run config → create/resume session → agent → console.
 // RETURNS: error if any startup step fails.
 func run() error {
+	// WebKit/JavaScriptCore installs a signal handler for garbage collection.
+	// Go detects non-Go handlers without SA_ONSTACK and fatally errors.
+	// Redirect JSC to use SIGUSR2 (signal 12) which Go does not use internally.
+	os.Setenv("JSC_SIGNAL_FOR_GC", "12")
+
 	continueFlag := flag.Bool("c", false, "continue last cleanly closed session")
 	resumeFlag := flag.Bool("r", false, "resume most recent session (interrupted or clean)")
 	desktopFlag := flag.Bool("desktop", false, "run desktop companion transport")

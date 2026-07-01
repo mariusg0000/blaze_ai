@@ -123,7 +123,7 @@ __HIGHLIGHT_LIGHT_CSS__
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font: var(--font-size, 13.5px)/1.55 var(--mono);
+      font: var(--font-size, 13.5px)/1.25 var(--mono);
       background: var(--bg);
       color: var(--text);
     }
@@ -205,8 +205,8 @@ __HIGHLIGHT_LIGHT_CSS__
     .row-user { background: var(--row-user); color: var(--user-text); }
     .row-assistant { background: var(--row-assistant); color: var(--text); }
     .row-system { background: var(--row-system); color: var(--text-dim); }
-    .row-tool { background: var(--row-tool); color: var(--tool-text); }
-    .row-reasoning { background: var(--row-reasoning); color: var(--reasoning-text); }
+    .row-tool { background: var(--row-tool); color: var(--tool-text); line-height: 1; }
+    .row-reasoning { background: var(--row-reasoning); color: var(--reasoning-text); line-height: 1; }
 
     .row .prefix {
       font-size: 11px;
@@ -222,6 +222,8 @@ __HIGHLIGHT_LIGHT_CSS__
     .row-reasoning .prefix { color: var(--reasoning-text); }
     .row-tool .prefix { color: var(--tool-prefix); }
 
+    .row-tool .content { white-space: pre-wrap; }
+    .row-reasoning .content { max-height: var(--reasoning-max-height); overflow-y: auto; }
     .row .content { width: 100%; }
     .row .content > *:first-child { margin-top: 0; }
     .row .content > *:last-child { margin-bottom: 0; }
@@ -452,6 +454,9 @@ __DOMPURIFY_JS__
         document.documentElement.style.setProperty('--font-size', state.font_size + 'px');
         fontSizeEl.value = String(state.font_size);
       }
+      if (state.reasoning_max_height > 0) {
+        document.documentElement.style.setProperty('--reasoning-max-height', state.reasoning_max_height + 'px');
+      }
 
       if (state.blocks && blocksChanged(state.blocks)) {
         renderBlocks(state.blocks);
@@ -541,6 +546,7 @@ __DOMPURIFY_JS__
         return;
       }
       content.innerHTML = block.type === 'tool' ? escapeHtml(block.text) : renderMarkdown(block.text);
+      if (block.type === 'reasoning') content.scrollTop = content.scrollHeight;
       var prefix = row.querySelector('.prefix');
       if (prefix) prefix.textContent = block.prefix || '';
     }
@@ -647,14 +653,15 @@ const (
 // PARAMS: Blocks — typed transcript rows; Status — footer line; Busy — blocks input;
 // Model/Models — current and selectable model ids; WorkDir — runtime project path; Theme — active theme id.
 type stateResponse struct {
-	Blocks   []blockPayload `json:"blocks"`
-	Status   string         `json:"status"`
-	Busy     bool           `json:"busy"`
-	Model    string         `json:"model"`
-	Models   []string       `json:"models"`
-	WorkDir  string         `json:"workdir"`
-	Theme    string         `json:"theme"`
-	FontSize float64        `json:"font_size"`
+	Blocks             []blockPayload `json:"blocks"`
+	Status             string         `json:"status"`
+	Busy               bool           `json:"busy"`
+	Model              string         `json:"model"`
+	Models             []string       `json:"models"`
+	WorkDir            string         `json:"workdir"`
+	Theme              string         `json:"theme"`
+	FontSize           float64        `json:"font_size"`
+	ReasoningMaxHeight float64        `json:"reasoning_max_height"`
 }
 
 // buildDesktopPage injects embedded vendor JS/CSS into the page template.
@@ -1076,14 +1083,15 @@ func (ui *desktopUI) snapshot() stateResponse {
 		blocks = append(blocks, blockPayload{Type: b.Type, Prefix: b.Prefix, Text: text})
 	}
 	return stateResponse{
-		Blocks:   blocks,
-		Status:   ui.status,
-		Busy:     ui.busy,
-		Model:    ui.agent.ModelID,
-		Models:   modelOptions(ui.cfg, ui.agent.ModelID),
-		WorkDir:  truncatePath(ui.agent.WorkDir, 72),
-		Theme:    ui.state.ThemeValue(),
-		FontSize: ui.state.FontSizeValue(),
+		Blocks:             blocks,
+		Status:             ui.status,
+		Busy:               ui.busy,
+		Model:              ui.agent.ModelID,
+		Models:             modelOptions(ui.cfg, ui.agent.ModelID),
+		WorkDir:            truncatePath(ui.agent.WorkDir, 72),
+		Theme:              ui.state.ThemeValue(),
+		FontSize:           ui.state.FontSizeValue(),
+		ReasoningMaxHeight: ui.desktopCfg.ReasoningMaxHeightValue(),
 	}
 }
 

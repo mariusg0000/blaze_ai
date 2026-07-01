@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	configFileName = "config.json"
-	saveFileMode   = 0600
-	dirFileMode    = 0755
+	configFileName               = "config.json"
+	saveFileMode                 = 0600
+	dirFileMode                  = 0755
+	defaultReasoningMaxHeightPx  = 100.0
 )
 
 // Config holds the static configuration for the singleton desktop transport.
@@ -28,8 +29,17 @@ const (
 // PARAMS: WorkDir — absolute project work directory used by the runtime;
 // ToggleHotkey — explicit desktop toggle shortcut configuration.
 type Config struct {
-	WorkDir      string       `json:"workdir"`
-	ToggleHotkey HotkeyConfig `json:"toggle_hotkey"`
+	WorkDir            string       `json:"workdir"`
+	ToggleHotkey       HotkeyConfig `json:"toggle_hotkey"`
+	ReasoningMaxHeight float64      `json:"reasoning_max_height,omitempty"`
+}
+
+// ReasoningMaxHeightValue returns the effective reasoning max height.
+func (c *Config) ReasoningMaxHeightValue() float64 {
+	if c.ReasoningMaxHeight <= 0 {
+		return defaultReasoningMaxHeightPx
+	}
+	return c.ReasoningMaxHeight
 }
 
 // HotkeyConfig holds the optional desktop toggle shortcut configuration.
@@ -148,6 +158,9 @@ func (c *Config) Validate() error {
 	}
 	if err := validateHotkeyConfig(c.ToggleHotkey); err != nil {
 		return err
+	}
+	if c.ReasoningMaxHeight < 0 {
+		return fmt.Errorf("reasoning_max_height must be >= 0: got %g", c.ReasoningMaxHeight)
 	}
 	return nil
 }
