@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -707,7 +706,7 @@ func buildDesktopPage() (string, error) {
 // PARAMS: ctx — process lifetime context; cfg — loaded global runtime config; osType — detected OS;
 // promptsFS — embedded prompt filesystem.
 // RETURNS: error if startup or embedded window wiring fails.
-func Run(ctx context.Context, cfg *config.Config, osType platform.OS, promptsFS fs.FS) error {
+func Run(ctx context.Context, cfg *config.Config, osType platform.OS, promptsFS fs.FS, lastSession bool, projectPath string) error {
 	desktopCfg, configPath, err := LoadConfig()
 	if err != nil {
 		return err
@@ -716,44 +715,18 @@ func Run(ctx context.Context, cfg *config.Config, osType platform.OS, promptsFS 
 	if err != nil {
 		return err
 	}
-	instanceDir, err := InstanceDir()
-	if err != nil {
-		return err
-	}
-	sessDir := filepath.Join(instanceDir, "session")
-	sess, resumed, err := openDesktopSession(sessDir)
-	if err != nil {
-		return err
-	}
-	agent, err := runtimecore.NewAgent(cfg, sess, osType, promptsFS, desktopCfg.WorkDir, nil, "desktop")
-	if err != nil {
-		return fmt.Errorf("cannot create desktop agent: %w", err)
-	}
-	agent.Builder.TransportContext = strings.TrimSpace(`Desktop companion transport is active.
-One singleton desktop app owns this transport.
-Exactly one fixed session is resumed on every start.
-Do not create or refer to multiple desktop conversations.
-Replies are shown in one dedicated desktop window, not a terminal.
-The desktop window renders full Markdown: headings, bold, italic, inline code, fenced code blocks with syntax highlighting, tables, lists, blockquotes, links, horizontal rules, and images displayed inline.
-Use tables, code blocks, and structured formatting freely — the interface will render them correctly.
-Avoid raw plain-text dumps when a table or a code block communicates the information more clearly.`)
-	if resumed && agent.Compactor != nil {
-		if err := agent.Compactor.RebuildForResume(sess); err != nil {
-			return fmt.Errorf("cannot rebuild summaries for desktop resume: %w", err)
-		}
-	}
-	if err := agent.SetModelLocal(state.SelectedModelValue()); err != nil {
-		return fmt.Errorf("cannot apply desktop model: %w", err)
+
+	workDir := projectPath
+	if workDir == "" {
+		workDir = desktopCfg.WorkDir
 	}
 
-	page, err := buildDesktopPage()
-	if err != nil {
-		return err
-	}
+	ui := newDesktopUI(nil, cfg, desktopCfg, state, statePath, configPath, osType, promptsFS, workDir, lastSession)
+	ui.loadSessionTranscript() // no-op if agent is nil
 
-	ui := newDesktopUI(agent, cfg, desktopCfg, state, statePath, configPath)
-	ui.loadSessionTranscript()
+	os.Setenv("JSC_SIGNAL_FOR_GC", "40")
 	view := webview.New(false)
+	os.Unsetenv("JSC_SIGNAL_FOR_GC")
 	if view == nil {
 		return fmt.Errorf("cannot create desktop window")
 	}
@@ -770,6 +743,10 @@ Avoid raw plain-text dumps when a table or a code block communicates the informa
 		initialBounds.Height = storedBounds.Height
 	}
 	view.SetSize(initialBounds.Width, initialBounds.Height, webview.HintNone)
+	page, err := buildDesktopPage()
+	if err != nil {
+		return err
+	}
 	view.SetHtml(page)
 	if err := ui.attach(view); err != nil {
 		return err
@@ -794,6 +771,11 @@ Avoid raw plain-text dumps when a table or a code block communicates the informa
 	view.Run()
 	view.Destroy()
 	destroyed = true
+
+	// Close session on exit if one is active.
+	if ui.agent != nil {
+		_ = ui.agent.CloseSession()
+	}
 	if err := ui.flushState(); err != nil {
 		return err
 	}
@@ -830,9 +812,13 @@ type desktopUI struct {
 	statePath   string
 	configPath  string
 	handler     *Handler
-	view       webview.WebView
-	quitCh     chan struct{}
-	quitOnce   sync.Once
+	view        webview.WebView
+	quitCh      chan struct{}
+	quitOnce    sync.Once
+	osType      platform.OS
+	promptsFS   fs.FS
+	pendingWorkDir string
+	pendingLast    bool
 
 	mu             sync.Mutex
 	blocks         []transcriptBlock
@@ -844,22 +830,28 @@ type desktopUI struct {
 	activeReasoning int
 }
 
-func newDesktopUI(agent *runtimecore.Agent, cfg *config.Config, desktopCfg *Config, state *State, statePath, configPath string) *desktopUI {
+func newDesktopUI(agent *runtimecore.Agent, cfg *config.Config, desktopCfg *Config, state *State, statePath, configPath string, osType platform.OS, promptsFS fs.FS, pendingWorkDir string, pendingLast bool) *desktopUI {
 	ui := &desktopUI{
-		agent:           agent,
-		cfg:             cfg,
-		desktopCfg:      desktopCfg,
-		state:           state,
-		statePath:       statePath,
-		configPath:      configPath,
-		quitCh:          make(chan struct{}),
-		status:          "Ready",
-		activeTool:      -1,
-		activeReply:     -1,
+		agent:      agent,
+		cfg:        cfg,
+		desktopCfg: desktopCfg,
+		state:      state,
+		statePath:  statePath,
+		configPath: configPath,
+		quitCh:     make(chan struct{}),
+		status:     "Ready",
+		osType:     osType,
+		promptsFS:  promptsFS,
+		pendingWorkDir: pendingWorkDir,
+		pendingLast:    pendingLast,
+		activeTool: -1,
+		activeReply: -1,
 		activeReasoning: -1,
 	}
 	ui.handler = NewHandler(ui)
-	agent.Handler = ui.handler
+	if agent != nil {
+		agent.Handler = ui.handler
+	}
 	return ui
 }
 
@@ -906,12 +898,14 @@ func (ui *desktopUI) changeModel(modelID string) (stateResponse, error) {
 	if ui.isBusy() {
 		return stateResponse{}, fmt.Errorf("wait for the current turn to finish before changing the model")
 	}
-	if err := ui.agent.SetModelLocal(modelID); err != nil {
-		return stateResponse{}, err
-	}
 	ui.state.SetSelectedModel(modelID)
 	if err := ui.flushState(); err != nil {
 		return stateResponse{}, err
+	}
+	if ui.agent != nil {
+		if err := ui.agent.SetModelLocal(modelID); err != nil {
+			return stateResponse{}, err
+		}
 	}
 	ui.AppendSystem("Model set to: " + modelID)
 	ui.SetStatus("Ready")
@@ -937,22 +931,40 @@ func (ui *desktopUI) pickWorkDir() (stateResponse, error) {
 	if ui.view == nil {
 		return stateResponse{}, fmt.Errorf("window not ready")
 	}
-	selected, err := pickDirectoryNative("Select Work Directory", ui.agent.WorkDir)
+
+	// If a session is active, ask for confirmation and close it.
+	if ui.agent != nil {
+		ok, err := confirmDialog("Switch Project", "Close current session and switch to a different project?")
+		if err != nil || !ok {
+			return ui.snapshot(), err
+		}
+		_ = ui.agent.CloseSession()
+		ui.agent = nil
+		ui.resetTranscript()
+	}
+
+	defaultPath := ui.pendingWorkDir
+	if defaultPath == "" {
+		defaultPath = ui.desktopCfg.WorkDir
+	}
+
+	selected, mode, err := pickDirectoryNative("Select Work Directory", defaultPath)
 	if err != nil {
 		return stateResponse{}, err
 	}
 	selected = strings.TrimSpace(selected)
-	if selected == "" || selected == ui.agent.WorkDir {
+	if selected == "" || mode == 0 {
 		return ui.snapshot(), nil
 	}
-	if err := ui.agent.SetWorkDir(selected); err != nil {
-		return stateResponse{}, err
-	}
+
+	ui.pendingWorkDir = selected
+	ui.pendingLast = (mode == 2)
+
 	ui.desktopCfg.WorkDir = selected
 	if err := ui.desktopCfg.SaveTo(ui.configPath); err != nil {
 		return stateResponse{}, err
 	}
-	ui.AppendSystem("Work directory changed to: " + selected)
+
 	return ui.snapshot(), nil
 }
 
@@ -971,8 +983,12 @@ func (ui *desktopUI) setFontSize(fs float64) (stateResponse, error) {
 }
 
 func (ui *desktopUI) clearSession() (stateResponse, error) {
+	if ui.agent == nil {
+		ui.resetTranscript()
+		return ui.snapshot(), nil
+	}
 	if ui.isBusy() {
-		return stateResponse{}, fmt.Errorf("wait for the current turn to finish before clearing the fixed session")
+		return stateResponse{}, fmt.Errorf("wait for the current turn to finish before clearing the session")
 	}
 	if err := ui.agent.ResetConversation(); err != nil {
 		return stateResponse{}, err
@@ -983,12 +999,17 @@ func (ui *desktopUI) clearSession() (stateResponse, error) {
 }
 
 func (ui *desktopUI) closeSession() (stateResponse, error) {
+	if ui.agent == nil {
+		return ui.snapshot(), nil
+	}
 	if ui.isBusy() {
 		return stateResponse{}, fmt.Errorf("wait for the current turn to finish before closing the session")
 	}
 	if err := ui.agent.CloseSession(); err != nil {
 		return stateResponse{}, err
 	}
+	ui.agent = nil
+	ui.resetTranscript()
 	ui.AppendSystem("Session closed cleanly. Desktop app stays online.")
 	return ui.snapshot(), nil
 }
@@ -1008,6 +1029,14 @@ func (ui *desktopUI) submitInput(text string) error {
 	if ui.isBusy() {
 		return fmt.Errorf("wait for the current turn to finish before sending another message")
 	}
+
+	// Lazy session: create or resume on first message.
+	if ui.agent == nil {
+		if err := ui.ensureSession(context.Background()); err != nil {
+			return err
+		}
+	}
+
 	ui.AppendUser(text)
 
 	if strings.HasPrefix(text, "/") {
@@ -1038,6 +1067,9 @@ func (ui *desktopUI) submitInput(text string) error {
 }
 
 func (ui *desktopUI) loadSessionTranscript() {
+	if ui.agent == nil {
+		return
+	}
 	ui.resetTranscript()
 	activity := &toolActivity{}
 	for _, msg := range ui.agent.Session.Messages {
@@ -1082,13 +1114,24 @@ func (ui *desktopUI) snapshot() stateResponse {
 		}
 		blocks = append(blocks, blockPayload{Type: b.Type, Prefix: b.Prefix, Text: text})
 	}
+
+	modelID := ""
+	workDir := ui.pendingWorkDir
+	if workDir == "" {
+		workDir = ui.desktopCfg.WorkDir
+	}
+	if ui.agent != nil {
+		modelID = ui.agent.ModelID
+		workDir = ui.agent.WorkDir
+	}
+
 	return stateResponse{
 		Blocks:             blocks,
 		Status:             ui.status,
 		Busy:               ui.busy,
-		Model:              ui.agent.ModelID,
-		Models:             modelOptions(ui.cfg, ui.agent.ModelID),
-		WorkDir:            truncatePath(ui.agent.WorkDir, 72),
+		Model:              modelID,
+		Models:             modelOptions(ui.cfg, modelID),
+		WorkDir:            truncatePath(workDir, 72),
 		Theme:              ui.state.ThemeValue(),
 		FontSize:           ui.state.FontSizeValue(),
 		ReasoningMaxHeight: ui.desktopCfg.ReasoningMaxHeightValue(),
@@ -1248,6 +1291,64 @@ func (ui *desktopUI) rememberWindowBounds(bounds WindowBounds) {
 		ui.saveTimer.Reset(windowStateWriteDelay)
 	}
 	ui.mu.Unlock()
+}
+
+func (ui *desktopUI) ensureSession(ctx context.Context) error {
+	workDir := ui.pendingWorkDir
+	if workDir == "" {
+		workDir = ui.desktopCfg.WorkDir
+	}
+
+	var sess *session.Session
+	var resumed bool
+	var err error
+	if ui.pendingLast {
+		sess, err = session.LastClean(workDir)
+		if err != nil {
+			// No clean session found — fall back to new session.
+			sess, err = session.Create(workDir)
+			if err != nil {
+				return fmt.Errorf("cannot create session in %s: %w", workDir, err)
+			}
+		} else {
+			resumed = true
+		}
+		ui.pendingLast = false
+	} else {
+		sess, err = session.Create(workDir)
+		if err != nil {
+			return fmt.Errorf("cannot create session in %s: %w", workDir, err)
+		}
+	}
+
+	agent, err := runtimecore.NewAgent(ui.cfg, sess, ui.osType, ui.promptsFS, workDir, nil, "desktop")
+	if err != nil {
+		return fmt.Errorf("cannot create desktop agent: %w", err)
+	}
+	agent.Builder.TransportContext = strings.TrimSpace(`Desktop companion transport is active.
+One singleton desktop app owns this transport.
+Exactly one fixed session is resumed on every start.
+Do not create or refer to multiple desktop conversations.
+Replies are shown in one dedicated desktop window, not a terminal.
+The desktop window renders full Markdown: headings, bold, italic, inline code, fenced code blocks with syntax highlighting, tables, lists, blockquotes, links, horizontal rules, and images displayed inline.
+Use tables, code blocks, and structured formatting freely — the interface will render them correctly.
+Avoid raw plain-text dumps when a table or a code block communicates the information more clearly.`)
+	if resumed && agent.Compactor != nil {
+		if err := agent.Compactor.RebuildForResume(sess); err != nil {
+			return fmt.Errorf("cannot rebuild summaries for resume: %w", err)
+		}
+	}
+	if err := agent.SetModelLocal(ui.state.SelectedModelValue()); err != nil {
+		return fmt.Errorf("cannot apply desktop model: %w", err)
+	}
+
+	agent.Handler = ui.handler
+	ui.agent = agent
+
+	if resumed {
+		ui.loadSessionTranscript()
+	}
+	return nil
 }
 
 func (ui *desktopUI) flushState() error {

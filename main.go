@@ -1,8 +1,8 @@
 // main.go — BlazeAI application entry point.
 // Parses CLI flags, bootstraps app home, loads config or runs first-run setup,
-// creates or resumes a session, and starts the console transport over the agent core.
-// Layer: application entry. Direct dependencies: internal/console, internal/runtime,
-// internal/config, internal/session, internal/platform.
+// and starts the console transport by default. Telegram remains opt-in via CLI.
+// Layer: application entry. Direct dependencies: internal/console,
+// internal/runtime, internal/config, internal/session, internal/platform.
 package main
 
 import (
@@ -14,7 +14,6 @@ import (
 
 	"blazeai/internal/config"
 	"blazeai/internal/console"
-	"blazeai/internal/desktop"
 	"blazeai/internal/platform"
 	"blazeai/internal/runtime"
 	"blazeai/internal/session"
@@ -34,22 +33,18 @@ func main() {
 	}
 }
 
-// run bootstraps configuration, session, runtime, and the console transport.
+// run bootstraps configuration, session, runtime, and the selected transport.
+// Defaults to the console transport when no transport flag is given.
 // Returns an error if any required startup step fails. No silent fallbacks.
 //
 // WHAT:  The main application startup sequence.
-// WHY:   Wires all packages together and starts the REPL.
-// HOW:   Bootstrap app home → detect OS → load/first-run config → create/resume session → agent → console.
+// WHY:   Wires all packages together and starts the chosen transport.
+// HOW:   Bootstrap app home → detect OS → load/first-run config → transport.
 // RETURNS: error if any startup step fails.
 func run() error {
-	// WebKit/JavaScriptCore installs a signal handler for garbage collection.
-	// Go detects non-Go handlers without SA_ONSTACK and fatally errors.
-	// Redirect JSC to use SIGUSR2 (signal 12) which Go does not use internally.
-	os.Setenv("JSC_SIGNAL_FOR_GC", "12")
-
-	continueFlag := flag.Bool("c", false, "continue last cleanly closed session")
-	resumeFlag := flag.Bool("r", false, "resume most recent session (interrupted or clean)")
-	desktopFlag := flag.Bool("desktop", false, "run desktop companion transport")
+	continueFlag := flag.Bool("c", false, "continue last cleanly closed session (console only)")
+	resumeFlag := flag.Bool("r", false, "resume most recent session, interrupted or clean (console only)")
+	consoleFlag := flag.Bool("console", false, "run terminal REPL transport (default)")
 	telegramFlag := flag.String("telegram", "", "run Telegram bridge instance")
 	flag.Parse()
 
@@ -78,26 +73,19 @@ func run() error {
 	if *telegramFlag != "" {
 		return telegram.Run(context.Background(), cfg, osType, promptsFS, *telegramFlag)
 	}
-	if *desktopFlag {
-		return desktop.Run(context.Background(), cfg, osType, promptsFS)
-	}
-
-	// Get work directory (needed for project-based session storage).
+	_ = consoleFlag
 	workDir, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("cannot get working directory: %w", err)
 	}
-
 	resume := resumeOptions{continueLastClean: *continueFlag, resumeLast: *resumeFlag}
 	sess, err := openSession(workDir, resume)
 	if err != nil {
 		return err
 	}
-
 	if err := runConsole(cfg, sess, osType, promptsFS, workDir, resume); err != nil {
 		return err
 	}
-
 	return nil
 }
 

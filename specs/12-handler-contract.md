@@ -12,8 +12,8 @@
 ## Definition
 
 The Handler interface is the only boundary between the agent core (runtime) and
-user-facing transports. Both console and Telegram implement this interface over
-the same core.
+user-facing transports. Console and Telegram implement this interface over the
+same core.
 
 ```go
 type Handler interface {

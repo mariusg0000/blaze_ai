@@ -98,6 +98,7 @@ Each transport file is short and focused on transport-only constraints:
 
 - `transport.console.md` — terminal Markdown subset, streaming behavior, emoji guidance
 - `transport.telegram.md` — plain-text chat formatting, narrow-screen constraints, no Markdown reliance
+- `transport.desktop.md` — archived desktop prompt reference kept for the future Electron migration
 - `transport.web.md` — browser chat formatting without terminal assumptions
 
 Core behavior stays in `sysprompt.md`; transport files must not duplicate safety,

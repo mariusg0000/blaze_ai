@@ -217,13 +217,39 @@ func toolEmoji(name string) string {
 
 ## Input Reading (reader.go)
 
-Reads input from the terminal. Provides:
+Reads input from the terminal in raw mode. Provides:
 
-- `ReadEvent()` — reads one full line of input, returns the text (or empty on EOF)
+- `ReadEvent()` — reads one full line with inline editing, returns the text (or signals mode switch on Tab)
 - `ReadHiddenInput(prompt)` — reads a line with echo disabled (for sudo passwords, API keys)
-- Terminal raw mode via `MakeRaw`/`Restore` for Ctrl-C handling
+- Terminal raw mode via `MakeRaw`/`Restore` for key-by-key processing
 
-No multiline paste support (removed in TTY-only simplification).
+### Inline Editing
+
+All editing keys work during input:
+
+| Key | Action |
+|-----|--------|
+| Left/Right arrow | Move cursor within line |
+| Home | Jump to start |
+| End | Jump to end |
+| Delete | Delete character at cursor |
+| Backspace | Delete character before cursor |
+| Enter | Submit line |
+| Tab | Signal mode switch (unless in paste mode) |
+| Ctrl-D | Submit empty line as EOF (when buffer is empty) |
+
+### Bracketed Paste
+
+The reader supports bracketed paste mode. When the terminal emits `\e[200~`
+(start) / `\e[201~` (end) sequences:
+
+- Tab inserts a literal tab character instead of triggering mode switch
+- Enter inserts a literal newline instead of submitting the line
+- All printable characters are inserted at cursor position
+
+This allows pasting multi-line text and code blocks without accidental
+mode switching or premature submission.
+
 Non-TTY paths return errors (console is TTY-only).
 
 ## User Abort (Ctrl-C)

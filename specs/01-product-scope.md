@@ -45,7 +45,7 @@ Git workflows.
   streaming output, visual separators between turns
 - Console is TTY-only — no pipe or non-TTY support
 - All transports implement the same `runtime.Handler` contract
-- Slash commands: `/exit`, `/model`, `/cd`. Unknown `/...` passed to LLM as user message
+- Console slash commands: `/exit`, `/model`, `/cd`. Unknown `/...` passed to LLM as user message
 - Tab cycles through work modes (defined in `modes.json`)
 
 ## Execution Model
@@ -57,7 +57,7 @@ Git workflows.
   - macOS: `bash` (zsh optional, not required)
   - Windows: `pwsh` → `powershell.exe` → `cmd.exe` (priority order)
 - **Python**: last resort only, in a lazily-created venv under `app_home/scripts/venv/`
-- **Host helpers** (rg, fd, jq, git, curl, pandoc, sqlite3): detected at startup,
+- **Host helpers** (rg, fd, jq, git, xh, pandoc, sqlite3): detected at startup,
   listed in prompt so the LLM knows they are available without checking
 - **Native tools**: 9 hardcoded tools (shell, load_skill, unload_skill, run_skill,
   replace_block, ask_a_friend, analyze_image, task_read, task_write)
@@ -97,7 +97,7 @@ auto-provisioning beyond the explicit first-run setup flow.
   - Skills: `internal/skills/` — parsing, discovery, active list
   - Config: `internal/config/` — load/save/validate
   - Platform: `internal/platform/` — OS detection, app home, shell selection
-- **Two external dependencies**: `golang.org/x/sys`, `golang.org/x/term`
+- **Archived reference**: old Go WebView desktop UI kept under `internal/desktop_old/` for the Electron migration
 
 ## App Home
 

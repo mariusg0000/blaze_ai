@@ -30,22 +30,37 @@ static void desktopHideWindow(GtkWindow* window) {
 	gtk_widget_hide(GTK_WIDGET(window));
 }
 
-static char* desktopPickDirectory(const char* title, const char* defaultPath) {
+static char* desktopPickDirectory(const char* title, const char* defaultPath, int* outMode) {
 	GtkWidget* dialog = gtk_file_chooser_dialog_new(
 		title, NULL, GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
-		"_Cancel", GTK_RESPONSE_CANCEL,
-		"_Select", GTK_RESPONSE_ACCEPT,
+		"New Session", 1,
+		"Last Session", 2,
+		"Cancel", GTK_RESPONSE_CANCEL,
 		NULL
 	);
 	if (defaultPath != NULL && g_file_test(defaultPath, G_FILE_TEST_IS_DIR)) {
 		gtk_file_chooser_set_filename(GTK_FILE_CHOOSER(dialog), defaultPath);
 	}
 	gchar* result = NULL;
-	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+	gint response = gtk_dialog_run(GTK_DIALOG(dialog));
+	if (outMode != NULL) *outMode = response;
+	if (response == 1 || response == 2) {
 		result = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
 	}
 	gtk_widget_destroy(dialog);
 	return result;
+}
+
+static gboolean desktopConfirmDialog(const char* title, const char* message) {
+	GtkWidget* dialog = gtk_message_dialog_new(
+		NULL, GTK_DIALOG_MODAL,
+		GTK_MESSAGE_QUESTION, GTK_BUTTONS_OK_CANCEL,
+		"%s", message
+	);
+	gtk_window_set_title(GTK_WINDOW(dialog), title);
+	gint result = gtk_dialog_run(GTK_DIALOG(dialog));
+	gtk_widget_destroy(dialog);
+	return result == GTK_RESPONSE_OK;
 }
 
 static gboolean desktopWindowVisible(GtkWindow* window) {
@@ -165,20 +180,33 @@ func (p *linuxDesktopPlatform) Shutdown() {
 	})
 }
 
-// pickDirectoryNative opens a GTK directory chooser on the main thread and returns
-// the selected directory path (or "" if cancelled). Must be called from within
-// view.Dispatch or another GTK main thread context.
-func pickDirectoryNative(title, defaultPath string) (string, error) {
+// pickDirectoryNative opens a GTK directory chooser with three buttons:
+// New Session (mode=1), Last Session (mode=2), Cancel (mode=0).
+// Must be called from within view.Dispatch or another GTK main thread context.
+func pickDirectoryNative(title, defaultPath string) (path string, mode int, err error) {
 	cTitle := C.CString(title)
 	cDefault := C.CString(defaultPath)
 	defer C.free(unsafe.Pointer(cTitle))
 	defer C.free(unsafe.Pointer(cDefault))
-	cPath := C.desktopPickDirectory(cTitle, cDefault)
+	var outMode C.int
+	cPath := C.desktopPickDirectory(cTitle, cDefault, &outMode)
+	mode = int(outMode)
 	if cPath == nil {
-		return "", nil
+		return "", mode, nil
 	}
 	defer C.g_free(C.gpointer(cPath))
-	return C.GoString(cPath), nil
+	return C.GoString(cPath), mode, nil
+}
+
+// confirmDialog shows a GTK OK/Cancel question dialog.
+// Returns true if the user clicked OK.
+func confirmDialog(title, message string) (bool, error) {
+	cTitle := C.CString(title)
+	cMessage := C.CString(message)
+	defer C.free(unsafe.Pointer(cTitle))
+	defer C.free(unsafe.Pointer(cMessage))
+	result := C.desktopConfirmDialog(cTitle, cMessage)
+	return result == C.TRUE, nil
 }
 
 func (p *linuxDesktopPlatform) onTrayReady() {

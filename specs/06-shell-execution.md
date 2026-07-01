@@ -138,10 +138,14 @@ User abort via Ctrl-C:
 
 ## Work Directory
 
-The shell tool does not track a work directory internally. Work directory is
-injected via the `workDir` parameter to `executeShell()`. Currently unused
-by the tool — commands run in the process's current working directory. The
-prompt tells the LLM to use `cd` within shell commands.
+The shell tool accepts a `workDir` closure at construction time via
+`NewShellTool(os, workDir)`. At execution, `currentWorkDir()` resolves the
+current project directory and sets `cmd.Dir = workDir` on the shell command.
+When workDir is empty, the command runs in the process's current working
+directory.
+
+The prompt still tells the LLM to use `cd` within shell commands when an
+explicit change is needed beyond the project directory.
 
 ## Extra Environment
 

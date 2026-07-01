@@ -8,6 +8,7 @@
 | `internal/runtime/` | `runtime.go` | Agent core, Handler interface, RunTurn loop, model resolution, helper detection |
 | `internal/console/` | `console.go`, `reader.go` | Console transport (REPL, rendering, input) |
 | `internal/telegram/` | `telegram.go`, `handler.go`, `commands.go`, `config.go`, `state.go` | Telegram bridge transport (polling, message handling) |
+| `internal/desktop_old/` | archived desktop package | Removed Go WebView desktop transport kept only as migration reference |
 | `internal/tools/` | `tools.go`, `shell.go`, `skill_tools.go`, `replace_block.go`, `ask_friend.go`, `task_tools.go` | Native tool interface and implementations |
 | `internal/llmcall/` | `client.go` | OpenAI-compatible streaming chat completion client |
 | `internal/config/` | `config.go`, `modes.go` | Configuration load/save/validate, work mode management |
@@ -59,7 +60,7 @@ runtime dependency.
 
 ### Layer 0 — Application Entry (`main.go`)
 - Single entry point (no `cmd/` tree)
-- Flag parsing: `-c` (continue last clean), `-r` (resume last), `--telegram <instance>`
+- Flag parsing: `-c` (continue last clean), `-r` (resume last), `--console`, `--telegram <instance>`
 - Startup sequence: detect OS → bootstrap app home → load/first-run config → prepare builtin assets → create/resume session → agent → transport
 - Two transport entry points: `runConsole()` or `telegram.Run()`
 - Embedded assets via `//go:embed` directives in `embed.go`
@@ -76,7 +77,7 @@ Single file `runtime.go` containing:
 ### Layer 2 — Tools (`internal/tools/`)
 - `Tool` interface — 5 methods: Name, Description, Parameters, Execute, FormatArgs
 - `Registry` — map[string]Tool, built at agent construction, never modified at runtime
-- All 8 tools registered in `NewAgent()`:
+- All 9 tools registered in `NewAgent()`:
   - `shell` — command execution via platform shell
   - `load_skill` / `unload_skill` — in-memory active skills management
   - `run_skill` — execute runnable skill [CODE] sections
@@ -101,6 +102,11 @@ Single file `runtime.go` containing:
 - Instance config in `app_home/telegram/<instance>/bridge.json`
 - Buffered streaming: flushes to Telegram every 500ms, splits messages >3500 chars
 - Local slash commands: `/help`, `/start`, `/model`, `/clear`, `/new`, `/exit`
+
+#### Archived Desktop Reference (`internal/desktop_old/`)
+- Removed from the active build
+- Preserved only as source reference for the future Electron desktop transport
+- Contains the old HTML/CSS/JS UI, desktop-local state model, tray/hotkey integration, and Handler adapter
 
 ### Layer 4 — LLM Client (`internal/llmcall/`)
 - OpenAI-compatible chat completion API client
@@ -155,7 +161,7 @@ Single file `runtime.go` containing:
 
 #### Helpers (`internal/helpers/`)
 - Live binary detection via `exec.LookPath`
-- Core helpers: rg, fd, jq, git, curl, pandoc, sqlite3
+- Core helpers: rg, fd, jq, git, xh, pandoc, sqlite3
 - `Detect()` runs all lookups, returns status list
 - `Available()` filters detected and project-relevant helpers
 - `MissingCore()` filters helpers not on PATH
@@ -277,6 +283,6 @@ Skills with `[CODE]` sections provide dynamic tool-like extensibility via
 
 ### Model Switching Paths
 - `SetModel()` — transport model switch with global persistence (config.json + modes.json)
-- `SetModelLocal()` — transport-local switch without persistence (Telegram only)
+- `SetModelLocal()` — transport-local switch without global persistence
 - `SetMode()` — switch work mode with model resolution
 - All three go through `applyModel()` which syncs the compactor and provider client
