@@ -169,6 +169,23 @@ which loads `transport.telegram.md` and applies the dynamic Telegram
 
 ## Deploy
 
+### Local Developer Launcher
+
+The current local development workflow uses a user-local wrapper script at
+`${HOME}/.local/bin/blazeai`.
+
+Current behavior:
+
+- `blazeai` builds the main Go binary from the repo root to `/tmp/blazeai` and runs it in console mode
+- `blazeai desktop` and `blazeai --desktop` run `npm start --prefix desktop_electron`, which rebuilds the Go desktop backend and starts the Electron shell
+- `blazeai desktop` and `blazeai --desktop` export `BLAZEAI_DESKTOP_PROJECT` from the caller current directory by default, so the desktop session starts in the directory where the command was launched
+- `blazeai desktop --project <path>` overrides that default and passes the explicit project path to the desktop backend
+- `blazeai desktop --last-session` also exports `BLAZEAI_DESKTOP_LAST_SESSION=1`, which requests the last clean desktop session on the first message
+
+This wrapper is a local convenience entrypoint, not the shipped application
+binary. The main Go CLI still exposes only the binary flags documented above,
+while desktop startup is routed through the Electron app in `desktop_electron/`.
+
 ### Simple Build And Run
 
 ```sh
