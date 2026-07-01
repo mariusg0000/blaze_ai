@@ -21,6 +21,7 @@ type transcriptSink interface {
 	SetToolActivity(text string)
 	SetStatus(text string)
 	SetBusy(active bool)
+	SetPromptTokens(tokens int)
 }
 
 // Handler adapts runtime streaming callbacks to the desktop transcript.
@@ -31,13 +32,18 @@ type transcriptSink interface {
 type Handler struct {
 	sink transcriptSink
 
-	mu               sync.Mutex
-	assistantStarted bool
-	reasoningStarted bool
-	lastTokens       int
-	lastErr          error
-	activity         toolActivity
+	mu            sync.Mutex
+	activeSegment string
+	lastTokens    int
+	lastErr       error
+	activity      toolActivity
 }
+
+const (
+	segmentAssistant = "assistant"
+	segmentReasoning = "reasoning"
+	segmentTool      = "tool"
+)
 
 // NewHandler creates a desktop runtime handler.
 //
@@ -55,8 +61,7 @@ func NewHandler(sink transcriptSink) *Handler {
 // WHY:   The UI needs a clean streaming state for each submitted prompt.
 func (h *Handler) BeginTurn() {
 	h.mu.Lock()
-	h.assistantStarted = false
-	h.reasoningStarted = false
+	h.activeSegment = ""
 	h.lastTokens = 0
 	h.lastErr = nil
 	h.activity.Reset()
@@ -98,10 +103,10 @@ func (h *Handler) FinishTurn(err error) {
 // A pending reasoning block is closed before the assistant block opens.
 func (h *Handler) OnContent(delta string) {
 	h.mu.Lock()
-	started := h.assistantStarted
-	reasoningActive := h.reasoningStarted
+	started := h.activeSegment == segmentAssistant
+	reasoningActive := h.activeSegment == segmentReasoning
 	if !started {
-		h.assistantStarted = true
+		h.activeSegment = segmentAssistant
 		h.activity.Reset()
 	}
 	h.mu.Unlock()
@@ -120,6 +125,10 @@ func (h *Handler) OnContent(delta string) {
 // OnToolCall updates the compact desktop activity block for one pending tool call.
 func (h *Handler) OnToolCall(name string, args string) {
 	h.mu.Lock()
+	if h.activeSegment != segmentTool {
+		h.activeSegment = segmentTool
+		h.activity.Reset()
+	}
 	h.activity.AddCall("", name, args)
 	activityText := h.activity.Render()
 	h.mu.Unlock()
@@ -131,6 +140,10 @@ func (h *Handler) OnToolCall(name string, args string) {
 // OnToolResult replaces the pending tool line with a compact completed summary.
 func (h *Handler) OnToolResult(name string, result string) {
 	h.mu.Lock()
+	if h.activeSegment != segmentTool {
+		h.activeSegment = segmentTool
+		h.activity.Reset()
+	}
 	h.activity.ApplyResult("", name, result)
 	activityText := h.activity.Render()
 	h.mu.Unlock()
@@ -144,14 +157,18 @@ func (h *Handler) OnUsage(promptTokens int) {
 	h.mu.Lock()
 	h.lastTokens = promptTokens
 	h.mu.Unlock()
+	if h.sink != nil {
+		h.sink.SetPromptTokens(promptTokens)
+	}
 }
 
 // OnReasoning appends one streamed reasoning/thinking chunk as its own transcript row.
 func (h *Handler) OnReasoning(delta string) {
 	h.mu.Lock()
-	started := h.reasoningStarted
+	started := h.activeSegment == segmentReasoning
 	if !started {
-		h.reasoningStarted = true
+		h.activeSegment = segmentReasoning
+		h.activity.Reset()
 	}
 	h.mu.Unlock()
 	if h.sink == nil {

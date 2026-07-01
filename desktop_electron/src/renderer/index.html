@@ -25,10 +25,6 @@
           <option value="17">17px</option>
         </select>
       </label>
-      <label>
-        <span class="select-label">model</span>
-        <select id="model"></select>
-      </label>
       <button id="clear">Clear</button>
       <button id="closeSession">Close</button>
       <button id="quit" class="danger">Quit</button>
@@ -37,10 +33,23 @@
     <div id="transcript" class="transcript"></div>
 
     <div class="footer">
-      <div id="status" class="status">Ready</div>
+      <div id="status" class="status-line">
+        <span class="status-left">
+          <select id="modeSelect" class="status-select" title="Work mode"></select>
+          <select id="modelSelect" class="status-select" title="Model"></select>
+          <span id="statusText" class="status-text">Ready</span>
+        </span>
+        <span class="status-right">
+          <span id="ctxLabel" class="ctx-label"></span>
+          <div class="ctx-track">
+            <div class="ctx-fill" id="ctxFill"></div>
+          </div>
+        </span>
+      </div>
       <form id="composer" class="composer">
         <textarea id="input" placeholder="Type a message or /help (Shift+Enter for newline)" rows="1"></textarea>
         <button id="send" class="send-overlay" type="submit" title="Send (Enter)">&#8629;</button>
+        <button id="stop" type="button" class="stop-overlay" title="Stop" style="display:none">&#9632;</button>
       </form>
     </div>
   </div>

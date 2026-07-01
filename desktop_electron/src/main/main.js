@@ -198,6 +198,14 @@ ipcMain.handle('desktop:pick-workdir', async (_event, options) => {
   };
 });
 
+ipcMain.handle('desktop:cancel', async () => {
+  if (!backend) {
+    return false;
+  }
+  await backend.call('cancel', {});
+  return true;
+});
+
 ipcMain.handle('desktop:quit', async () => {
   if (backend) {
     await backend.call('quit', {});

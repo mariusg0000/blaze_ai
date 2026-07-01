@@ -5,11 +5,12 @@
   marked.setOptions({ gfm: true, breaks: true, headerIds: false, mangle: false });
 
   const transcriptEl = document.getElementById('transcript');
-  const statusEl = document.getElementById('status');
   const workdirEl = document.getElementById('workdir');
   const inputEl = document.getElementById('input');
   const sendEl = document.getElementById('send');
-  const modelEl = document.getElementById('model');
+  const stopEl = document.getElementById('stop');
+  const modeSelectEl = document.getElementById('modeSelect');
+  const modelSelectEl = document.getElementById('modelSelect');
   const composerEl = document.getElementById('composer');
   const clearEl = document.getElementById('clear');
   const closeSessionEl = document.getElementById('closeSession');
@@ -19,9 +20,13 @@
   const pickDirEl = document.getElementById('pickDir');
   const darkThemeLink = document.getElementById('hljs-dark');
   const lightThemeLink = document.getElementById('hljs-light');
+  const statusTextEl = document.getElementById('statusText');
+  const ctxLabelEl = document.getElementById('ctxLabel');
+  const ctxFillEl = document.getElementById('ctxFill');
 
   let renderedBlocks = [];
   let lastModel = '';
+  let lastMode = '';
   let lastTheme = '';
   let lastState = null;
   let requestInFlight = false;
@@ -96,17 +101,33 @@
   }
 
   function syncModelOptions(models) {
-    const currentOptions = Array.from(modelEl.options).map((option) => option.value);
+    const currentOptions = Array.from(modelSelectEl.options).map((option) => option.value);
     const nextOptions = models || [];
     if (JSON.stringify(currentOptions) === JSON.stringify(nextOptions)) {
       return;
     }
-    modelEl.innerHTML = '';
+    modelSelectEl.innerHTML = '';
     for (const model of nextOptions) {
       const option = document.createElement('option');
       option.value = model;
       option.textContent = model;
-      modelEl.appendChild(option);
+      modelSelectEl.appendChild(option);
+    }
+  }
+
+  function syncModeOptions(names, selected) {
+    const currentOptions = Array.from(modeSelectEl.options).map((o) => o.value);
+    if (JSON.stringify(currentOptions) !== JSON.stringify(names)) {
+      modeSelectEl.innerHTML = '';
+      for (const name of names) {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        modeSelectEl.appendChild(option);
+      }
+    }
+    if (selected) {
+      modeSelectEl.value = selected;
     }
   }
 
@@ -140,20 +161,39 @@
     }
 
     workdirEl.textContent = state.workdir || '';
-    statusEl.textContent = state.status || 'Ready';
-    statusEl.classList.toggle('error', /^error/i.test(state.status || ''));
+
+    statusTextEl.textContent = state.status || 'Ready';
+    statusTextEl.className = 'status-text';
+    statusTextEl.classList.toggle('error', /^error/i.test(state.status || ''));
+
+    syncModeOptions(state.mode_names || [], state.mode_name || '');
+    syncModelOptions(state.models);
+    if (state.model !== lastModel) {
+      modelSelectEl.value = state.model || '';
+      lastModel = state.model || '';
+    }
+    if (state.mode_name !== lastMode) {
+      modeSelectEl.value = state.mode_name || '';
+      lastMode = state.mode_name || '';
+    }
+
+    if (state.max_context_tokens > 0) {
+      const used = Math.min(state.used_context_tokens || 0, state.max_context_tokens);
+      const pct = (used / state.max_context_tokens) * 100;
+      ctxLabelEl.textContent = 'CTX ' + used.toLocaleString();
+      ctxFillEl.style.width = Math.min(pct, 100) + '%';
+    } else {
+      ctxLabelEl.textContent = '';
+      ctxFillEl.style.width = '0%';
+    }
 
     const busy = Boolean(state.busy);
     inputEl.disabled = busy;
-    sendEl.disabled = busy;
+    sendEl.hidden = busy;
+    stopEl.style.display = busy ? 'flex' : 'none';
     clearEl.disabled = busy;
     closeSessionEl.disabled = busy;
 
-    syncModelOptions(state.models);
-    if (state.model !== lastModel) {
-      modelEl.value = state.model || '';
-      lastModel = state.model || '';
-    }
   }
 
   async function callBackend(method, params) {
@@ -168,8 +208,8 @@
     try {
       applyState(await callBackend('get_state'));
     } catch (error) {
-      statusEl.textContent = `Error: ${error.message}`;
-      statusEl.classList.add('error');
+      statusTextEl.textContent = `Error: ${error.message}`;
+      statusTextEl.classList.add('error');
     } finally {
       requestInFlight = false;
     }
@@ -179,8 +219,8 @@
 	try {
 	  await action();
 	} catch (error) {
-	  statusEl.textContent = `Error: ${error.message}`;
-	  statusEl.classList.add('error');
+	  statusTextEl.textContent = `Error: ${error.message}`;
+	  statusTextEl.classList.add('error');
 	}
   }
 
@@ -207,8 +247,8 @@
     try {
       applyState(await callBackend('send_message', { text }));
     } catch (error) {
-      statusEl.textContent = `Error: ${error.message}`;
-      statusEl.classList.add('error');
+      statusTextEl.textContent = `Error: ${error.message}`;
+      statusTextEl.classList.add('error');
     }
   });
 
@@ -220,8 +260,12 @@
     applyState(await callBackend('close_session'));
   }));
 
-  modelEl.addEventListener('change', () => runAction(async () => {
-    applyState(await callBackend('change_model', { model: modelEl.value }));
+  modelSelectEl.addEventListener('change', () => runAction(async () => {
+    applyState(await callBackend('change_model', { model: modelSelectEl.value }));
+  }));
+
+  modeSelectEl.addEventListener('change', () => runAction(async () => {
+    applyState(await callBackend('change_mode', { name: modeSelectEl.value }));
   }));
 
   themeEl.addEventListener('click', () => runAction(async () => {
@@ -253,6 +297,24 @@
   quitEl.addEventListener('click', () => runAction(async () => {
     await window.blazeDesktop.quit();
   }));
+
+  stopEl.addEventListener('click', async () => {
+    try {
+      await window.blazeDesktop.cancel();
+    } catch (error) {
+      statusTextEl.textContent = `Error: ${error.message}`;
+      statusTextEl.classList.add('error');
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Tab' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      runAction(async () => {
+        applyState(await callBackend('next_mode'));
+      });
+    }
+  });
 
   inputEl.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {

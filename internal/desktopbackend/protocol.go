@@ -39,6 +39,11 @@ type ChangeModelParams struct {
 	Model string `json:"model"`
 }
 
+// ChangeModeParams is the request payload for change_mode.
+type ChangeModeParams struct {
+	Name string `json:"name"`
+}
+
 // SetThemeParams is the request payload for set_theme.
 type SetThemeParams struct {
 	Theme string `json:"theme"`

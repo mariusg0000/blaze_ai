@@ -11,5 +11,8 @@ contextBridge.exposeInMainWorld('blazeDesktop', {
   },
   quit() {
     return ipcRenderer.invoke('desktop:quit');
+  },
+  cancel() {
+    return ipcRenderer.invoke('desktop:cancel');
   }
 });

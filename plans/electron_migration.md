@@ -24,7 +24,7 @@ Required outcomes:
 ### 1. Split responsibility
 
 - Go backend owns agent execution, sessions, tools, config, prompt build, compaction, and provider streaming.
-- Electron owns windowing, tray, hotkey, renderer UI, native dialogs, packaging, and desktop process lifecycle.
+- Electron owns windowing, renderer UI, native dialogs, packaging, and desktop process lifecycle.
 
 ### 2. New components
 
@@ -34,7 +34,7 @@ Required outcomes:
   - no WebKitGTK, no WebView, no GTK tray code
 - `desktop_electron/`
   - Electron app root
-  - `main` process for app lifecycle, tray, hotkey, dialog, backend spawn
+  - `main` process for app lifecycle, dialog, backend spawn
   - `preload` bridge for safe renderer API
   - `renderer` app that reproduces the archived desktop UI
 
@@ -71,7 +71,7 @@ These archived pieces should be ported almost 1:1:
 - `internal/desktop_old/state.go`
   - selected model, theme, font size, window geometry model
 - `internal/desktop_old/config.go`
-  - desktop config contract: `workdir`, hotkey config, reasoning max height
+  - desktop config contract: `workdir`, reasoning max height
 - `internal/desktop_old/handler.go`
   - streaming semantics for content, reasoning, tool activity, usage, and busy state
 
@@ -99,8 +99,6 @@ desktop_electron/
   src/
     main/
       main.ts
-      tray.ts
-      hotkey.ts
       backend.ts
       dialogs.ts
     preload/
@@ -162,8 +160,6 @@ Phase 1 can work with polling plus request/response if that is simpler. Phase 2 
 ### Electron owns
 
 - window creation and geometry application
-- tray icon/menu
-- global hotkey registration
 - native directory picker
 - native confirm dialogs
 - renderer DOM updates
@@ -233,24 +229,7 @@ Validation:
 - Electron launches backend and renders initial state
 - killing backend causes visible fatal error and app shutdown
 
-## Phase 3: Restore Native Desktop Features
-
-Goal: regain desktop capabilities formerly implemented through GTK/tray/hotkey.
-
-Steps:
-- add tray menu in Electron main process
-- add global show/hide hotkey
-- add directory picker using Electron dialog API
-- add window geometry persistence
-- add quit flow and close-to-tray behavior
-
-Validation:
-- tray show/hide works
-- hotkey toggles window
-- geometry persists across restarts
-- workdir picker updates persisted desktop config
-
-## Phase 4: Streaming and UX Hardening
+## Phase 3: Streaming and UX Hardening
 
 Goal: match or improve the archived desktop responsiveness.
 
@@ -265,7 +244,7 @@ Validation:
 - tool activity updates incrementally
 - reasoning block behavior matches archived semantics
 
-## Phase 5: Packaging and Cutover
+## Phase 4: Packaging and Cutover
 
 Goal: ship Electron as the desktop app and keep the root Go module clean.
 
@@ -307,16 +286,14 @@ These behaviors should be preserved unless explicitly dropped later:
 
 - Should the desktop backend reuse `app_home/desktop/` paths exactly, or move to a new `app_home/electron/` namespace?
 - Should phase 1 preserve the old singleton fixed desktop session, or switch immediately to project-scoped desktop sessions?
-- Should hotkey config stay in Go-owned desktop config JSON, or move to an Electron-specific config file?
 - Is sudo approval still unsupported on desktop in phase 1, or should Electron add a secure approval dialog before release?
 
 ## Recommended Execution Order
 
 1. build `internal/desktopbackend/` with no GUI code
 2. build Electron shell with static renderer port from `desktop_old`
-3. restore tray/hotkey/dialog features in Electron
-4. harden streaming and packaging
-5. update docs/specs and promote Electron to active desktop transport
+3. harden streaming and packaging
+4. update docs/specs and promote Electron to active desktop transport
 
 ## Definition Of Done
 

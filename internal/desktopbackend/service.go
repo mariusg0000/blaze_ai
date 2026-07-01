@@ -6,6 +6,7 @@ package desktopbackend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -63,6 +64,10 @@ type stateResponse struct {
 	Busy               bool           `json:"busy"`
 	Model              string         `json:"model"`
 	Models             []string       `json:"models"`
+	ModeName           string         `json:"mode_name"`
+	ModeNames          []string       `json:"mode_names"`
+	MaxContextTokens   int            `json:"max_context_tokens"`
+	UsedContextTokens  int            `json:"used_context_tokens"`
 	WorkDir            string         `json:"workdir"`
 	WorkDirFull        string         `json:"workdir_full"`
 	Theme              string         `json:"theme"`
@@ -106,13 +111,17 @@ type Service struct {
 	pendingResumeLastClean bool
 	quitRequested          bool
 
-	mu              sync.Mutex
-	blocks          []transcriptBlock
-	status          string
-	busy            bool
-	activeTool      int
-	activeReply     int
-	activeReasoning int
+	cancelFn context.CancelFunc
+
+	mu                sync.Mutex
+	blocks            []transcriptBlock
+	status            string
+	busy              bool
+	activeTool        int
+	activeReply       int
+	activeReasoning   int
+	lastPromptTokens  int
+	maxContextTokens  int
 }
 
 // NewService loads desktop-local config/state and returns a ready backend service.
@@ -154,6 +163,10 @@ func NewService(cfg *config.Config, osType platform.OS, promptsFS fs.FS, opts Ba
 		if err := service.desktopCfg.SaveTo(service.configPath); err != nil {
 			return nil, fmt.Errorf("cannot persist initial desktop workdir: %w", err)
 		}
+	}
+	service.maxContextTokens = cfg.Compaction.MaxContextTokens
+	if isDir(service.desktopCfg.WorkDir) {
+		_ = service.ensureSession(context.Background())
 	}
 	return service, nil
 }
@@ -210,6 +223,19 @@ func (s *Service) handleRequest(req Request) (Response, bool, error) {
 		}
 		state, err := s.setWindowBounds(WindowBounds{X: params.X, Y: params.Y, Width: params.Width, Height: params.Height})
 		return Response{ID: req.ID, OK: err == nil, Result: state, Error: errorText(err)}, false, nil
+	case "cancel":
+		s.cancel()
+		return Response{ID: req.ID, OK: true, Result: s.snapshot()}, false, nil
+	case "change_mode":
+		var params ChangeModeParams
+		if err := decodeParams(req.Params, &params); err != nil {
+			return Response{}, false, err
+		}
+		state, err := s.changeMode(params.Name)
+		return Response{ID: req.ID, OK: err == nil, Result: state, Error: errorText(err)}, false, nil
+	case "next_mode":
+		state, err := s.nextMode()
+		return Response{ID: req.ID, OK: err == nil, Result: state, Error: errorText(err)}, false, nil
 	case "quit":
 		state, err := s.quit()
 		return Response{ID: req.ID, OK: err == nil, Result: state, Error: errorText(err)}, err == nil, nil
@@ -243,6 +269,41 @@ func (s *Service) changeModel(modelID string) (stateResponse, error) {
 		}
 	}
 	s.AppendSystem("Model set to: " + modelID)
+	s.SetStatus("Ready")
+	return s.snapshot(), nil
+}
+
+func (s *Service) changeMode(name string) (stateResponse, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return stateResponse{}, fmt.Errorf("mode name is required")
+	}
+	if s.isBusy() {
+		return stateResponse{}, fmt.Errorf("wait for the current turn to finish before switching mode")
+	}
+	if s.agent == nil {
+		return stateResponse{}, fmt.Errorf("no active session")
+	}
+	if err := s.agent.SetMode(name); err != nil {
+		return stateResponse{}, err
+	}
+	s.AppendSystem("Switched to mode: " + name)
+	s.SetStatus("Ready")
+	return s.snapshot(), nil
+}
+
+func (s *Service) nextMode() (stateResponse, error) {
+	if s.isBusy() {
+		return stateResponse{}, fmt.Errorf("wait for the current turn to finish")
+	}
+	if s.agent == nil {
+		return stateResponse{}, fmt.Errorf("no active session")
+	}
+	mode, err := s.agent.NextMode()
+	if err != nil {
+		return stateResponse{}, err
+	}
+	s.AppendSystem("Switched to mode: " + mode.Name)
 	s.SetStatus("Ready")
 	return s.snapshot(), nil
 }
@@ -351,7 +412,7 @@ func (s *Service) closeSession() (stateResponse, error) {
 
 func (s *Service) quit() (stateResponse, error) {
 	if s.isBusy() {
-		return stateResponse{}, fmt.Errorf("wait for the current turn to finish before quitting")
+		s.cancel()
 	}
 	s.quitRequested = true
 	s.AppendSystem("Desktop app is shutting down.")
@@ -386,9 +447,30 @@ func (s *Service) submitInput(text string) error {
 			return nil
 		}
 	}
+	// Reset active markers so tool/reasoning blocks from the previous turn
+	// are not overwritten by new streaming content.
+	s.mu.Lock()
+	s.activeTool = -1
+	s.activeReply = -1
+	s.activeReasoning = -1
+	s.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	s.cancelFn = cancel
+	s.mu.Unlock()
+
 	s.handler.BeginTurn()
 	go func(input string) {
-		err := s.agent.RunTurn(context.Background(), input)
+		err := s.agent.RunTurn(ctx, input)
+		s.mu.Lock()
+		s.cancelFn = nil
+		s.mu.Unlock()
+		if errors.Is(err, runtimecore.ErrTurnAborted) {
+			s.handler.FinishTurn(nil)
+			s.AppendSystem("Turn aborted by user.")
+			return
+		}
 		s.handler.FinishTurn(err)
 		if err != nil {
 			s.AppendSystem("Error: " + err.Error())
@@ -466,6 +548,7 @@ func (s *Service) loadSessionTranscript() {
 				s.StartReasoning()
 				s.AppendReasoning(reasoning)
 				s.FinishReasoning()
+				activity.Reset()
 			}
 			if text := messageText(msg.Content); strings.TrimSpace(text) != "" {
 				s.StartAssistant()
@@ -497,6 +580,8 @@ func (s *Service) snapshot() stateResponse {
 		blocks = append(blocks, blockPayload{Type: b.Type, Prefix: b.Prefix, Text: text})
 	}
 	modelID := ""
+	modeName := ""
+	var modeNames []string
 	workDir := s.pendingWorkDir
 	if workDir == "" {
 		workDir = s.desktopCfg.WorkDir
@@ -504,6 +589,13 @@ func (s *Service) snapshot() stateResponse {
 	if s.agent != nil {
 		modelID = s.agent.ModelID
 		workDir = s.agent.WorkDir
+		if s.agent.CurrentMode != nil {
+			modeName = s.agent.CurrentMode.Name
+		}
+		modeNames = make([]string, 0, len(s.agent.Modes.Modes))
+		for _, m := range s.agent.Modes.Modes {
+			modeNames = append(modeNames, m.Name)
+		}
 	}
 	bounds, ok := s.state.WindowBoundsValue()
 	window := windowPayload{}
@@ -516,6 +608,10 @@ func (s *Service) snapshot() stateResponse {
 		Busy:               s.busy,
 		Model:              modelID,
 		Models:             modelOptions(s.cfg, modelID),
+		ModeName:           modeName,
+		ModeNames:          modeNames,
+		MaxContextTokens:   s.maxContextTokens,
+		UsedContextTokens:  s.lastPromptTokens,
 		WorkDir:            truncatePath(workDir, 72),
 		WorkDirFull:        workDir,
 		Theme:              s.state.ThemeValue(),
@@ -586,6 +682,8 @@ func (s *Service) AppendReasoning(delta string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.activeReasoning < 0 {
+		s.activeTool = -1
+		s.activeReply = -1
 		s.blocks = append(s.blocks, transcriptBlock{Type: blockReasoning, Prefix: "Reasoning"})
 		s.activeReasoning = len(s.blocks) - 1
 	}
@@ -657,6 +755,21 @@ func (s *Service) isBusy() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.busy
+}
+
+func (s *Service) cancel() {
+	s.mu.Lock()
+	fn := s.cancelFn
+	s.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+func (s *Service) SetPromptTokens(tokens int) {
+	s.mu.Lock()
+	s.lastPromptTokens = tokens
+	s.mu.Unlock()
 }
 
 func (s *Service) flushState() error {

@@ -354,15 +354,73 @@ html[data-theme="light"] .row-assistant .prefix {
   border-top: 1px solid var(--border);
 }
 
-.status {
-  color: var(--accent-2);
-  font-weight: 600;
-  font-size: 12px;
+.status-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 6px;
+  font-size: 11px;
+  line-height: 1;
+  min-height: 14px;
 }
 
-.status.error {
+.status-left {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+}
+
+.status-select {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font: 600 13px / 1.3 var(--mono);
+  cursor: pointer;
+  max-width: 150px;
+}
+
+.status-text {
+  color: var(--accent-2);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.status-text.error {
   color: var(--danger);
+}
+
+.status-right {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.ctx-label {
+  color: var(--text-muted);
+  font-weight: 600;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.ctx-track {
+  width: 100px;
+  height: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.ctx-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
 }
 
 .composer {
@@ -408,6 +466,24 @@ html[data-theme="light"] .row-assistant .prefix {
 .send-overlay:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+.stop-overlay {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: var(--danger);
+  color: var(--bg);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 @media (max-width: 720px) {

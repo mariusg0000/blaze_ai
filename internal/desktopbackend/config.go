@@ -1,6 +1,6 @@
 // config.go — desktop companion config loading and validation.
-// Loads app_home/desktop/config.json, validates required fields and optional
-// hotkey settings strictly, and stops startup on any missing or invalid value.
+// Loads app_home/desktop/config.json, validates required fields strictly, and
+// stops startup on any missing or invalid value.
 // Layer: transport configuration. Dependencies: internal/platform.
 package desktopbackend
 
@@ -23,15 +23,14 @@ const (
 
 // Config holds the static configuration for the singleton desktop transport.
 //
-// WHAT:  Desktop workdir binding and optional global hotkey settings.
+// WHAT:  Desktop workdir binding plus runtime presentation settings.
 // WHY:   The desktop transport must run against one explicit project folder and
-// optionally expose one explicit show/hide shortcut.
+// persist only the local UI values it still owns.
 // PARAMS: WorkDir — absolute project work directory used by the runtime;
-// ToggleHotkey — explicit desktop toggle shortcut configuration.
+// ReasoningMaxHeight — optional reasoning panel height override.
 type Config struct {
-	WorkDir            string       `json:"workdir"`
-	ToggleHotkey       HotkeyConfig `json:"toggle_hotkey"`
-	ReasoningMaxHeight float64      `json:"reasoning_max_height,omitempty"`
+	WorkDir            string  `json:"workdir"`
+	ReasoningMaxHeight float64 `json:"reasoning_max_height,omitempty"`
 }
 
 // ReasoningMaxHeightValue returns the effective reasoning max height.
@@ -40,16 +39,6 @@ func (c *Config) ReasoningMaxHeightValue() float64 {
 		return defaultReasoningMaxHeightPx
 	}
 	return c.ReasoningMaxHeight
-}
-
-// HotkeyConfig holds the optional desktop toggle shortcut configuration.
-//
-// WHAT:  Enables or disables one global show/hide hotkey for the desktop app.
-// WHY:   The user approved an explicit configurable shortcut instead of a hardcoded one.
-// PARAMS: Enabled — whether to register the hotkey; Shortcut — accelerator text like Ctrl+Shift+Space.
-type HotkeyConfig struct {
-	Enabled  bool   `json:"enabled"`
-	Shortcut string `json:"shortcut"`
 }
 
 // InstanceDir resolves the singleton desktop instance folder under app home.
@@ -155,9 +144,6 @@ func (c *Config) Validate() error {
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("workdir is not a directory: %s", c.WorkDir)
-	}
-	if err := validateHotkeyConfig(c.ToggleHotkey); err != nil {
-		return err
 	}
 	if c.ReasoningMaxHeight < 0 {
 		return fmt.Errorf("reasoning_max_height must be >= 0: got %g", c.ReasoningMaxHeight)
