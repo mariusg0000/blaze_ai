@@ -34,5 +34,8 @@ go.work.sum
 tmp/
 temp/
 
+# Electron local dependencies
+desktop_electron/node_modules/
+
 # Local runtime data
 app_home/
