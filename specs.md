@@ -7,148 +7,91 @@
 ========== AGENT GENERATED ==========
 
 ### Purpose
-- BlazeAI is a fast, cross-platform AI terminal agent for experienced users.
-- Optimized for direct command execution, low interaction overhead, and maximum flexibility.
-- Shell-native execution model with a compiled Go backend.
-- Same agent core supports a console interface now and a web terminal interface later.
+- BlazeAI is a cross-platform AI terminal agent for experienced users.
+- The current implementation is a Go shell-native runtime with console and Telegram transports.
+- The system favors fast interaction, low overhead, and explicit failure over silent degradation.
+
+### Technology Stack
+- Go module with `go 1.25.0` and `toolchain go1.26.4`.
+- Standard library first; current external deps are `golang.org/x/image`, `golang.org/x/term`, and `golang.org/x/sys`.
+- Runtime integration is OpenAI-compatible HTTP streaming with shell execution on the host OS.
 
 ### Active Scope
-- Greenfield rebuild from specification. Previous implementation is considered polluted and discarded.
-- Five specification files drive the rebuild: `specs/01-product-scope.md`, `specs/02-core-runtime.md`, `specs/03-interfaces.md`, `specs/04-platform-ops.md`, `specs/05-compaction.md`.
-- Console transport is the first and complete implementation target. Web transport is postponed.
-- Product priorities in order: speed of interaction, simplicity of execution, cross-platform behavior.
+- Greenfield rebuild driven by the spec fragments in `specs/`.
+- Console is the primary transport; Telegram is implemented; web transport is deferred.
+- User-facing behavior should stop on missing configuration or model selection errors rather than degrade silently.
 
-### Target Users
-- Technical and experienced users familiar with terminals, shell commands, and LLM workflows.
-- No beginner wizards or guided flows.
+### Architecture And Runtime
+- `main.go` bootstraps app home, loads config or runs first-run setup, opens or resumes a session, and starts the selected transport.
+- `internal/runtime/` owns the handler contract and the agent loop: prompt build, streaming, tool calls, persistence, and compaction.
+- `internal/prompt/` rebuilds the runtime prompt on every LLM call from `prompts/`, skills, `specs.md`, and `AGENTS.md`.
+- `internal/platform/` handles OS detection, shell chain selection, app-home bootstrap, and project directory resolution.
+- `internal/skills/` discovers builtin, global, and project skills; active skills live only in memory for the current session.
+- `internal/compaction/` prunes long sessions, writes summaries, and strips reasoning from the payload while preserving on-disk session JSON.
+- `internal/provider/` talks to OpenAI-compatible endpoints, streams responses, parses tool calls, and reports usage.
+- `internal/tools/` implements shell execution, skill tools, ask_a_friend, analyze_image, replace_block, and task tools.
+- `internal/console/` is a terminal-only REPL transport with raw input, slash commands, Markdown rendering, and streaming output.
+- `internal/telegram/` is a long-polling bridge that enforces one chat, accepts text and images, and adapts runtime streaming into Telegram messages.
+- `internal/llmcall/` provides one-shot secondary model calls for role-based delegation.
+- `internal/memory/` reads persistent memory text into prompt builds without automatic writes.
 
-### Interaction Model
-- Main interface: simple CLI REPL, not a full-screen TUI.
-- Web interface: postponed, will imitate a terminal session over the same handler contract.
-- Console UX: Markdown rendering, colored and bold labels, visual separators, streaming output.
-- Handler contract between agent core and transports: `OnContent`, `OnToolCall`, `OnToolResult`.
+### Configuration
+- Runtime config lives in `app_home/config/config.json`.
+- Work modes live in `app_home/config/modes.json`.
+- `config.json` stores providers, favorite models, role assignments, API keys, compaction thresholds, reasoning strip settings, helper preferences, and the last selected model.
+- Providers are OpenAI-compatible and use `name`, `endpoint`, and `api_key`.
+- Model roles are `default`, `vision`, `summarization`, and `advisor`.
+- First-run setup triggers when config is missing or the default role is unassigned, then asks for provider, API key, model, and optional roles.
 
-### Execution Model
-- Main tool: `shell`.
-- Inline shell for simple tasks, OS-native scripts for complex tasks.
-- Python is last resort only, in a lazily-created venv under `app_home/scripts/venv`.
-- Native tools remain hardcoded and compact. Current runtime tools include `shell`, `load_skill`, `unload_skill`, `run_skill`, `replace_block`, `ask_a_friend`, `analyze_image`, `task_read`, and `task_write`.
-- OpenAI-compatible tool calling, multi tool call per turn, optional `timeout` parameter per call.
-- Default tool timeout: 60s. Timeout returns `timeout <N>s exceeded`.
+### Persistence And Protocol Rules
+- Sessions are file-based under `app_home/projects/<project>/sessions/`.
+- Session JSON is the source of truth for message history and is written exactly as sent to the LLM.
+- `closed_cleanly` is set only on `/exit`.
+- Summary files live under `summaries/` inside each session folder.
+- The transport boundary is `runtime.Handler` with `OnContent`, `OnToolCall`, `OnToolResult`, `OnUsage`, `OnReasoning`, and `RequestSudoApproval`.
+- Tool calls follow the OpenAI-compatible tool-calling format with multi-call support and per-call timeouts.
 
-### Provider And Model Configuration
-- OpenAI-compatible providers only.
-- Provider definition: `name`, `endpoint`, `api_key`.
-- API keys stored in `config.json`, not in `.env`.
-- Models predefined in config, canonical format `provider/model_name`.
-- Four model roles: `default` (required), `vision` (optional), `summarization` (optional), `advisor` (optional).
-- No fallback providers or models. Errors stop the runtime with clear messages.
-- Last selected model persists across sessions in config.
-- Runtime command `/model` sets current model. No `/provider` command.
+### Sensitive Areas
+- `internal/config/` and `internal/config/modes.go` control startup config, role resolution, and mode persistence.
+- `internal/session/` and `internal/compaction/` affect persisted conversation state and summary files.
+- `internal/provider/` affects streaming protocol, tool-call parsing, and usage accounting.
+- `internal/platform/` affects OS detection, shell selection, and app-home layout.
+- `internal/tools/` executes shell commands and file edits against the local machine.
 
-### Config Location
-- `app_home/config/config.json` — single source of truth.
-- Contains: providers, favorite models, role assignments, API keys, compaction thresholds, reasoning strip settings.
-- Pre-filled at first-run setup with defaults.
+### Build And Validation
+- `go test ./...`
+- `go build ./...`
+- `go.mod` pins `GOTOOLCHAIN=auto`, so a Go 1.21+ host can download the pinned toolchain on demand.
 
-### First-Run Setup
-- Triggers when config missing or `default` role unassigned.
-- Interactive console: curated list of max 15 known providers + custom option.
-- After provider selection: API key entry.
-- After API key: model retrieval from endpoint, selection by number.
-- Role assignment for `default`; `vision`, `summarization`, and `advisor` optional.
-- Builtin skill `config-manager` allows LLM-assisted configuration.
-
-### App Home Bootstrap
-- Resolved from OS home directory + `blazeai` folder.
-- Created at first start if missing.
-- Standard subfolders: `skills`, `scripts`, `scripts/venv` (lazy), `backups`, `projects`, `config`.
-- `{APP_HOME}` variable injected into prompts and skills at build time.
-
-### Prompt Build
-- Rebuilt on every LLM call from disk. Nothing reused.
-- Runtime part order: universal sysprompt → OS sysprompt → host helpers → skills section → `AGENTS.md` (if exists in work folder).
-- Skills section: available skills (all `[DESCRIPTION]` blocks + file names) then active skills (`[BEHAVIOR]` and `[DATA]` of loaded skills).
-- Conversation part: persisted message history from session JSON, appended after runtime part.
-- Required sources: universal prompt, OS prompt. Optional: `AGENTS.md`, skills.
-
-### Skills
-- Format: Markdown with `[DESCRIPTION]` (required) and at least one of `[BEHAVIOR]` or `[DATA]`.
-- Discovery: builtin (embedded `skills/`), global (`app_home/skills/`), project (`<workdir>/.blazeai/skills/`). All read every build.
-- Collision: `skill-manager` forbids duplicates. If collision exists, custom wins.
-- Builtin skills: `skill-manager`, `config-manager`, `audit-manager`, `specs-manager`.
-- Active skills: in-memory list of names, starts empty per session, not persisted, not deduced from history.
-- `load_skill` / `unload_skill` only modify the in-memory list.
-
-### Memory
-- Handled through skill `[DATA]` sections. No separate memory subsystem.
-
-### Sessions
-- No database. File-based storage in `app_home/sessions/`.
-- New session: random folder name, `session.json` with full message array exactly as sent to LLM.
-- `session.json` includes `closed_cleanly` boolean, set `true` only on `/exit`.
-- New session by default. `-c` continues last cleanly closed session.
-- Active skills list and runtime prompt part are not persisted in session.
-
-### Slash Commands
-- `/exit`: clean close, mark `closed_cleanly=true`, exit.
-- `/model`: without arg prints favorite models list; with arg sets `provider/model_name`.
-- `/cd`: change work folder. Invalid path → clear error, keep current.
-- Unknown slash commands: passed to LLM as normal user messages.
-
-### Context Compaction
-- Trigger: provider-reported `usage.prompt_tokens` reaches `maxContextTokens`.
-- Thresholds in config, pre-filled at init: `maxContextTokens=100000`, `minContextTokens=50000`, `summaryMaxTokens=2000`, `maxSummaryFiles=10`, `tokenCoefficient=3.5`, `maxBackoffOffsetTokens=25000`.
-- Hard cap: `maxContextTokens` + `maxBackoffOffsetTokens`. Above hard cap, prune forced without summary if summarization fails.
-- Pruning: cut point by local estimator, tool boundary safety (no split between tool call and result), physical deletion from session JSON.
-- No `summarizedIDs`, no separate state file. Session JSON is the source of truth.
-- Summaries: `session_folder/summaries/000001.md`, chronological, trimmed to `maxSummaryFiles`.
-- Summary injected as synthetic message prepended to session JSON.
-- Summarization model: `default` role. Prompt adapted from auto-compress plugin.
-- On `-c`: summaries loaded automatically, synthetic message rebuilt.
-
-### Reasoning Stripping
-- Config: `stripReasoning.enable=true`, `stripReasoning.preserveLast=5` by default.
-- Session JSON on disk: reasoning parts intact, never modified.
-- Payload to LLM: reasoning parts replaced with empty text, only newest N kept. Count is global.
-- Summary transcript: reasoning included as `[REASONING]...[/REASONING]` only for newest N from pruned segment.
-- Cut point estimation: stripped reasoning parts count as 0 tokens.
-
-### Build Toolchain
-- Go `toolchain` directive in `go.mod`, `GOTOOLCHAIN=auto`.
-- No `.tools/` directory in repository.
-- Bootstrap minimum: Go 1.21+ on system. Toolchain auto-downloaded on first build.
-- `CGO_ENABLED=0` default release strategy.
-- Release targets: `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`, `windows/amd64`.
-- Linux: conservative targets, minimal libc dependency, validate on older system.
-
-### Platform Rules
-- Linux: `bash` → `sh`.
-- macOS: `bash` → `sh`. `zsh` optional, not required.
-- Windows: `pwsh` → `powershell.exe` → `cmd.exe`.
-- Runtime and prompt aware of quoting, paths, env vars, command availability, script formats.
-
-### Safety Rules
-- Destructive commands: extreme care, narrow targets, verify first.
-- Backups: LLM decision, not runtime-enforced. Stored in `app_home/backups/`.
-- Privilege elevation: `sudo` / Run as Administrator only after explicit user approval. Password interactive, never in chat or session.
-- Secrets never in session JSON or prompt text.
-
-### Dependency Rules
-- Prefer Go standard library.
-- Avoid CGO, platform-native libraries, broad runtime assumptions.
-- Avoid newer libc than necessary for supported Linux targets.
-
-### High-Risk Areas
-- Local shell execution is the main product risk.
-- Cross-platform shell behavior differs materially.
-- Linux build compatibility on older systems.
-- Python venv portability across platforms is best-effort only.
-- Context compaction correctness: tool boundary safety, reasoning stripping, summary quality.
+### Project Map
+- `main.go` - CLI entrypoint. Parses `-c`, `-r`, and `-telegram`, bootstraps app home, loads config or first-run setup, opens a session, and starts the selected transport over the agent core. Keywords: entrypoint, flags, bootstrap, session, console, telegram
+- `embed.go` - Embeds `prompts/` and `skills/` into the binary with `go:embed`. Keywords: embed, assets, prompts, skills, binary, startup
+- `firstrun.go` - Interactive first-run provider, API key, model, and role setup. Keywords: first-run, config, providers, API keys, models, roles
+- `go.mod` - Module root and Go toolchain declaration. Keywords: module, toolchain, dependencies, build, Go
+- `internal/runtime/` - Agent core orchestration loop and transport handler contract. Builds prompts, calls providers, handles tool calls, persists session messages, and triggers compaction. Keywords: runtime, loop, provider, tools, compaction, handler
+- `internal/console/` - Terminal REPL transport implementing `OnContent`, `OnToolCall`, and `OnToolResult`. Handles raw input, slash commands, and Markdown rendering. Keywords: console, REPL, ANSI, raw mode, streaming, slash-commands
+- `internal/telegram/` - Telegram bridge transport with long polling, single-chat enforcement, text/image handling, and streaming output adaptation. Keywords: telegram, bridge, polling, images, handler, transport
+- `internal/prompt/` - Rebuilds the runtime prompt from disk sources on every LLM call and injects variables. Keywords: prompt, sysprompt, variables, skills, AGENTS, specs
+- `internal/config/` - Loads and validates runtime config and work modes, including providers, roles, compaction settings, and first-run conditions. Keywords: config, validation, modes, roles, providers, compaction, first-run
+- `internal/session/` - File-based session persistence under project-scoped session folders. Keywords: sessions, JSON, persistence, resume, clean-close
+- `internal/compaction/` - Context compaction, pruning, summary file management, and reasoning stripping. Keywords: compaction, summaries, pruning, reasoning, token budget
+- `internal/tools/` - Native tools: shell, skill tools, ask_a_friend, analyze_image, replace_block, task tools. Keywords: tools, shell, editing, image, delegation, timeout
+- `internal/skills/` - Skill discovery, parsing, validation, scoping, and active list management. Keywords: skills, discovery, parsing, scopes, active-list, runnable
+- `internal/platform/` - OS detection, shell selection, app home bootstrap, and project directory resolution. Keywords: platform, OS, app-home, shell, paths, bootstrap
+- `internal/provider/` - OpenAI-compatible HTTP client, streaming response parsing, tool-call decoding, and usage reporting. Keywords: provider, HTTP, SSE, OpenAI-compatible, usage, tool-calls
+- `internal/llmcall/` - One-shot secondary LLM calls routed by role. Keywords: delegation, advisor, summarization, secondary-call
+- `internal/memory/` - Reads persistent memory text into prompt builds without automatic writes. Keywords: memory, prompt-input, read-only, persistence
+- `prompts/` - Embedded universal, OS, and transport prompt templates. Keywords: prompts, sysprompt, transport, embedded, runtime
+- `skills/` - Builtin skill definitions seeded into app home on startup. Keywords: builtin-skills, seed, prompt-content, runnable-skills
+- `specs/` - Specification fragments that describe the rebuilt product scope and runtime behavior. Keywords: specs, requirements, runtime, architecture
+- `decisions/` - Timestamped session decision summaries used to keep rationale attached to changes. Keywords: decisions, rationale, history, change-log
 
 ### Working Rules
 - Keep implementations direct and incremental.
-- Shared agent core between console and web transports via handler contract.
-- No fallbacks on configuration or model selection errors.
-- Prompt behavior is a major source of product personality and control.
-- Session folders persist on disk indefinitely. No automatic cleanup in this phase.
+- Preserve explicit erroring over silent degradation.
+- Treat prompt text and skill content as runtime inputs rebuilt from disk.
+- Session folders persist indefinitely in this phase.
+
+### Potential Conflict
+- `internal/config/modes.go` currently falls back to a default mode config when `modes.json` is missing or invalid, which conflicts with the user spec's no-fallback rule.
+- Current code stores sessions and project skills under `app_home/projects/<project>/...`, which differs from the older user-owned paths in this file.
