@@ -14,6 +14,7 @@ import (
 
 	"blazeai/internal/config"
 	"blazeai/internal/console"
+	"blazeai/internal/desktop"
 	"blazeai/internal/platform"
 	"blazeai/internal/runtime"
 	"blazeai/internal/session"
@@ -43,6 +44,7 @@ func main() {
 func run() error {
 	continueFlag := flag.Bool("c", false, "continue last cleanly closed session")
 	resumeFlag := flag.Bool("r", false, "resume most recent session (interrupted or clean)")
+	desktopFlag := flag.Bool("desktop", false, "run desktop companion transport")
 	telegramFlag := flag.String("telegram", "", "run Telegram bridge instance")
 	flag.Parse()
 
@@ -70,6 +72,9 @@ func run() error {
 
 	if *telegramFlag != "" {
 		return telegram.Run(context.Background(), cfg, osType, promptsFS, *telegramFlag)
+	}
+	if *desktopFlag {
+		return desktop.Run(context.Background(), cfg, osType, promptsFS)
 	}
 
 	// Get work directory (needed for project-based session storage).
