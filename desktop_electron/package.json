@@ -1,0 +1,33 @@
+{
+  "name": "blazeai-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron desktop shell for the BlazeAI Go runtime backend.",
+  "main": "src/main/main.js",
+  "scripts": {
+    "build:backend": "node ./scripts/build-backend.mjs",
+    "start": "npm run build:backend && electron .",
+    "dist": "npm run build:backend && electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "ai.blaze.desktop",
+    "productName": "BlazeAI Desktop",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "bin",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ]
+  }
+}

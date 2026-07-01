@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BlazeAI Desktop</title>
+  <link rel="stylesheet" href="./styles.css">
+  <link id="hljs-dark" rel="stylesheet" href="./vendor/highlight-monoaki-dark.css">
+  <link id="hljs-light" rel="stylesheet" href="./vendor/highlight-monoaki-light.css" disabled>
+</head>
+<body>
+  <div class="app">
+    <div class="topbar">
+      <span class="title">BlazeAI</span>
+      <span id="workdir" class="workdir"></span>
+      <button id="pickDir" class="pickdir-btn" title="Change work directory">&#x1F4C2;</button>
+      <button id="theme" class="theme-btn" title="Toggle theme"></button>
+      <label class="fs-control" title="Font size">
+        <span class="fs-label">Aa</span>
+        <select id="fontSize">
+          <option value="11">11px</option>
+          <option value="12">12px</option>
+          <option value="13.5" selected>13.5px</option>
+          <option value="15">15px</option>
+          <option value="17">17px</option>
+        </select>
+      </label>
+      <label>
+        <span class="select-label">model</span>
+        <select id="model"></select>
+      </label>
+      <button id="clear">Clear</button>
+      <button id="closeSession">Close</button>
+      <button id="quit" class="danger">Quit</button>
+    </div>
+
+    <div id="transcript" class="transcript"></div>
+
+    <div class="footer">
+      <div id="status" class="status">Ready</div>
+      <form id="composer" class="composer">
+        <textarea id="input" placeholder="Type a message or /help (Shift+Enter for newline)" rows="1"></textarea>
+        <button id="send" class="send-overlay" type="submit" title="Send (Enter)">&#8629;</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="./vendor/marked.min.js"></script>
+  <script src="./vendor/highlight.min.js"></script>
+  <script src="./vendor/dompurify.min.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
