@@ -642,7 +642,7 @@ func (s *Service) StartAssistant() {
 		s.activeReasoning = -1
 	}
 	s.activeTool = -1
-	s.blocks = append(s.blocks, transcriptBlock{Type: blockAssistant, Prefix: "BlazeAI"})
+	s.blocks = append(s.blocks, transcriptBlock{Type: blockAssistant, Prefix: ""})
 	s.activeReply = len(s.blocks) - 1
 }
 
@@ -651,7 +651,7 @@ func (s *Service) AppendAssistant(delta string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.activeReply < 0 {
-		s.blocks = append(s.blocks, transcriptBlock{Type: blockAssistant, Prefix: "BlazeAI"})
+	s.blocks = append(s.blocks, transcriptBlock{Type: blockAssistant, Prefix: ""})
 		s.activeReply = len(s.blocks) - 1
 	}
 	s.blocks[s.activeReply].Text += delta
@@ -673,7 +673,7 @@ func (s *Service) StartReasoning() {
 	}
 	s.activeTool = -1
 	s.activeReply = -1
-	s.blocks = append(s.blocks, transcriptBlock{Type: blockReasoning, Prefix: "Reasoning"})
+	s.blocks = append(s.blocks, transcriptBlock{Type: blockReasoning, Prefix: ""})
 	s.activeReasoning = len(s.blocks) - 1
 }
 
@@ -684,7 +684,7 @@ func (s *Service) AppendReasoning(delta string) {
 	if s.activeReasoning < 0 {
 		s.activeTool = -1
 		s.activeReply = -1
-		s.blocks = append(s.blocks, transcriptBlock{Type: blockReasoning, Prefix: "Reasoning"})
+		s.blocks = append(s.blocks, transcriptBlock{Type: blockReasoning, Prefix: ""})
 		s.activeReasoning = len(s.blocks) - 1
 	}
 	s.blocks[s.activeReasoning].Text += delta
@@ -711,7 +711,7 @@ func (s *Service) SetToolActivity(text string) {
 		s.blocks[s.activeTool].Text = text
 		return
 	}
-	s.blocks = append(s.blocks, transcriptBlock{Type: blockTool, Prefix: "Tool", Text: text})
+	s.blocks = append(s.blocks, transcriptBlock{Type: blockTool, Prefix: "", Text: text})
 	s.activeTool = len(s.blocks) - 1
 }
 

@@ -86,7 +86,9 @@
 
     row.className = rowClass(block.type);
     row.innerHTML = '';
-    row.appendChild(prefix);
+    if (block.prefix) {
+      row.appendChild(prefix);
+    }
     row.appendChild(content);
   }
 
