@@ -117,7 +117,8 @@ type HelperSetup struct {
 // PARAMS: Providers — endpoint definitions; FavoriteModels — model list; Roles — role assignments;
 //
 //	Compaction — thresholds; StripReasoning — payload settings; LastModel — persisted selection;
-//	HelperSetup — UX preferences for optional host helper installation prompts.
+//	HelperSetup — UX preferences for optional host helper installation prompts;
+//	ReasoningMaxHeight — max reasoning lines displayed (0 = unlimited).
 type Config struct {
 	Providers      []Provider     `json:"providers"`
 	FavoriteModels []string       `json:"favorite_models"`
@@ -126,7 +127,8 @@ type Config struct {
 	StripReasoning StripReasoning `json:"stripReasoning"`
 	LastModel      string         `json:"last_model,omitempty"`
 	HelperSetup    HelperSetup    `json:"helperSetup,omitempty"`
-	ShowReasoning  bool           `json:"showReasoning"`
+	ShowReasoning      bool `json:"showReasoning"`
+	ReasoningMaxHeight int  `json:"reasoning_max_height"`
 }
 
 // DefaultCompaction returns the pre-filled compaction thresholds from spec 05.
@@ -170,7 +172,8 @@ func Default() *Config {
 		Roles:          Roles{},
 		Compaction:     DefaultCompaction(),
 		StripReasoning: DefaultStripReasoning(),
-		ShowReasoning:  false,
+		ShowReasoning:      false,
+		ReasoningMaxHeight: 150,
 		HelperSetup: HelperSetup{
 			Dismissed: false,
 			Declined:  []string{},
@@ -370,6 +373,9 @@ func (c *Config) Validate() error {
 		if err := validateModelProvider(model, providerNames); err != nil {
 			return fmt.Errorf("favorite model %q: %w", model, err)
 		}
+	}
+	if c.ReasoningMaxHeight < 0 {
+		return fmt.Errorf("reasoning_max_height must be >= 0: got %d", c.ReasoningMaxHeight)
 	}
 	return nil
 }

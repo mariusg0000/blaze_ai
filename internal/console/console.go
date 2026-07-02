@@ -76,6 +76,7 @@ type Console struct {
 	turnAborting     atomic.Bool
 	lastToolArgs     string
 	reasoningStarted bool
+	reasoningLines   int
 }
 
 // NewConsole creates a Console for terminal interaction.
@@ -101,6 +102,7 @@ func (c *Console) ensureLineBreakBeforeBlock() {
 	if c.reasoningStarted {
 		fmt.Fprintln(c.Out)
 		c.reasoningStarted = false
+		c.reasoningLines = 0
 	}
 	if c.lineOpen {
 		fmt.Fprintln(c.Out)
@@ -328,18 +330,44 @@ func (c *Console) OnUsage(promptTokens int) {
 
 // OnReasoning is called for each streaming reasoning chunk from the LLM.
 //
-// WHAT:  Streams LLM reasoning/thinking blocks in muted color.
+// WHAT:  Streams LLM reasoning/thinking blocks in muted color, truncated to ReasoningMaxHeight lines.
 // PARAMS: delta — the reasoning text chunk from the LLM.
 func (c *Console) OnReasoning(delta string) {
 	if c.turnAborting.Load() {
 		return
 	}
+	maxHeight := c.Agent.Config.ReasoningMaxHeight
+	if maxHeight > 0 && c.reasoningLines >= maxHeight {
+		return
+	}
 	if !c.reasoningStarted {
 		c.ensureLineBreakBeforeBlock()
+		c.reasoningLines = 0
 		fmt.Fprint(c.Out, c.color(colorReasoning, "🧠 "))
 		c.reasoningStarted = true
 	}
+	newLines := strings.Count(delta, "\n")
+	if maxHeight > 0 && c.reasoningLines+newLines > maxHeight {
+		idx := 0
+		for i := 0; i < maxHeight-c.reasoningLines; i++ {
+			nl := strings.IndexByte(delta[idx:], '\n')
+			if nl < 0 {
+				break
+			}
+			idx += nl + 1
+		}
+		if idx > 0 {
+			fmt.Fprint(c.Out, c.color(colorReasoning, delta[:idx]))
+		}
+		c.reasoningLines = maxHeight
+		fmt.Fprint(c.Out, c.color(colorReasoning, "[...truncated]\n"))
+		if bw, ok := c.Out.(*bufio.Writer); ok {
+			bw.Flush()
+		}
+		return
+	}
 	fmt.Fprint(c.Out, c.color(colorReasoning, delta))
+	c.reasoningLines += newLines
 	if bw, ok := c.Out.(*bufio.Writer); ok {
 		bw.Flush()
 	}
@@ -356,6 +384,7 @@ func (c *Console) OnContent(delta string) {
 	if c.reasoningStarted {
 		fmt.Fprintln(c.Out)
 		c.reasoningStarted = false
+		c.reasoningLines = 0
 	}
 	if !c.contentStarted {
 		c.contentStarted = true
@@ -944,6 +973,7 @@ func (c *Console) resetTurnState() {
 	c.lastPromptTokens = 0
 	c.lineOpen = false
 	c.reasoningStarted = false
+	c.reasoningLines = 0
 }
 
 // runAgentTurn executes one agent turn with SIGINT-only abort.

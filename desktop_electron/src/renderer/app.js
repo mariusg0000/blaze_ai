@@ -160,6 +160,10 @@
       if (autoScroll) {
         transcriptEl.scrollTop = transcriptEl.scrollHeight;
       }
+      const reasoningContents = transcriptEl.querySelectorAll('.row-reasoning .content');
+      for (const content of reasoningContents) {
+        content.scrollTop = content.scrollHeight;
+      }
     }
 
     workdirEl.textContent = state.workdir || '';

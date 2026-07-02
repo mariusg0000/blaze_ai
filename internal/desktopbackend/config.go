@@ -18,7 +18,7 @@ const (
 	configFileName              = "config.json"
 	saveFileMode                = 0600
 	dirFileMode                 = 0755
-	defaultReasoningMaxHeightPx = 100.0
+	defaultReasoningMaxHeightPx = 150.0
 )
 
 // Config holds the static configuration for the singleton desktop transport.
