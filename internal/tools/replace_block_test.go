@@ -131,6 +131,46 @@ func TestReplaceBlockName(t *testing.T) {
 	}
 }
 
+// TestReplaceBlockRelativePath verifies relative paths are resolved against the workdir.
+func TestReplaceBlockRelativePath(t *testing.T) {
+	abs := writeTestFile(t, "alpha")
+	tool := NewReplaceBlockTool(func() string { return filepath.Dir(abs) })
+	rel := filepath.Base(abs)
+	args, err := json.Marshal(map[string]string{
+		"file_path": rel,
+		"old_block": "alpha",
+		"new_block": "beta",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := tool.Execute(context.Background(), args)
+	if !strings.Contains(result, "block replaced") {
+		t.Errorf("Execute() = %q, want 'block replaced'", result)
+	}
+	data, _ := os.ReadFile(abs)
+	if !strings.Contains(string(data), "beta") {
+		t.Errorf("file content = %q, want 'beta'", string(data))
+	}
+}
+
+// TestReplaceBlockRelativePathNoWorkdir verifies error when workdir is nil and path is relative.
+func TestReplaceBlockRelativePathNoWorkdir(t *testing.T) {
+	tool := NewReplaceBlockTool(nil)
+	args, err := json.Marshal(map[string]string{
+		"file_path": "test.txt",
+		"old_block": "alpha",
+		"new_block": "beta",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := tool.Execute(context.Background(), args)
+	if !strings.Contains(result, "absolute file_path") {
+		t.Errorf("Execute() = %q, want 'absolute file_path' error", result)
+	}
+}
+
 // TestReplaceBlockParameters verifies parameters is valid JSON.
 func TestReplaceBlockParameters(t *testing.T) {
 	tool := NewReplaceBlockTool(nil)

@@ -137,20 +137,32 @@ func (t *ReplaceBlockTool) Execute(ctx context.Context, args json.RawMessage) st
 		return "error: old_block is required"
 	}
 
-	data, err := os.ReadFile(parsed.FilePath)
+	path := parsed.FilePath
+	if !filepath.IsAbs(path) {
+		if t.workDir == nil {
+			return "error: replace_block requires absolute file_path (workdir not available)"
+		}
+		wd := t.workDir()
+		if wd == "" {
+			return "error: replace_block requires absolute file_path (workdir not available)"
+		}
+		path = filepath.Join(wd, path)
+	}
+
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Sprintf("error: cannot read file %s: %v", parsed.FilePath, err)
+		return fmt.Sprintf("error: cannot read file %s: %v", path, err)
 	}
 
 	content := string(data)
 	if !strings.Contains(content, parsed.OldBlock) {
-		return fmt.Sprintf("error: old_block not found in %s", parsed.FilePath)
+		return fmt.Sprintf("error: old_block not found in %s", path)
 	}
 
 	newContent := strings.Replace(content, parsed.OldBlock, parsed.NewBlock, 1)
-	if err := os.WriteFile(parsed.FilePath, []byte(newContent), 0644); err != nil {
-		return fmt.Sprintf("error: cannot write file %s: %v", parsed.FilePath, err)
+	if err := os.WriteFile(path, []byte(newContent), 0644); err != nil {
+		return fmt.Sprintf("error: cannot write file %s: %v", path, err)
 	}
 
-	return fmt.Sprintf("ok block replaced in %s", parsed.FilePath)
+	return fmt.Sprintf("ok block replaced in %s", path)
 }
