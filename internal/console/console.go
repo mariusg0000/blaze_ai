@@ -916,14 +916,17 @@ func (c *Console) runTTY() error {
 			return fmt.Errorf("input error: %w", err)
 		}
 
-		// Handle mode switch event.
+		// Handle mode switch event. Save partial input so the next
+		// ReadEvent call can restore it via the prefill mechanism.
 		if event == "mode_switch" {
+			savedText := line
 			if _, switchErr := c.Agent.NextMode(); switchErr != nil {
 				fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("mode switch error: %v", switchErr)))
 			} else {
 				fmt.Fprintln(c.Out)
 				fmt.Fprintf(c.Out, "[mode: %s | %s]\n", c.Agent.CurrentMode.Name, c.Agent.ModelID)
 			}
+			c.Reader.prefill = savedText
 			continue
 		}
 

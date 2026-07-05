@@ -41,6 +41,7 @@ type Reader struct {
 	scanner *bufio.Scanner
 	isTTY   bool
 	prompt  string
+	prefill string
 }
 
 // NewReader creates a Reader from an io.Reader.
@@ -102,6 +103,12 @@ func (r *Reader) ReadEvent() (string, string, error) {
 
 	var buf []byte
 	pos := 0
+	if r.prefill != "" {
+		buf = []byte(r.prefill)
+		pos = len(buf)
+		os.Stdout.Write(buf)
+		r.prefill = ""
+	}
 	csiBuf := make([]byte, 0, 8)
 	csiState := 0 // 0=normal, 1=saw ESC, 2=in CSI
 	pasteMode := false
@@ -196,7 +203,7 @@ func (r *Reader) ReadEvent() (string, string, error) {
 			if pasteMode {
 				r.insertChar(&buf, &pos, '\t')
 			} else {
-				return "", "mode_switch", nil
+				return string(buf), "mode_switch", nil
 			}
 		case 0x0a, 0x0d: // Enter
 			if pasteMode {
