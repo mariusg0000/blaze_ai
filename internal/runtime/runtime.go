@@ -133,9 +133,9 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 		return nil, fmt.Errorf("cannot create provider client: %w", err)
 	}
 
-	// Create a dedicated summarization client if the summarization role is configured with a different model.
-	summarizationClient := client
-	if summarizationModel, err := cfg.ModelForRole("summarization"); err == nil && summarizationModel != modelID {
+	// Create a dedicated summarization client if the summarization role is configured.
+	var summarizationClient *provider.Client
+	if summarizationModel, err := cfg.ModelForRole("summarization"); err == nil {
 		summarizationClient, err = provider.NewClient(cfg, summarizationModel)
 		if err != nil {
 			return nil, fmt.Errorf("cannot create summarization client: %w", err)
@@ -270,6 +270,30 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		return fmt.Errorf("cannot persist user message: %w", err)
 	}
 
+	// Snapshot the session for task-switch detection before the LLM loop adds messages.
+	// The detector runs in parallel with the main LLM call.
+	snapshot := make([]session.Message, len(a.Session.Messages))
+	copy(snapshot, a.Session.Messages)
+
+	// Start task-switch detection goroutine in parallel.
+	detectCh := make(chan compaction.DetectResult, 1)
+	detectionStarted := a.Compactor != nil && a.Compactor.SummarizationProvider != nil
+	if detectionStarted {
+		go func() {
+			defer func() { recover() }()
+			// Build a temporary session with only the snapshot for detection.
+			snapSess := &session.Session{
+				Messages: snapshot,
+				Folder:   a.Session.Folder,
+			}
+			result, _ := a.Compactor.DetectTaskSwitch(snapSess, a.Compactor.LoadSummariesText(a.Session.Folder))
+			detectCh <- result
+		}()
+	}
+
+	var lastUsage *provider.Usage
+	var turnCompletedNormally bool
+
 	for {
 		if err := a.sanitizeSession(); err != nil {
 			return err
@@ -349,14 +373,11 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 			return ErrTurnAborted
 		}
 
-		// No tool calls — check compaction and finish turn.
+		// No tool calls — finish the LLM loop, defer compaction/detection to after the loop.
 		if len(resp.ToolCalls) == 0 {
-			if a.Compactor != nil {
-				if _, err := a.Compactor.Compact(a.Session, resp.Usage); err != nil {
-					return fmt.Errorf("compaction failed: %w", err)
-				}
-			}
-			return nil
+			lastUsage = resp.Usage
+			turnCompletedNormally = true
+			break
 		}
 
 		// Execute tool calls and append results.
@@ -436,15 +457,28 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 			}
 		}
 
-		// Check compaction after tool execution — context may be at or over limit.
-		if a.Compactor != nil {
-			if _, err := a.Compactor.Compact(a.Session, resp.Usage); err != nil {
-				return fmt.Errorf("compaction failed: %w", err)
-			}
-		}
-
 		// Loop back to LLM with tool results included in session history.
 	}
+
+	// Turn completed normally. Wait for task-switch detection and apply it if needed.
+	if detectionStarted {
+		detection := <-detectCh
+		if detection.Changed && turnCompletedNormally {
+			if err := a.Compactor.CompactByTaskSwitch(a.Session, detection.Index, detection.Summary); err != nil {
+				return fmt.Errorf("task-switch compaction failed: %w", err)
+			}
+			return nil
+		}
+	}
+
+	// No task switch — run normal token-based compaction.
+	if turnCompletedNormally && a.Compactor != nil {
+		if _, err := a.Compactor.Compact(a.Session, lastUsage); err != nil {
+			return fmt.Errorf("compaction failed: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // shouldPersistAssistantMessage reports whether a partial or complete assistant message is worth saving.

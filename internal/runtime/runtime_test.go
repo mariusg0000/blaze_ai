@@ -896,3 +896,236 @@ func TestListProviderModelsNotFound(t *testing.T) {
 		t.Fatal("ListProviderModels() expected error for unknown provider")
 	}
 }
+
+// setupAgentWithSummarization creates an agent with separate default and summarization mock servers.
+func setupAgentWithSummarization(t *testing.T, defaultHandler, summaryHandler http.HandlerFunc) (*Agent, *mockHandler, *httptest.Server, *httptest.Server) {
+	t.Helper()
+	defaultServer := httptest.NewServer(defaultHandler)
+	summaryServer := httptest.NewServer(summaryHandler)
+
+	t.Setenv("HOME", t.TempDir())
+
+	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "test", Endpoint: defaultServer.URL, APIKey: "sk-test"},
+			{Name: "summarizer", Endpoint: summaryServer.URL, APIKey: "sk-sum"},
+		},
+		Roles:          config.Roles{Default: "test/test-model", Summarization: "summarizer/sum-model"},
+		Compaction:     config.DefaultCompaction(),
+		StripReasoning: config.DefaultStripReasoning(),
+	}
+
+	dir := t.TempDir()
+	sess, _ := session.CreateInDir(dir)
+	promptsDir := filepath.Join(dir, "prompts")
+	os.MkdirAll(promptsDir, 0755)
+	writePromptFixtures(t, promptsDir)
+
+	h := &mockHandler{}
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, h, "console")
+	if err != nil {
+		t.Fatalf("NewAgent() error: %v", err)
+	}
+	return agent, h, defaultServer, summaryServer
+}
+
+// TestRunTurnTaskSwitchAppliesCleanup verifies that task-switch detection removes old messages
+// and creates a summary when the summarization model detects a task change.
+func TestRunTurnTaskSwitchAppliesCleanup(t *testing.T) {
+	agent, h, defServer, sumServer := setupAgentWithSummarization(t,
+		// Default LLM handler: responds with text.
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"New task reply"}}]}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105}}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "data: [DONE]")
+			fmt.Fprintln(w)
+		},
+		// Summarization LLM handler: detects task switch at user message 3.
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"{\"index\":3,\"summary\":\"User debugged auth flow and fixed token refresh bug.\"}"}}]}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "data: [DONE]")
+			fmt.Fprintln(w)
+		},
+	)
+	defer defServer.Close()
+	defer sumServer.Close()
+
+	// Verify SummarizationProvider is wired.
+	if agent.Compactor == nil || agent.Compactor.SummarizationProvider == nil {
+		t.Fatal("SummarizationProvider not configured")
+	}
+
+	// Seed session with old task messages.
+	oldMessages := []session.Message{
+		{Role: "user", Content: "let's debug auth"},        // index 0
+		{Role: "assistant", Content: "ok let's debug"},      //
+		{Role: "user", Content: "check the login flow"},     // index 1
+		{Role: "assistant", Content: "login flow looks fine"}, //
+		{Role: "user", Content: "what about token refresh"}, // index 2 (last old task)
+		{Role: "assistant", Content: "found bug in token refresh"},
+	}
+	if err := agent.Session.AppendAll(oldMessages); err != nil {
+		t.Fatalf("AppendAll() failed: %v", err)
+	}
+	originalLen := len(agent.Session.Messages)
+
+	// Run a turn with a new task message (user index 3 in the snapshot).
+	err := agent.RunTurn(context.Background(), "now add analytics endpoint")
+	if err != nil {
+		t.Fatalf("RunTurn() error: %v", err)
+	}
+
+	// OnContent must still be called for the new response.
+	if len(h.content) == 0 {
+		t.Error("OnContent was not called")
+	}
+
+	// Session should have fewer messages than original + new (old ones pruned).
+	// Expected: synthetic summary + last user msg + new assistant reply = 3 messages.
+	if len(agent.Session.Messages) >= originalLen+2 {
+		t.Errorf("session has %d messages, want fewer after task-switch cleanup (old were %d + new user + assistant)",
+			len(agent.Session.Messages), originalLen)
+	}
+
+	// First message should be a synthetic summary.
+	firstContent, ok := agent.Session.Messages[0].Content.(string)
+	if !ok || !strings.Contains(firstContent, syntheticPrefix) {
+		t.Error("first message is not a synthetic summary after task switch")
+	}
+}
+
+// syntheticPrefix must match the constant in internal/compaction for test assertions.
+const syntheticPrefix = "These are historical segment summaries"
+
+// TestRunTurnNoTaskSwitchKeepsMessages verifies that messages are NOT pruned when
+// the summarization model returns null.
+func TestRunTurnNoTaskSwitchKeepsMessages(t *testing.T) {
+	agent, h, defServer, sumServer := setupAgentWithSummarization(t,
+		// Default LLM handler.
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"Continuation reply"}}]}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105}}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "data: [DONE]")
+			fmt.Fprintln(w)
+		},
+		// Summarization LLM handler: returns null (no switch).
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"null"}}]}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "data: [DONE]")
+			fmt.Fprintln(w)
+		},
+	)
+	defer defServer.Close()
+	defer sumServer.Close()
+
+	// Seed session.
+	oldMessages := []session.Message{
+		{Role: "user", Content: "debug auth"},
+		{Role: "assistant", Content: "ok"},
+	}
+	if err := agent.Session.AppendAll(oldMessages); err != nil {
+		t.Fatalf("AppendAll() failed: %v", err)
+	}
+	originalLen := len(agent.Session.Messages)
+
+	err := agent.RunTurn(context.Background(), "also check the middleware")
+	if err != nil {
+		t.Fatalf("RunTurn() error: %v", err)
+	}
+
+	// OnContent must still be called.
+	if len(h.content) == 0 {
+		t.Error("OnContent was not called")
+	}
+
+	// Session should have original + 2 (new user + assistant).
+	if len(agent.Session.Messages) != originalLen+2 {
+		t.Errorf("session has %d messages, want %d (no task switch, kept all)", 
+			len(agent.Session.Messages), originalLen+2)
+	}
+
+	// No synthetic summary should appear.
+	for _, msg := range agent.Session.Messages {
+		if content, ok := msg.Content.(string); ok && strings.Contains(content, syntheticPrefix) {
+			t.Error("unexpected synthetic summary when no task switch detected")
+		}
+	}
+}
+
+// TestRunTurnTaskSwitchSkipsOnAbort verifies that task-switch detection is not applied
+// when the turn is aborted.
+func TestRunTurnTaskSwitchSkipsOnAbort(t *testing.T) {
+	agent, h, defServer, sumServer := setupAgentWithSummarization(t,
+		// Default LLM handler: blocks until aborted.
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"Hello"}}]}`)
+			fmt.Fprintln(w)
+			flusher.Flush()
+			<-r.Context().Done()
+		},
+		// Summarization LLM handler: returns task switch (should be ignored).
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"{\"index\":1,\"summary\":\"summary.\"}"}}]}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "data: [DONE]")
+			fmt.Fprintln(w)
+		},
+	)
+	defer defServer.Close()
+	defer sumServer.Close()
+
+	// Seed session.
+	agent.Session.AppendAll([]session.Message{
+		{Role: "user", Content: "old task"},
+		{Role: "assistant", Content: "old reply"},
+	})
+	originalLen := len(agent.Session.Messages)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	h.onContent = func(delta string) {
+		if delta == "Hello" {
+			cancel()
+		}
+	}
+	err := agent.RunTurn(ctx, "new task")
+	if !errors.Is(err, ErrTurnAborted) {
+		t.Fatalf("RunTurn() error = %v, want ErrTurnAborted", err)
+	}
+
+	// Session should still have old messages + new user + partial assistant + abort marker.
+	if len(agent.Session.Messages) <= originalLen+1 {
+		t.Errorf("session has %d messages, want more than %d (aborted, no cleanup)", 
+			len(agent.Session.Messages), originalLen+1)
+	}
+
+	// Old messages must still be present.
+	foundOld := false
+	for _, msg := range agent.Session.Messages {
+		if content, ok := msg.Content.(string); ok && content == "old task" {
+			foundOld = true
+			break
+		}
+	}
+	if !foundOld {
+		t.Error("old task messages were removed despite abort")
+	}
+}

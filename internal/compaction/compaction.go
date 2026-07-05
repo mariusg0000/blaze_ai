@@ -466,6 +466,15 @@ func (m *Manager) loadSummaries(sessionFolder string) string {
 	return sb.String()
 }
 
+// LoadSummariesText is the public wrapper around loadSummaries.
+//
+// WHAT:  Returns all existing summary chunks concatenated, for use by task-switch detection.
+// PARAMS: sessionFolder — path to the session folder.
+// RETURNS: string — concatenated summary text.
+func (m *Manager) LoadSummariesText(sessionFolder string) string {
+	return m.loadSummaries(sessionFolder)
+}
+
 // trimSummaries deletes the oldest summary files beyond maxSummaryFiles.
 //
 // WHAT:  Enforces the maxSummaryFiles limit by deleting oldest files.
@@ -572,6 +581,80 @@ func (m *Manager) RebuildForResume(sess *session.Session) error {
 	// Prepend synthetic message.
 	sess.Messages = append([]session.Message{*synthetic}, sess.Messages...)
 	return sess.Save()
+}
+
+// CompactByTaskSwitch removes messages before a task-switch boundary, writes a summary,
+// and prepends a synthetic summary message. The caller provides the summary text.
+//
+// WHAT:  Applies task-switch cleanup: save summary, remove old messages, inject synthetic.
+// WHY:   Semantic task-switch detection runs in parallel with the LLM call; this method
+//
+//	applies the result after the turn completes.
+//
+// PARAMS: sess — the session to modify; userIndex — 0-based index of the first user message
+//
+//	of the new task (counts user messages only, not session messages);
+//	summary — summary text of old messages.
+//
+// RETURNS: error if summary persistence or session save fails.
+func (m *Manager) CompactByTaskSwitch(sess *session.Session, userIndex int, summary string) error {
+	if strings.TrimSpace(summary) == "" || userIndex <= 0 {
+		return nil
+	}
+
+	// Convert user-message index to session-message index.
+	// The detection model uses user indices (simpler for the model to count only
+	// user messages in the transcript), but we need the session array index for slicing.
+	sessionIndex := userIndexToSessionIndex(sess.Messages, userIndex)
+	if sessionIndex < 0 {
+		return nil
+	}
+
+	if sessionIndex >= len(sess.Messages) {
+		return nil
+	}
+
+	// Save the new summary chunk.
+	if err := m.saveSummary(sess.Folder, summary); err != nil {
+		return fmt.Errorf("cannot save task-switch summary: %w", err)
+	}
+
+	// Trim excess summary files.
+	if err := m.trimSummaries(sess.Folder); err != nil {
+		return fmt.Errorf("cannot trim summaries after task switch: %w", err)
+	}
+
+	// Remove messages before the switch point.
+	sess.Messages = sess.Messages[sessionIndex:]
+
+	// Prepend synthetic summary message.
+	synthetic := m.buildSyntheticMessage(sess.Folder)
+	sess.Messages = append([]session.Message{synthetic}, sess.Messages...)
+
+	return sess.Save()
+}
+
+// userIndexToSessionIndex converts a 0-based user-message index to the corresponding
+// session message array index. Returns -1 if the user index is out of range.
+//
+// WHAT:  Maps user message indices (as returned by the detection model) to session array indices.
+// WHY:   The detection transcript uses [user N] labels; the model returns user indices,
+//
+//	but session pruning needs the raw array position.
+//
+// PARAMS: messages — the session message array; userIndex — 0-based user message count.
+// RETURNS: int — session array index, or -1 if not found.
+func userIndexToSessionIndex(messages []session.Message, userIndex int) int {
+	count := 0
+	for i, msg := range messages {
+		if msg.Role == "user" {
+			if count == userIndex {
+				return i
+			}
+			count++
+		}
+	}
+	return -1
 }
 
 // StripReasoningFromPayload replaces reasoning parts in the message array with empty text.
