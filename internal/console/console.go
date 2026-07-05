@@ -391,7 +391,8 @@ func (c *Console) OnContent(delta string) {
 	if !c.contentStarted {
 		c.contentStarted = true
 		c.ensureLineBreakBeforeBlock()
-		fmt.Fprint(c.Out, c.color(colorOrange, c.bold("[BLAZE] ")))
+		fmt.Fprint(c.Out, c.color(colorOrange, c.bold("[BLAZE]")))
+		fmt.Fprintln(c.Out)
 	}
 	c.contentBuffer += delta
 	for {

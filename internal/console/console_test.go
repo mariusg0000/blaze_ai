@@ -369,7 +369,7 @@ func TestOnToolRoundTripAfterContent(t *testing.T) {
 	c.OnToolCall("shell", "inspect package.json scripts")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nok\n")
 	plain := stripANSICodes(out.String())
-	if !strings.Contains(plain, "[BLAZE] hello") {
+	if !strings.Contains(plain, "[BLAZE]\nhello") {
 		t.Errorf("content should show [BLAZE] label: %q", plain)
 	}
 	if !strings.Contains(plain, "💻 inspect package.json scripts … ✔️") {
@@ -419,7 +419,7 @@ func TestToolGroupInterruptedByContent(t *testing.T) {
 	if strings.Count(plain, "CTX: 11k") != 2 {
 		t.Errorf("expected CTX after each tool, got %d: %q", strings.Count(plain, "CTX: 11k"), plain)
 	}
-	if !strings.Contains(plain, "[BLAZE] continuing") {
+	if !strings.Contains(plain, "[BLAZE]\ncontinuing") {
 		t.Errorf("content between tools should show [BLAZE] label: %q", plain)
 	}
 	if !strings.Contains(plain, "💻 list root … ✔️") {
