@@ -914,6 +914,8 @@ func setupAgentWithSummarization(t *testing.T, defaultHandler, summaryHandler ht
 		Compaction:     config.DefaultCompaction(),
 		StripReasoning: config.DefaultStripReasoning(),
 	}
+	// Run detection on every turn for deterministic test behavior.
+	cfg.Compaction.TaskSwitcherTurns = 1
 
 	dir := t.TempDir()
 	sess, _ := session.CreateInDir(dir)

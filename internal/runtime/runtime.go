@@ -277,7 +277,7 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 
 	// Start task-switch detection goroutine in parallel.
 	detectCh := make(chan compaction.DetectResult, 1)
-	detectionStarted := a.Compactor != nil && a.Compactor.SummarizationProvider != nil
+	detectionStarted := a.Compactor != nil && a.Compactor.SummarizationProvider != nil && a.Compactor.ShouldDetectTaskSwitch()
 	if detectionStarted {
 		go func() {
 			defer func() { recover() }()

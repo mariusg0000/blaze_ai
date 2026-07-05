@@ -26,11 +26,13 @@ import (
 // WHY:   Long sessions exceed model context windows; compaction keeps them usable.
 // PARAMS: Config — compaction thresholds and strip reasoning settings; Provider — default LLM client;
 //
-//	SummarizationProvider — dedicated client for summarization (falls back to Provider when nil).
+//	SummarizationProvider — dedicated client for summarization (falls back to Provider when nil);
+//	taskSwitchTurnCounter — counts user turns between task-switch detection calls.
 type Manager struct {
 	Config                *config.Config
 	Provider              *provider.Client
 	SummarizationProvider *provider.Client
+	taskSwitchTurnCounter int
 }
 
 // NewManager creates a compaction Manager from config and provider clients.
@@ -43,6 +45,35 @@ type Manager struct {
 // RETURNS: *Manager — ready to check and compact.
 func NewManager(cfg *config.Config, client *provider.Client, summarizationClient *provider.Client) *Manager {
 	return &Manager{Config: cfg, Provider: client, SummarizationProvider: summarizationClient}
+}
+
+// ShouldDetectTaskSwitch gates task-switch detection to run every N user turns.
+//
+// WHAT:  Increments an internal per-session counter and returns true on every Nth call.
+// WHY:   Task-switch detection via summarization LLM is expensive; running it every N turns
+//
+//	(recommended: 3) balances cost against timely detection.
+//
+// HOW:   taskSwitcherTurns=1 → always true; =0 → always false (disabled).
+// PARAMS: none.
+// RETURNS: bool — true if detection should run this turn.
+func (m *Manager) ShouldDetectTaskSwitch() bool {
+	if m == nil {
+		return false
+	}
+	turns := m.Config.Compaction.TaskSwitcherTurns
+	if turns <= 0 {
+		return false
+	}
+	if turns == 1 {
+		return true
+	}
+	m.taskSwitchTurnCounter++
+	if m.taskSwitchTurnCounter >= turns {
+		m.taskSwitchTurnCounter = 0
+		return true
+	}
+	return false
 }
 
 // ShouldCompact checks whether compaction should trigger based on provider-reported usage.
