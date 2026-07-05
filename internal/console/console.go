@@ -101,6 +101,7 @@ func (c *Console) ensureLineBreakBeforeBlock() {
 	c.flushPendingContent()
 	if c.reasoningStarted {
 		fmt.Fprintln(c.Out)
+		fmt.Fprintln(c.Out) // blank line after reasoning
 		c.reasoningStarted = false
 		c.reasoningLines = 0
 	}
@@ -383,6 +384,7 @@ func (c *Console) OnContent(delta string) {
 	}
 	if c.reasoningStarted {
 		fmt.Fprintln(c.Out)
+		fmt.Fprintln(c.Out) // blank line after reasoning
 		c.reasoningStarted = false
 		c.reasoningLines = 0
 	}
