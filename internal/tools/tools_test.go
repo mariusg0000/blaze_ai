@@ -255,3 +255,48 @@ func TestReplaceBlockFormatArgsFallback(t *testing.T) {
 		t.Errorf("FormatArgs() = %q, want %q", result, "Editing: file.go")
 	}
 }
+
+// TestRegistryReadFileFormatArgsWithPurpose verifies the registry dispatches to read_file
+// FormatArgs and returns the purpose text when set.
+func TestRegistryReadFileFormatArgsWithPurpose(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(NewReadFileTool(nil))
+	result := reg.FormatArgs("read_file", json.RawMessage(`{"purpose":"Inspect the config file for task-switch thresholds.","file_path":"/tmp/config.json"}`))
+	if result != "Inspect the config file for task-switch thresholds." {
+		t.Errorf("Registry.FormatArgs(read_file) = %q, want purpose text", result)
+	}
+}
+
+// TestRegistryWriteFileFormatArgsWithPurpose verifies the registry dispatches to write_file
+// FormatArgs and returns the purpose text when set.
+func TestRegistryWriteFileFormatArgsWithPurpose(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(NewWriteFileTool(nil))
+	result := reg.FormatArgs("write_file", json.RawMessage(`{"purpose":"Write the updated task list with completed items.","file_path":"/tmp/tasks.md","content":"x"}`))
+	if result != "Write the updated task list with completed items." {
+		t.Errorf("Registry.FormatArgs(write_file) = %q, want purpose text", result)
+	}
+}
+
+// TestRegistryReadFileFormatArgsFallback verifies the registry falls back to file path
+// when read_file purpose is empty.
+func TestRegistryReadFileFormatArgsFallback(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(NewReadFileTool(nil))
+	result := reg.FormatArgs("read_file", json.RawMessage(`{"file_path":"/tmp/test.txt"}`))
+	if !strings.Contains(result, "Reading") {
+		t.Errorf("Registry.FormatArgs(read_file) = %q, want fallback 'Reading'", result)
+	}
+}
+
+// TestReadFileSchema verifies the read_file parameter schema includes purpose as required.
+func TestReadFileSchema(t *testing.T) {
+	tool := NewReadFileTool(nil)
+	schemaIncludesRequiredPurpose(t, tool.Parameters())
+}
+
+// TestWriteFileSchema verifies the write_file parameter schema includes purpose as required.
+func TestWriteFileSchema(t *testing.T) {
+	tool := NewWriteFileTool(nil)
+	schemaIncludesRequiredPurpose(t, tool.Parameters())
+}

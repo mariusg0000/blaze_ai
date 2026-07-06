@@ -58,7 +58,7 @@ func (t *WriteFileTool) FormatArgs(args json.RawMessage) string {
 	if parsed.FilePath == "" {
 		return "Writing file"
 	}
-	return truncateDisplay("Writing: "+parsed.FilePath, 50)
+	return truncateDisplay("Writing: "+parsed.FilePath, 100)
 }
 
 // Description returns the human-readable description for the LLM.

@@ -12,6 +12,10 @@ import (
 	"strings"
 )
 
+// maxReadFileSize is the maximum file size in bytes that read_file will read.
+// Files exceeding this limit return an error with guidance to use alternative tools.
+const maxReadFileSize = 300 * 1024 // 300 KB
+
 // ReadFileArgs are the arguments for the read_file tool.
 //
 // WHAT:  Parsed arguments from the LLM tool call.
@@ -57,7 +61,7 @@ func (t *ReadFileTool) FormatArgs(args json.RawMessage) string {
 	if parsed.FilePath == "" {
 		return "Reading file"
 	}
-	return truncateDisplay("Reading: "+parsed.FilePath, 50)
+	return truncateDisplay("Reading: "+parsed.FilePath, 100)
 }
 
 // Description returns the human-readable description for the LLM.
@@ -112,6 +116,20 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) string
 			return "error: read_file requires absolute file_path (workdir not available)"
 		}
 		path = filepath.Join(wd, path)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Sprintf("error: file not found: %s", path)
+		}
+		return fmt.Sprintf("error: cannot stat file %s: %v", path, err)
+	}
+	if info.Size() > maxReadFileSize {
+		return fmt.Sprintf(
+			"error: file too large (%d bytes > %d bytes limit). Use rg for targeted searches or shell with head/tail to read partial content.",
+			info.Size(), maxReadFileSize,
+		)
 	}
 
 	data, err := os.ReadFile(path)

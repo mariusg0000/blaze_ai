@@ -157,6 +157,7 @@ func TestReadFileMultiLine(t *testing.T) {
 }
 
 func TestReadFileLarge(t *testing.T) {
+	// 100 KB — under the 300 KB limit, so read_file must succeed.
 	large := strings.Repeat("x", 100000)
 	abs := writeTestFile(t, large)
 	tool := NewReadFileTool(func() string { return filepath.Dir(abs) })
@@ -164,6 +165,21 @@ func TestReadFileLarge(t *testing.T) {
 	result := tool.Execute(context.Background(), args)
 	if len(result) < 100000 {
 		t.Errorf("Execute() returned %d bytes, want >= 100000", len(result))
+	}
+}
+
+func TestReadFileTooLarge(t *testing.T) {
+	// ~400 KB — over the 300 KB limit, must return an error.
+	large := strings.Repeat("x", 400000)
+	abs := writeTestFile(t, large)
+	tool := NewReadFileTool(func() string { return filepath.Dir(abs) })
+	args, _ := json.Marshal(map[string]string{"file_path": abs})
+	result := tool.Execute(context.Background(), args)
+	if !strings.Contains(result, "file too large") {
+		t.Errorf("Execute() = %q, want 'file too large' error", result)
+	}
+	if !strings.Contains(result, "rg") || !strings.Contains(result, "head") {
+		t.Errorf("Execute() = %q, want tool suggestions (rg, head/tail)", result)
 	}
 }
 

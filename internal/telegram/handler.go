@@ -444,9 +444,13 @@ func toolEmoji(name string) string {
 	case "run_skill":
 		return "🚀"
 	case "ask_a_friend":
-		return "🧠"
+		return "🤝"
 	case "analyze_image":
 		return "🖼"
+	case "read_file":
+		return "📄"
+	case "write_file":
+		return "💾"
 	default:
 		return "🔧"
 	}
