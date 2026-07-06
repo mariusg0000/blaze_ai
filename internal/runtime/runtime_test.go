@@ -678,6 +678,92 @@ func TestNextMode(t *testing.T) {
 // TestNextMode verifies cyclic mode switching.
 // (TestNextModeEmpty removed: NewAgent auto-creates default mode, so empty modes is unreachable.)
 
+// TestNextFavoriteModel verifies cycling through favorite models.
+func TestNextFavoriteModel(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	agent.Config.FavoriteModels = []string{"test/model-a", "test/model-b", "test/model-c"}
+	agent.ModelID = "test/model-a"
+
+	err := agent.NextFavoriteModel()
+	if err != nil {
+		t.Fatalf("NextFavoriteModel() error: %v", err)
+	}
+	if agent.ModelID != "test/model-b" {
+		t.Errorf("ModelID = %q, want 'test/model-b'", agent.ModelID)
+	}
+
+	// Second cycle: b -> c
+	err = agent.NextFavoriteModel()
+	if err != nil {
+		t.Fatalf("NextFavoriteModel() error: %v", err)
+	}
+	if agent.ModelID != "test/model-c" {
+		t.Errorf("ModelID = %q, want 'test/model-c'", agent.ModelID)
+	}
+
+	// Third cycle: c -> a (wrap around)
+	err = agent.NextFavoriteModel()
+	if err != nil {
+		t.Fatalf("NextFavoriteModel() error: %v", err)
+	}
+	if agent.ModelID != "test/model-a" {
+		t.Errorf("ModelID = %q, want 'test/model-a' (wrap)", agent.ModelID)
+	}
+}
+
+// TestNextFavoriteModelEmpty verifies no-op when favorites list is empty.
+func TestNextFavoriteModelEmpty(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	agent.Config.FavoriteModels = nil
+	agent.ModelID = "test/test-model"
+
+	err := agent.NextFavoriteModel()
+	if err != nil {
+		t.Fatalf("NextFavoriteModel() error: %v", err)
+	}
+	if agent.ModelID != "test/test-model" {
+		t.Errorf("ModelID changed to %q, want unchanged 'test/test-model'", agent.ModelID)
+	}
+}
+
+// TestNextFavoriteModelSingle verifies no-op when only one favorite exists.
+func TestNextFavoriteModelSingle(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	agent.Config.FavoriteModels = []string{"test/solo"}
+	agent.ModelID = "test/solo"
+
+	err := agent.NextFavoriteModel()
+	if err != nil {
+		t.Fatalf("NextFavoriteModel() error: %v", err)
+	}
+	if agent.ModelID != "test/solo" {
+		t.Errorf("ModelID changed to %q, want unchanged 'test/solo'", agent.ModelID)
+	}
+}
+
+// TestNextFavoriteModelNotInList verifies cycling picks first when current model is not in favorites.
+func TestNextFavoriteModelNotInList(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	agent.Config.FavoriteModels = []string{"test/a", "test/b"}
+	agent.ModelID = "test/alien" // not in favorites
+
+	err := agent.NextFavoriteModel()
+	if err != nil {
+		t.Fatalf("NextFavoriteModel() error: %v", err)
+	}
+	if agent.ModelID != "test/a" {
+		t.Errorf("ModelID = %q, want 'test/a' (first in list)", agent.ModelID)
+	}
+}
+
 // TestSetModelUpdatesMode verifies that SetModel updates CurrentMode.Model.
 func TestSetModelUpdatesMode(t *testing.T) {
 	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})

@@ -49,7 +49,7 @@ type slashCmd struct {
 
 // slashCommands lists all available slash commands for the startup splash.
 var slashCommands = []slashCmd{
-	{"/model [model]", "list or switch model"},
+	{"/model [model]", "list or switch model (+/- fav)"},
 	{"/cd <path>", "change working folder"},
 	{"/clear", "clear current session"},
 	{"/new", "start a clean session"},
@@ -78,6 +78,9 @@ type Console struct {
 	lastToolArgs     string
 	reasoningStarted bool
 	reasoningLines   int
+
+	switchLineActive bool // true when a mode/model status line is present and can be overwritten
+	switchLineWidth  int  // visible width of the current status line for reliable space-padding
 }
 
 // NewConsole creates a Console for terminal interaction.
@@ -297,6 +300,12 @@ func (c *Console) showStartupSplash() {
 			fmt.Fprintln(c.Out)
 		}
 	}
+	fmt.Fprintln(c.Out)
+
+	// Shortcuts section.
+	c.sectionLabel("Shortcuts", colorGreen)
+	fmt.Fprintf(c.Out, "  %-8s  cycle work mode\n", c.bold("Tab"))
+	fmt.Fprintf(c.Out, "  %-8s  cycle favorite model\n", c.bold("Ctrl+\\"))
 	fmt.Fprintln(c.Out)
 
 	// Session section.
@@ -950,13 +959,28 @@ func (c *Console) runTTY() error {
 
 		// Handle mode switch event. Save partial input so the next
 		// ReadEvent call can restore it via the prefill mechanism.
+		// First switch: overwrites old prompt line with spaces then status.
+		// Consecutive: goes up one line, overwrites previous status.
 		if event == "mode_switch" {
 			savedText := line
 			if _, switchErr := c.Agent.NextMode(); switchErr != nil {
 				fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("mode switch error: %v", switchErr)))
 			} else {
-				fmt.Fprintln(c.Out)
-				fmt.Fprintf(c.Out, "[mode: %s | %s]\n", c.Agent.CurrentMode.Name, c.Agent.ModelID)
+				newStatus := fmt.Sprintf("[mode: %s | %s]", c.Agent.CurrentMode.Name, c.Agent.ModelID)
+				c.writeSwitchStatus(newStatus)
+			}
+			c.Reader.prefill = savedText
+			continue
+		}
+
+		// Handle model switch event (Ctrl+\). Same overwrite behavior.
+		if event == "model_switch" {
+			savedText := line
+			if switchErr := c.Agent.NextFavoriteModel(); switchErr != nil {
+				fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("model switch error: %v", switchErr)))
+			} else {
+				newStatus := fmt.Sprintf("[mode: %s | %s]", c.Agent.CurrentMode.Name, c.Agent.ModelID)
+				c.writeSwitchStatus(newStatus)
 			}
 			c.Reader.prefill = savedText
 			continue
@@ -982,6 +1006,11 @@ func (c *Console) runTTY() error {
 			}
 		}
 
+		// Reset the sticky switch status line: the user is now sending
+		// a message, so the next switch will start with a fresh line.
+		c.switchLineActive = false
+		c.switchLineWidth = 0
+
 		fmt.Fprintln(c.Out)
 
 		c.resetTurnState()
@@ -1002,7 +1031,36 @@ func (c *Console) runTTY() error {
 	}
 }
 
-// resetTurnState resets per-turn tracking fields before each agent call.
+// writeSwitchStatus prints the mode/model status line, overwriting any
+// previous switch line with exactly spaced padding to avoid ANSI artifacts.
+//
+// WHAT:  Reliably prints a switch status line using space-padding for clearing.
+// WHY:   \033[K can leave artifacts when the old line contains ANSI color codes.
+//        Spaces are universally reliable regardless of terminal.
+// HOW:   If a switch line is already present, moves up with \033[F first.
+//        Then pads with spaces matching the maximum of old and new line widths,
+//        returns to column 0, and prints the new status.
+// PARAMS: status — the formatted status line text (without trailing newline).
+func (c *Console) writeSwitchStatus(status string) {
+	if c.switchLineActive {
+		fmt.Fprint(c.Out, "\033[F") // move up to previous status line
+	}
+	// Determine padding width: at least the new status, and at least the
+	// previous status width (to cover any longer old content). Add 10 for
+	// safety margin on the initial switch where the old prompt may be longer.
+	width := len(status)
+	if c.switchLineWidth > width {
+		width = c.switchLineWidth
+	}
+	if !c.switchLineActive {
+		width += 10 // first switch: old prompt + prefill may be longer than status
+	}
+	fmt.Fprintf(c.Out, "\r%s\r", strings.Repeat(" ", width))
+	fmt.Fprintf(c.Out, "%s\n", status)
+	c.switchLineWidth = len(status)
+	c.switchLineActive = true
+}
+
 func (c *Console) resetTurnState() {
 	c.contentStarted = false
 	c.contentBuffer = ""
@@ -1075,6 +1133,37 @@ func (c *Console) handleCommand(input string) (bool, bool, error) {
 		if arg == "" {
 			if err := c.interactiveSelectModel(); err != nil {
 				fmt.Fprintln(c.Out, c.color(colorRed, err.Error()))
+			}
+			return true, false, nil
+		}
+		if arg == "+" {
+			if err := c.Agent.Config.AddFavorite(c.Agent.ModelID); err != nil {
+				return true, false, err
+			}
+			if err := c.Agent.Config.Save(); err != nil {
+				return true, false, fmt.Errorf("cannot save config: %w", err)
+			}
+			fmt.Fprintf(c.Out, "Added to favorites: %s\n", c.Agent.ModelID)
+			return true, false, nil
+		}
+		if arg == "-" {
+			removed, err := c.Agent.Config.RemoveFavorite(c.Agent.ModelID)
+			if err != nil {
+				return true, false, err
+			}
+			if !removed {
+				fmt.Fprintf(c.Out, "Not in favorites: %s\n", c.Agent.ModelID)
+				return true, false, nil
+			}
+			if err := c.Agent.Config.Save(); err != nil {
+				return true, false, fmt.Errorf("cannot save config: %w", err)
+			}
+			fmt.Fprintf(c.Out, "Removed from favorites: %s\n", c.Agent.ModelID)
+			if len(c.Agent.Config.FavoriteModels) > 0 {
+				if err := c.Agent.NextFavoriteModel(); err != nil {
+					return true, false, err
+				}
+				fmt.Fprintf(c.Out, "Switched to: %s\n", c.Agent.ModelID)
 			}
 			return true, false, nil
 		}

@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"blazeai/internal/config"
 	"blazeai/internal/console"
@@ -27,6 +29,12 @@ type resumeOptions struct {
 }
 
 func main() {
+	// Prevent Ctrl+\ from sending SIGQUIT and killing the process.
+	// In raw mode (at the prompt), Ctrl+\ is captured as input byte 0x1C.
+	// In cooked mode (during interactive prompts), ignoring SIGQUIT prevents
+	// an accidental Ctrl+\ from terminating the session.
+	signal.Ignore(syscall.SIGQUIT)
+
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "blazeai: %s\n", err)
 		os.Exit(1)

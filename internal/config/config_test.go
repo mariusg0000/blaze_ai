@@ -411,3 +411,104 @@ func TestSaveLoadHelperSetup(t *testing.T) {
 		t.Errorf("HelperSetup.Declined = %v, want [rg fd]", loaded.HelperSetup.Declined)
 	}
 }
+
+// TestAddFavorite verifies adding a valid model to favorites.
+func TestAddFavorite(t *testing.T) {
+	cfg := validConfig()
+	cfg.FavoriteModels = nil // start empty
+
+	if err := cfg.AddFavorite("openrouter/gpt-4.1"); err != nil {
+		t.Fatalf("AddFavorite() error: %v", err)
+	}
+	if len(cfg.FavoriteModels) != 1 {
+		t.Fatalf("AddFavorite() len = %d, want 1", len(cfg.FavoriteModels))
+	}
+	if cfg.FavoriteModels[0] != "openrouter/gpt-4.1" {
+		t.Errorf("AddFavorite() = %q, want openrouter/gpt-4.1", cfg.FavoriteModels[0])
+	}
+}
+
+// TestAddFavoriteDuplicate verifies adding a duplicate is a silent no-op.
+func TestAddFavoriteDuplicate(t *testing.T) {
+	cfg := validConfig()
+	cfg.FavoriteModels = []string{"openrouter/gpt-4.1"}
+
+	if err := cfg.AddFavorite("openrouter/gpt-4.1"); err != nil {
+		t.Fatalf("AddFavorite() error: %v", err)
+	}
+	if len(cfg.FavoriteModels) != 1 {
+		t.Errorf("AddFavorite() duplicate len = %d, want 1", len(cfg.FavoriteModels))
+	}
+}
+
+// TestAddFavoriteInvalidFormat verifies an invalid model format returns an error.
+func TestAddFavoriteInvalidFormat(t *testing.T) {
+	cfg := validConfig()
+	err := cfg.AddFavorite("no-provider")
+	if err == nil {
+		t.Fatal("AddFavorite() expected error for invalid model format, got nil")
+	}
+}
+
+// TestAddFavoriteMissingProvider verifies a model with an unknown provider returns an error.
+func TestAddFavoriteMissingProvider(t *testing.T) {
+	cfg := validConfig()
+	err := cfg.AddFavorite("ghost/model-x")
+	if err == nil {
+		t.Fatal("AddFavorite() expected error for missing provider, got nil")
+	}
+}
+
+// TestRemoveFavorite verifies removing an existing model from favorites.
+func TestRemoveFavorite(t *testing.T) {
+	cfg := validConfig()
+	cfg.FavoriteModels = []string{"openrouter/a", "openrouter/b", "openrouter/c"}
+
+	removed, err := cfg.RemoveFavorite("openrouter/b")
+	if err != nil {
+		t.Fatalf("RemoveFavorite() error: %v", err)
+	}
+	if !removed {
+		t.Fatal("RemoveFavorite() returned false, want true")
+	}
+	if len(cfg.FavoriteModels) != 2 {
+		t.Fatalf("RemoveFavorite() len = %d, want 2", len(cfg.FavoriteModels))
+	}
+	if cfg.FavoriteModels[0] != "openrouter/a" || cfg.FavoriteModels[1] != "openrouter/c" {
+		t.Errorf("RemoveFavorite() = %v, want [openrouter/a openrouter/c]", cfg.FavoriteModels)
+	}
+}
+
+// TestRemoveFavoriteNotFound verifies removing a non-existent model returns false.
+func TestRemoveFavoriteNotFound(t *testing.T) {
+	cfg := validConfig()
+	cfg.FavoriteModels = []string{"openrouter/a"}
+
+	removed, err := cfg.RemoveFavorite("openrouter/ghost")
+	if err != nil {
+		t.Fatalf("RemoveFavorite() error: %v", err)
+	}
+	if removed {
+		t.Error("RemoveFavorite() returned true for missing model, want false")
+	}
+	if len(cfg.FavoriteModels) != 1 {
+		t.Errorf("RemoveFavorite() len = %d, want 1 (unchanged)", len(cfg.FavoriteModels))
+	}
+}
+
+// TestRemoveFavoriteLastItem verifies removing the only item leaves an empty list.
+func TestRemoveFavoriteLastItem(t *testing.T) {
+	cfg := validConfig()
+	cfg.FavoriteModels = []string{"openrouter/solo"}
+
+	removed, err := cfg.RemoveFavorite("openrouter/solo")
+	if err != nil {
+		t.Fatalf("RemoveFavorite() error: %v", err)
+	}
+	if !removed {
+		t.Fatal("RemoveFavorite() returned false, want true")
+	}
+	if len(cfg.FavoriteModels) != 0 {
+		t.Errorf("RemoveFavorite() len = %d, want 0", len(cfg.FavoriteModels))
+	}
+}

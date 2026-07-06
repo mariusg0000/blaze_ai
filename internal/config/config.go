@@ -513,6 +513,47 @@ func SplitModelID(modelID string) (provider, model string) {
 	return modelID[:idx], modelID[idx+1:]
 }
 
+// AddFavorite adds a model ID to the favorites list if not already present.
+//
+// WHAT:  Appends modelID to FavoriteModels after validating its format and provider.
+// WHY:   /model + needs to persist a new favorite to config.
+// HOW:   Validates model format and provider, checks for duplicate, appends if new.
+// PARAMS: modelID — provider/model_name to add.
+// RETURNS: error if the model format or provider is invalid.
+func (c *Config) AddFavorite(modelID string) error {
+	if err := validateModelFormat(modelID); err != nil {
+		return fmt.Errorf("invalid model format: %w", err)
+	}
+	providerNames := providerNameSet(c.Providers)
+	if err := validateModelProvider(modelID, providerNames); err != nil {
+		return err
+	}
+	for _, m := range c.FavoriteModels {
+		if m == modelID {
+			return nil // already present — no-op
+		}
+	}
+	c.FavoriteModels = append(c.FavoriteModels, modelID)
+	return nil
+}
+
+// RemoveFavorite removes a model ID from the favorites list.
+//
+// WHAT:  Deletes modelID from FavoriteModels if it exists.
+// WHY:   /model - needs to remove a favorite from config.
+// HOW:   Linear scan and slice removal; returns whether the item was found.
+// PARAMS: modelID — provider/model_name to remove.
+// RETURNS: bool — true if the model was found and removed; error if the list is empty.
+func (c *Config) RemoveFavorite(modelID string) (bool, error) {
+	for i, m := range c.FavoriteModels {
+		if m == modelID {
+			c.FavoriteModels = append(c.FavoriteModels[:i], c.FavoriteModels[i+1:]...)
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // validateModes checks the modes list for integrity: unique names, valid models.
 //
 // WHAT:  Verifies all modes have unique names and valid model identifiers.

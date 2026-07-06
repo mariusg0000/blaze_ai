@@ -644,6 +644,32 @@ func (a *Agent) SetMode(name string) error {
 	return fmt.Errorf("mode not found: %s", name)
 }
 
+// NextFavoriteModel cycles to the next model in FavoriteModels and applies it.
+//
+// WHAT:  Advances to the next favorite model with wrap-around and persists the selection
+//        into the current mode or LastModel (same side effects as SetModel).
+// WHY:   Ctrl+\ needs fast model cycling through the user's favorite list.
+// HOW:   Finds the index of the current ModelID in FavoriteModels, picks the next index
+//        with wrap-around, then calls SetModel to apply and persist. No-op if 0 or 1 favorites.
+// RETURNS: error if SetModel fails; nil on success or trivial no-op.
+func (a *Agent) NextFavoriteModel() error {
+	if len(a.Config.FavoriteModels) == 0 || len(a.Config.FavoriteModels) == 1 {
+		return nil
+	}
+	currentIdx := -1
+	for i, m := range a.Config.FavoriteModels {
+		if m == a.ModelID {
+			currentIdx = i
+			break
+		}
+	}
+	nextIdx := 0
+	if currentIdx >= 0 {
+		nextIdx = (currentIdx + 1) % len(a.Config.FavoriteModels)
+	}
+	return a.SetModel(a.Config.FavoriteModels[nextIdx])
+}
+
 // NextMode returns the next mode in the config list cyclically.
 func (a *Agent) NextMode() (*config.Mode, error) {
 	if len(a.Modes.Modes) == 0 {
