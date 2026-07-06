@@ -975,6 +975,8 @@ func (c *Console) runTTY() error {
 			}
 		}
 
+		fmt.Fprintln(c.Out)
+
 		c.resetTurnState()
 
 		interrupts := make(chan os.Signal, 1)
