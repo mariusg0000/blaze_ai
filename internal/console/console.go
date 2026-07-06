@@ -73,6 +73,7 @@ type Console struct {
 	inCodeBlock      bool
 	lastPromptTokens int
 	lineOpen         bool
+	toolsStarted     bool
 	turnAborting     atomic.Bool
 	lastToolArgs     string
 	reasoningStarted bool
@@ -399,6 +400,11 @@ func (c *Console) OnContent(delta string) {
 		c.reasoningLines = 0
 	}
 	if !c.contentStarted {
+		// Blank line after tool group before resuming content.
+		if c.toolsStarted {
+			fmt.Fprintln(c.Out)
+			c.toolsStarted = false
+		}
 		c.contentStarted = true
 		c.ensureLineBreakBeforeBlock()
 		fmt.Fprint(c.Out, c.color(colorOrange, c.bold("[BLAZE]")))
@@ -431,6 +437,7 @@ func (c *Console) OnToolCall(name string, args string) {
 		return
 	}
 	c.ensureLineBreakBeforeBlock()
+	c.toolsStarted = true
 
 	// Insert blank line before the first tool in a group after content,
 	// then reset contentStarted so consecutive tool calls stay compact.
@@ -501,7 +508,7 @@ func (c *Console) OnToolResult(name string, result string) {
 	case "DONE":
 		ctx := ""
 		if c.lastPromptTokens > 0 {
-			ctx = "  " + c.color(colorCtx, "CTX: "+formatCompactInt(c.lastPromptTokens)) + "\n"
+			ctx = "  " + c.color(colorCtx, "CTX: "+formatCompactInt(c.lastPromptTokens))
 		}
 		if args != "" {
 			fmt.Fprintf(c.Out, " %s%s\n", c.color(colorBrightGreen, "✔️"), ctx)
@@ -1002,6 +1009,7 @@ func (c *Console) resetTurnState() {
 	c.inCodeBlock = false
 	c.lastPromptTokens = 0
 	c.lineOpen = false
+	c.toolsStarted = false
 	c.reasoningStarted = false
 	c.reasoningLines = 0
 }
