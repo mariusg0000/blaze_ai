@@ -203,10 +203,12 @@ func ParseToolCallArgs[T any](args json.RawMessage) (T, error) {
 	return result, nil
 }
 
-// truncateDisplay limits a fallback display string to a maximum length for console output.
+// truncateDisplay limits a fallback display string to a maximum number of runes for console output.
+// Uses rune-based counting and slicing so that multi-byte characters (emoji, Unicode) are not corrupted.
 func truncateDisplay(s string, max int) string {
-	if len(s) <= max {
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
-	return s[:max-3] + "..."
+	return string(runes[:max-3]) + "..."
 }
