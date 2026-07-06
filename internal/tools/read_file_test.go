@@ -167,6 +167,36 @@ func TestReadFileLarge(t *testing.T) {
 	}
 }
 
+func TestReadFileFormatArgsWithPurpose(t *testing.T) {
+	tool := NewReadFileTool(nil)
+	args, _ := json.Marshal(map[string]string{
+		"file_path": "/tmp/test.txt",
+		"purpose":   "Read config.json to check current compaction thresholds for the task-switcher feature.",
+	})
+	result := tool.FormatArgs(args)
+	if result != "Read config.json to check current compaction thresholds for the task-switcher feature." {
+		t.Errorf("FormatArgs() = %q, want purpose text", result)
+	}
+}
+
+func TestReadFileFormatArgsPurposeFallback(t *testing.T) {
+	tool := NewReadFileTool(func() string { return "/tmp" })
+	// Empty purpose → fallback to path
+	args, _ := json.Marshal(map[string]string{"file_path": "/tmp/test.txt", "purpose": ""})
+	result := tool.FormatArgs(args)
+	if !strings.Contains(result, "Reading") {
+		t.Errorf("FormatArgs() = %q, want 'Reading' fallback when purpose empty", result)
+	}
+}
+
+func TestReadFileParametersHasPurpose(t *testing.T) {
+	tool := NewReadFileTool(nil)
+	params := string(tool.Parameters())
+	if !strings.Contains(params, `"purpose"`) {
+		t.Errorf("Parameters() missing 'purpose' field: %s", params)
+	}
+}
+
 func TestReadFilePermissionDenied(t *testing.T) {
 	abs := writeTestFile(t, "secret")
 	if err := os.Chmod(abs, 0000); err != nil {

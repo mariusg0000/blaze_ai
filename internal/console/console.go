@@ -321,6 +321,16 @@ func formatSkillName(name string) string {
 	return strings.TrimPrefix(name, "global/")
 }
 
+// OnSystem displays a system-level notification to the user, such as a detected
+// task switch with a summary of the archived task.
+//
+// WHAT:  Prints a formatted system notification.
+// PARAMS: message — the system notification text.
+func (c *Console) OnSystem(message string) {
+	c.ensureLineBreakBeforeBlock()
+	fmt.Fprintln(c.Out, c.color(colorOrange, "⚡ System: "+message))
+}
+
 // OnUsage records the prompt token count from the latest provider response.
 //
 // WHAT:  Stores context size for end-of-turn separator rendering.

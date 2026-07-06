@@ -9,14 +9,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ReadFileArgs are the arguments for the read_file tool.
 //
 // WHAT:  Parsed arguments from the LLM tool call.
-// PARAMS: FilePath — absolute or relative path to the file to read.
+// PARAMS: FilePath — absolute or relative path to the file to read;
+//
+//	Purpose — user-visible description of why the file is being read.
 type ReadFileArgs struct {
 	FilePath string `json:"file_path"`
+	Purpose  string `json:"purpose,omitempty"`
 }
 
 // ReadFileTool reads a file and returns its contents to the LLM.
@@ -41,11 +45,14 @@ func (t *ReadFileTool) Name() string {
 	return "read_file"
 }
 
-// FormatArgs formats a concise UI label with the file path.
+// FormatArgs formats a concise UI label with the file path or purpose.
 func (t *ReadFileTool) FormatArgs(args json.RawMessage) string {
 	parsed, err := ParseToolCallArgs[ReadFileArgs](args)
 	if err != nil {
 		return "Reading file"
+	}
+	if strings.TrimSpace(parsed.Purpose) != "" {
+		return strings.TrimSpace(parsed.Purpose)
 	}
 	if parsed.FilePath == "" {
 		return "Reading file"
@@ -63,12 +70,16 @@ func (t *ReadFileTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
+			"purpose": {
+				"type": "string",
+				"description": "purpose = exactly 3 user-visible sentences. Sentence 1 must name the target file and the specific content area being read. Sentence 2 must explain why the file is being read and what information is needed from it. Sentence 3 must explain what the read result should enable and how it advances the task."
+			},
 			"file_path": {
 				"type": "string",
 				"description": "file_path = absolute or relative path to the file to read"
 			}
 		},
-		"required": ["file_path"]
+		"required": ["purpose", "file_path"]
 	}`)
 }
 

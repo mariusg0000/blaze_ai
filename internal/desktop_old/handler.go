@@ -146,6 +146,13 @@ func (h *Handler) OnUsage(promptTokens int) {
 	h.mu.Unlock()
 }
 
+// OnSystem appends a system notification to the desktop transcript.
+func (h *Handler) OnSystem(message string) {
+	if h.sink != nil {
+		h.sink.AppendSystem(message)
+	}
+}
+
 // OnReasoning appends one streamed reasoning/thinking chunk as its own transcript row.
 func (h *Handler) OnReasoning(delta string) {
 	h.mu.Lock()

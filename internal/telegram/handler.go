@@ -105,6 +105,11 @@ func (h *Handler) OnUsage(promptTokens int) {
 	h.mu.Unlock()
 }
 
+// OnSystem sends a system notification as a standalone Telegram message.
+func (h *Handler) OnSystem(message string) {
+	h.sendNotice("⚡ " + message)
+}
+
 // OnReasoning is a no-op for Telegram transport (reasoning not displayed via Telegram).
 func (h *Handler) OnReasoning(delta string) {
 	// No-op — Telegram does not display reasoning blocks.

@@ -22,12 +22,13 @@ import (
 
 // mockHandler captures handler calls for verification.
 type mockHandler struct {
-	content     []string
-	toolCalls   []string
-	toolResults []string
-	usages      []int
-	onContent   func(string)
-	onToolCall  func(string, string)
+	content      []string
+	toolCalls    []string
+	toolResults  []string
+	usages       []int
+	systemMsgs   []string
+	onContent    func(string)
+	onToolCall   func(string, string)
 }
 
 func (h *mockHandler) OnContent(delta string) {
@@ -47,6 +48,7 @@ func (h *mockHandler) OnToolResult(name string, result string) {
 }
 func (h *mockHandler) OnUsage(promptTokens int)                          { h.usages = append(h.usages, promptTokens) }
 func (h *mockHandler) OnReasoning(delta string)                          {}
+func (h *mockHandler) OnSystem(message string)                           { h.systemMsgs = append(h.systemMsgs, message) }
 func (h *mockHandler) RequestSudoApproval(command string) (bool, string) { return false, "" }
 
 // setupAgent creates a fully wired Agent with a mock SSE server.
@@ -989,6 +991,13 @@ func TestRunTurnTaskSwitchAppliesCleanup(t *testing.T) {
 		t.Error("OnContent was not called")
 	}
 
+	// OnSystem must be called with the task-switch summary.
+	if len(h.systemMsgs) == 0 {
+		t.Error("OnSystem was not called after task switch")
+	} else if !strings.Contains(h.systemMsgs[0], "User debugged auth flow") {
+		t.Errorf("OnSystem message = %q, want summary content", h.systemMsgs[0])
+	}
+
 	// Session should have fewer messages than original + new (old ones pruned).
 	// Expected: synthetic summary + last user msg + new assistant reply = 3 messages.
 	if len(agent.Session.Messages) >= originalLen+2 {
@@ -1065,6 +1074,11 @@ func TestRunTurnNoTaskSwitchKeepsMessages(t *testing.T) {
 		if content, ok := msg.Content.(string); ok && strings.Contains(content, syntheticPrefix) {
 			t.Error("unexpected synthetic summary when no task switch detected")
 		}
+	}
+
+	// OnSystem must NOT be called.
+	if len(h.systemMsgs) > 0 {
+		t.Errorf("OnSystem was called %d times when no task switch detected: %v", len(h.systemMsgs), h.systemMsgs)
 	}
 }
 

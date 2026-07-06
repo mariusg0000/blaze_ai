@@ -9,15 +9,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // WriteFileArgs are the arguments for the write_file tool.
 //
 // WHAT:  Parsed arguments from the LLM tool call.
-// PARAMS: FilePath — absolute or relative target path; Content — the text to write.
+// PARAMS: FilePath — absolute or relative target path; Content — the text to write;
+//
+//	Purpose — user-visible description of why the file is being written.
 type WriteFileArgs struct {
 	FilePath string `json:"file_path"`
 	Content  string `json:"content"`
+	Purpose  string `json:"purpose,omitempty"`
 }
 
 // WriteFileTool writes content to a file, creating parent directories as needed.
@@ -42,11 +46,14 @@ func (t *WriteFileTool) Name() string {
 	return "write_file"
 }
 
-// FormatArgs formats a concise UI label with the file path.
+// FormatArgs formats a concise UI label with the file path or purpose.
 func (t *WriteFileTool) FormatArgs(args json.RawMessage) string {
 	parsed, err := ParseToolCallArgs[WriteFileArgs](args)
 	if err != nil {
 		return "Writing file"
+	}
+	if strings.TrimSpace(parsed.Purpose) != "" {
+		return strings.TrimSpace(parsed.Purpose)
 	}
 	if parsed.FilePath == "" {
 		return "Writing file"
@@ -64,6 +71,10 @@ func (t *WriteFileTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
+			"purpose": {
+				"type": "string",
+				"description": "purpose = exactly 3 user-visible sentences. Sentence 1 must name the target file and the specific content being written. Sentence 2 must explain why the file is being created or overwritten. Sentence 3 must explain what the written file enables and how it advances the task."
+			},
 			"file_path": {
 				"type": "string",
 				"description": "file_path = absolute or relative path to the file to write"
@@ -73,7 +84,7 @@ func (t *WriteFileTool) Parameters() json.RawMessage {
 				"description": "content = full text to write to the file"
 			}
 		},
-		"required": ["file_path", "content"]
+		"required": ["purpose", "file_path", "content"]
 	}`)
 }
 

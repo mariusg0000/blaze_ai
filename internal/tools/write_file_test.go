@@ -198,6 +198,37 @@ func TestWriteFileFormatArgsInvalid(t *testing.T) {
 	}
 }
 
+func TestWriteFileFormatArgsWithPurpose(t *testing.T) {
+	tool := NewWriteFileTool(nil)
+	args, _ := json.Marshal(map[string]string{
+		"file_path": "/tmp/output.txt",
+		"content":   "x",
+		"purpose":   "Write the updated task list with completed items marked as done.",
+	})
+	result := tool.FormatArgs(args)
+	if result != "Write the updated task list with completed items marked as done." {
+		t.Errorf("FormatArgs() = %q, want purpose text", result)
+	}
+}
+
+func TestWriteFileFormatArgsPurposeFallback(t *testing.T) {
+	tool := NewWriteFileTool(func() string { return "/tmp" })
+	// Empty purpose → fallback to path
+	args, _ := json.Marshal(map[string]string{"file_path": "/tmp/test.txt", "content": "x", "purpose": ""})
+	result := tool.FormatArgs(args)
+	if !strings.Contains(result, "Writing") {
+		t.Errorf("FormatArgs() = %q, want 'Writing' fallback when purpose empty", result)
+	}
+}
+
+func TestWriteFileParametersHasPurpose(t *testing.T) {
+	tool := NewWriteFileTool(nil)
+	params := string(tool.Parameters())
+	if !strings.Contains(params, `"purpose"`) {
+		t.Errorf("Parameters() missing 'purpose' field: %s", params)
+	}
+}
+
 func TestWriteFileInvalidArgs(t *testing.T) {
 	tool := NewWriteFileTool(nil)
 	args := json.RawMessage(`{invalid}`)

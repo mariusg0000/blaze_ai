@@ -49,6 +49,10 @@ type Handler interface {
 	// OnReasoning is called for each streaming reasoning/thinking chunk from the LLM.
 	OnReasoning(delta string)
 
+	// OnSystem is called when the runtime needs to display a system-level notification
+	// to the user, such as a detected task switch.
+	OnSystem(message string)
+
 	// RequestSudoApproval is called before executing a shell command that requires sudo.
 	// The handler prompts the user for confirmation, then reads a hidden password if approved.
 	// approved: false means the user declined — the tool call is skipped.
@@ -466,6 +470,9 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		if detection.Changed && turnCompletedNormally {
 			if err := a.Compactor.CompactByTaskSwitch(a.Session, detection.Index, detection.Summary); err != nil {
 				return fmt.Errorf("task-switch compaction failed: %w", err)
+			}
+			if a.Handler != nil {
+				a.Handler.OnSystem("Task switch detected: " + detection.Summary)
 			}
 			return nil
 		}
