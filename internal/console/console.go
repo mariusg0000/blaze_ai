@@ -431,6 +431,14 @@ func (c *Console) OnToolCall(name string, args string) {
 		return
 	}
 	c.ensureLineBreakBeforeBlock()
+
+	// Insert blank line before the first tool in a group after content,
+	// then reset contentStarted so consecutive tool calls stay compact.
+	if c.contentStarted {
+		fmt.Fprintln(c.Out)
+		c.contentStarted = false
+	}
+
 	c.lastToolArgs = args
 
 	if args != "" {

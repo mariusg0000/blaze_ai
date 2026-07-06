@@ -279,15 +279,15 @@ func TestOnToolCallEmptyArgs(t *testing.T) {
 	}
 }
 
-// TestOnToolCallAfterContent verifies a newline is inserted before tool blocks.
+// TestOnToolCallAfterContent verifies a blank line separates content from the first tool block.
 func TestOnToolCallAfterContent(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnContent("hello")
 	c.OnToolCall("shell", "ls")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nok\n")
 	plain := stripANSICodes(out.String())
-	if !strings.Contains(plain, "hello\n💻 ls …") {
-		t.Errorf("output missing newline before tool call: %q", out.String())
+	if !strings.Contains(plain, "hello\n\n💻 ls …") {
+		t.Errorf("output missing blank line before tool call: %q", out.String())
 	}
 }
 
