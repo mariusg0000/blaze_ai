@@ -60,6 +60,11 @@ type Handler interface {
 	RequestSudoApproval(command string) (approved bool, password string)
 }
 
+// StreamPhaseHandler is an optional transport extension for richer provider wait-state updates.
+type StreamPhaseHandler interface {
+	OnStreamPhase(phase provider.StreamPhase)
+}
+
 // Agent is the core runtime that ties all packages together and drives the conversation loop.
 //
 // WHAT:  Holds all runtime state and orchestrates the LLM call cycle.
@@ -334,7 +339,11 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		if a.Config.ShowReasoning {
 			onReasoning = a.Handler.OnReasoning
 		}
-		resp, err := a.Provider.Stream(ctx, messages, toolDefs, a.Handler.OnContent, onReasoning)
+		var onPhase func(provider.StreamPhase)
+		if phaseHandler, ok := a.Handler.(StreamPhaseHandler); ok {
+			onPhase = phaseHandler.OnStreamPhase
+		}
+		resp, err := a.Provider.StreamWithPhase(ctx, messages, toolDefs, a.Handler.OnContent, onReasoning, onPhase)
 		if err != nil && !errors.Is(err, provider.ErrAborted) {
 			return fmt.Errorf("LLM stream failed: %w", err)
 		}

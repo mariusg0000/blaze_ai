@@ -21,6 +21,7 @@ import (
 
 	"blazeai/internal/config"
 	"blazeai/internal/helpers"
+	"blazeai/internal/provider"
 	"blazeai/internal/runtime"
 	"blazeai/internal/skills"
 )
@@ -142,6 +143,7 @@ func (c *Console) startSpinner(label string) {
 
 func (c *Console) startSpinnerLocked(label string) {
 	if c.spinnerActive {
+		c.spinnerLabel = label
 		return
 	}
 	c.spinnerActive = true
@@ -152,6 +154,16 @@ func (c *Console) startSpinnerLocked(label string) {
 	c.spinnerStop = make(chan struct{})
 	c.spinnerDone = make(chan struct{})
 	go c.runSpinner(c.spinnerStop, c.spinnerDone)
+}
+
+// updateSpinnerLabel changes the active spinner text without restarting the animation.
+func (c *Console) updateSpinnerLabel(label string) {
+	c.outMu.Lock()
+	defer c.outMu.Unlock()
+	if !c.spinnerActive {
+		return
+	}
+	c.spinnerLabel = label
 }
 
 // stopSpinner clears the spinner line and waits for the animation goroutine to exit.
@@ -459,6 +471,20 @@ func (c *Console) OnSystem(message string) {
 	fmt.Fprintln(c.Out, c.color(colorOrange, "⚡ System: "+message))
 }
 
+// OnStreamPhase updates the waiting spinner label for transports that can show provider phases.
+func (c *Console) OnStreamPhase(phase provider.StreamPhase) {
+	switch phase {
+	case provider.PhaseConnecting:
+		c.updateSpinnerLabel("Connecting")
+	case provider.PhaseWaitingFirstEvent:
+		c.updateSpinnerLabel("Waiting")
+	case provider.PhaseHiddenReasoning:
+		c.updateSpinnerLabel("Thinking")
+	case provider.PhaseStreaming:
+		// The next visible output stops the spinner, so no label change is needed here.
+	}
+}
+
 // OnUsage records the prompt token count from the latest provider response.
 //
 // WHAT:  Stores context size for end-of-turn separator rendering.
@@ -691,7 +717,7 @@ func (c *Console) OnToolResult(name string, result string) {
 		}
 	}
 	c.lineOpen = false
-	c.startSpinnerLocked("thinking...")
+	c.startSpinnerLocked("Waiting")
 }
 
 // RequestSudoApproval prompts the user for confirmation before executing a sudo command.
@@ -1235,7 +1261,7 @@ func (c *Console) resetTurnState() {
 func (c *Console) runAgentTurn(input string, interrupts <-chan os.Signal) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c.startSpinner("thinking...")
+	c.startSpinner("Connecting")
 	defer c.stopSpinner()
 
 	errCh := make(chan error, 1)

@@ -14,6 +14,7 @@ import (
 	"blazeai/internal/config"
 	"blazeai/internal/helpers"
 	"blazeai/internal/platform"
+	"blazeai/internal/provider"
 	"blazeai/internal/runtime"
 	"blazeai/internal/session"
 )
@@ -427,6 +428,30 @@ func TestSpinnerStopsBeforeToolCall(t *testing.T) {
 	}
 	if !strings.Contains(plain, "💻 ls … ✔️") {
 		t.Fatalf("output missing tool line after spinner: %q", plain)
+	}
+}
+
+// TestOnStreamPhaseUpdatesSpinnerLabel verifies phase notifications change the live spinner text.
+func TestOnStreamPhaseUpdatesSpinnerLabel(t *testing.T) {
+	oldInterval := spinnerFrameInterval
+	spinnerFrameInterval = 5 * time.Millisecond
+	defer func() {
+		spinnerFrameInterval = oldInterval
+	}()
+
+	c, out := newConsole(mockAgent(t))
+	c.startSpinner("Connecting")
+	time.Sleep(20 * time.Millisecond)
+	c.OnStreamPhase(provider.PhaseWaitingFirstEvent)
+	time.Sleep(20 * time.Millisecond)
+	c.stopSpinner()
+
+	plain := stripANSICodes(strings.ReplaceAll(out.String(), "\r", ""))
+	if !strings.Contains(plain, "Connecting") {
+		t.Fatalf("output missing initial spinner label: %q", plain)
+	}
+	if !strings.Contains(plain, "Waiting") {
+		t.Fatalf("output missing updated spinner label: %q", plain)
 	}
 }
 

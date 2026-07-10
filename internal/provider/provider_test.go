@@ -346,6 +346,46 @@ func TestStreamIdleTimeout(t *testing.T) {
 	}
 }
 
+// TestStreamWithPhaseReportsBoundaries verifies provider phases for connect, first-event wait, and hidden reasoning.
+func TestStreamWithPhaseReportsBoundaries(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"done"}}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "data: [DONE]")
+		fmt.Fprintln(w)
+	}))
+	defer server.Close()
+
+	cfg := mockProvider(t, server)
+	client, err := NewClient(cfg, "test/test-model")
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+
+	var phases []StreamPhase
+	resp, err := client.StreamWithPhase(context.Background(), []session.Message{{Role: "user", Content: "hi"}}, nil, nil, nil, func(phase StreamPhase) {
+		phases = append(phases, phase)
+	})
+	if err != nil {
+		t.Fatalf("StreamWithPhase() error: %v", err)
+	}
+	if resp.Content != "done" {
+		t.Fatalf("Content = %q, want done", resp.Content)
+	}
+	want := []StreamPhase{PhaseConnecting, PhaseWaitingFirstEvent, PhaseStreaming, PhaseHiddenReasoning}
+	if len(phases) != len(want) {
+		t.Fatalf("phases = %v, want %v", phases, want)
+	}
+	for i := range want {
+		if phases[i] != want[i] {
+			t.Fatalf("phases[%d] = %q, want %q (all=%v)", i, phases[i], want[i], phases)
+		}
+	}
+}
+
 // TestStreamMultipleToolCalls verifies multiple tool calls in one response.
 func TestStreamMultipleToolCalls(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

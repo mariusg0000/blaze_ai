@@ -56,6 +56,19 @@ type Response struct {
 	Usage     *Usage
 }
 
+// StreamPhase identifies the current provider streaming phase for UI feedback.
+//
+// WHAT:  Labels distinct provider request/stream milestones.
+// WHY:   Transports can show more truthful waiting states than a generic spinner.
+type StreamPhase string
+
+const (
+	PhaseConnecting        StreamPhase = "connecting"
+	PhaseWaitingFirstEvent StreamPhase = "waiting_first_event"
+	PhaseHiddenReasoning   StreamPhase = "hidden_reasoning"
+	PhaseStreaming         StreamPhase = "streaming"
+)
+
 // Client communicates with an OpenAI-compatible endpoint.
 //
 // WHAT:  HTTP client for a single provider endpoint.
@@ -251,8 +264,17 @@ type streamChunk struct {
 //
 // RETURNS: *Response — accumulated content, tool calls, and usage; error on HTTP or parse failure.
 func (c *Client) Stream(ctx context.Context, messages []session.Message, toolDefs []tools.OpenAITool, onContent func(string), onReasoning func(string)) (*Response, error) {
+	return c.StreamWithPhase(ctx, messages, toolDefs, onContent, onReasoning, nil)
+}
+
+// StreamWithPhase sends a chat completion request with streaming and reports high-level
+// provider phases for transports that want richer waiting indicators.
+func (c *Client) StreamWithPhase(ctx context.Context, messages []session.Message, toolDefs []tools.OpenAITool, onContent func(string), onReasoning func(string), onPhase func(StreamPhase)) (*Response, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if onPhase != nil {
+		onPhase(PhaseConnecting)
 	}
 	reqBody := chatRequest{
 		Model:         c.Model,
@@ -289,7 +311,11 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, toolDef
 		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	return parseSSEStream(ctx, resp.Body, onContent, onReasoning)
+	if onPhase != nil {
+		onPhase(PhaseWaitingFirstEvent)
+	}
+
+	return parseSSEStream(ctx, resp.Body, onContent, onReasoning, onPhase)
 }
 
 // parseSSEStream reads an SSE stream, parses JSON chunks, and accumulates the response.
@@ -302,7 +328,7 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, toolDef
 //	onReasoning — callback for reasoning deltas (may be nil).
 //
 // RETURNS: *Response — accumulated response; error on parse failure.
-func parseSSEStream(ctx context.Context, reader io.ReadCloser, onContent func(string), onReasoning func(string)) (*Response, error) {
+func parseSSEStream(ctx context.Context, reader io.ReadCloser, onContent func(string), onReasoning func(string), onPhase func(StreamPhase)) (*Response, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -323,6 +349,8 @@ func parseSSEStream(ctx context.Context, reader io.ReadCloser, onContent func(st
 	result := &Response{}
 	toolCallMap := make(map[int]*tools.ToolCall)
 	var toolCallOrder []int
+	seenFirstEvent := false
+	hiddenReasoningStarted := false
 	idleTimer := time.NewTimer(providerStreamIdleTimeout)
 	defer idleTimer.Stop()
 
@@ -367,6 +395,12 @@ func parseSSEStream(ctx context.Context, reader io.ReadCloser, onContent func(st
 			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 				continue
 			}
+			if !seenFirstEvent {
+				seenFirstEvent = true
+				if onPhase != nil {
+					onPhase(PhaseStreaming)
+				}
+			}
 
 			if chunk.Usage != nil {
 				result.Usage = chunk.Usage
@@ -383,6 +417,12 @@ func parseSSEStream(ctx context.Context, reader io.ReadCloser, onContent func(st
 				}
 
 				if delta.ReasoningContent != "" {
+					if onReasoning == nil && !hiddenReasoningStarted {
+						hiddenReasoningStarted = true
+						if onPhase != nil {
+							onPhase(PhaseHiddenReasoning)
+						}
+					}
 					result.Reasoning += delta.ReasoningContent
 					if onReasoning != nil {
 						onReasoning(delta.ReasoningContent)
