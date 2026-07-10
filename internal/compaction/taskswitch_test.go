@@ -2,6 +2,7 @@
 package compaction
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -232,6 +233,41 @@ func TestParseDetectionResponseEmptySummary(t *testing.T) {
 	}
 }
 
+// TestConsumeTaskSwitchResultPending verifies an empty marker file is treated as in-progress.
+func TestConsumeTaskSwitchResultPending(t *testing.T) {
+	m := NewManager(DefaultCompactionConfig(), nil, nil)
+	dir := t.TempDir()
+	sess := &session.Session{Folder: dir}
+	if err := os.WriteFile(filepath.Join(dir, taskSwitchFile), nil, 0644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+	result, err := m.ConsumeTaskSwitchResult(sess)
+	if err != nil {
+		t.Fatalf("ConsumeTaskSwitchResult() error: %v", err)
+	}
+	if result != nil {
+		t.Fatal("expected nil result for pending marker")
+	}
+}
+
+// TestConsumeTaskSwitchResultInvalidRemovesFile verifies invalid JSON is deleted with an explicit error.
+func TestConsumeTaskSwitchResultInvalidRemovesFile(t *testing.T) {
+	m := NewManager(DefaultCompactionConfig(), nil, nil)
+	dir := t.TempDir()
+	sess := &session.Session{Folder: dir}
+	path := filepath.Join(dir, taskSwitchFile)
+	if err := os.WriteFile(path, []byte("{bad json"), 0644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+	_, err := m.ConsumeTaskSwitchResult(sess)
+	if err == nil || !strings.Contains(err.Error(), "invalid taskswitch.json removed") {
+		t.Fatalf("ConsumeTaskSwitchResult() error = %v, want invalid-file error", err)
+	}
+	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("taskswitch.json still exists after invalid removal: %v", statErr)
+	}
+}
+
 // TestCompactByTaskSwitch verifies messages are pruned and summary is saved.
 func TestCompactByTaskSwitch(t *testing.T) {
 	cfg := DefaultCompactionConfig()
@@ -241,11 +277,11 @@ func TestCompactByTaskSwitch(t *testing.T) {
 	sess := &session.Session{
 		Messages: []session.Message{
 			{Role: "system", Content: "sysprompt"},
-			{Role: "user", Content: "old task message 1"},    // user 0
+			{Role: "user", Content: "old task message 1"}, // user 0
 			{Role: "assistant", Content: "old task reply 1"},
-			{Role: "user", Content: "old task message 2"},    // user 1
+			{Role: "user", Content: "old task message 2"}, // user 1
 			{Role: "assistant", Content: "old task reply 2"},
-			{Role: "user", Content: "new task message"},      // user 2 ← switch here
+			{Role: "user", Content: "new task message"}, // user 2 ← switch here
 			{Role: "assistant", Content: "new task reply"},
 		},
 		Folder: dir,
@@ -326,11 +362,11 @@ func TestCompactByTaskSwitchNoop(t *testing.T) {
 func TestUserIndexToSessionIndex(t *testing.T) {
 	msgs := []session.Message{
 		{Role: "system", Content: "sys"},
-		{Role: "user", Content: "u0"},   // session idx 1
+		{Role: "user", Content: "u0"}, // session idx 1
 		{Role: "assistant", Content: "a"},
-		{Role: "user", Content: "u1"},   // session idx 3
+		{Role: "user", Content: "u1"}, // session idx 3
 		{Role: "assistant", Content: "b"},
-		{Role: "user", Content: "u2"},   // session idx 5
+		{Role: "user", Content: "u2"}, // session idx 5
 	}
 
 	if idx := userIndexToSessionIndex(msgs, 0); idx != 1 {

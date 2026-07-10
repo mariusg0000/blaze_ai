@@ -467,6 +467,39 @@ func TestNewAgent(t *testing.T) {
 	}
 }
 
+// TestNewAgentClearsStaleTaskSwitchState verifies session startup removes old task-switch artifacts.
+func TestNewAgentClearsStaleTaskSwitchState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+
+	t.Setenv("HOME", t.TempDir())
+	cfg := &config.Config{
+		Providers:      []config.Provider{{Name: "test", Endpoint: server.URL, APIKey: "sk-test"}},
+		Roles:          config.Roles{Default: "test/test-model"},
+		Compaction:     config.DefaultCompaction(),
+		StripReasoning: config.DefaultStripReasoning(),
+	}
+	dir := t.TempDir()
+	sess, _ := session.CreateInDir(dir)
+	for _, name := range []string{"taskswitch.json", "taskswitch.json.tmp", "taskswitch_prompt.txt", "taskswitch_response.txt", "taskswitch.pending.json", "taskswitch.result.json"} {
+		if err := os.WriteFile(filepath.Join(sess.Folder, name), []byte("stale"), 0644); err != nil {
+			t.Fatalf("WriteFile(%s) error: %v", name, err)
+		}
+	}
+	promptsDir := filepath.Join(dir, "prompts")
+	os.MkdirAll(promptsDir, 0755)
+	writePromptFixtures(t, promptsDir)
+
+	if _, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{}, "console"); err != nil {
+		t.Fatalf("NewAgent() error: %v", err)
+	}
+	for _, name := range []string{"taskswitch.json", "taskswitch.json.tmp", "taskswitch_prompt.txt", "taskswitch_response.txt", "taskswitch.pending.json", "taskswitch.result.json"} {
+		if _, err := os.Stat(filepath.Join(sess.Folder, name)); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be removed at startup, err=%v", name, err)
+		}
+	}
+}
+
 // TestNewAgentBadModel verifies error when model ID is invalid.
 func TestNewAgentBadModel(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
@@ -1020,7 +1053,7 @@ func setupAgentWithSummarization(t *testing.T, defaultHandler, summaryHandler ht
 }
 
 // TestRunTurnTaskSwitchLeavesPendingResultUntilNextBoundary verifies that a single-call turn
-// completes without waiting for task-switch detection and leaves the result for later consumption.
+// completes without waiting for task-switch detection and leaves taskswitch.json for later consumption.
 func TestRunTurnTaskSwitchLeavesPendingResultUntilNextBoundary(t *testing.T) {
 	agent, h, defServer, sumServer := setupAgentWithSummarization(t,
 		// Default LLM handler: responds with text.
@@ -1047,6 +1080,7 @@ func TestRunTurnTaskSwitchLeavesPendingResultUntilNextBoundary(t *testing.T) {
 	)
 	defer defServer.Close()
 	defer sumServer.Close()
+	agent.Config.Compaction.MaxContextTokens = 1
 
 	// Verify SummarizationProvider is wired.
 	if agent.Compactor == nil || agent.Compactor.SummarizationProvider == nil {
@@ -1087,12 +1121,17 @@ func TestRunTurnTaskSwitchLeavesPendingResultUntilNextBoundary(t *testing.T) {
 	if len(agent.Session.Messages) != originalLen+2 {
 		t.Errorf("session has %d messages, want %d before later task-switch consumption", len(agent.Session.Messages), originalLen+2)
 	}
-	resultPath := filepath.Join(agent.Session.Folder, "taskswitch.result.json")
+	resultPath := filepath.Join(agent.Session.Folder, "taskswitch.json")
 	deadline := time.Now().Add(300 * time.Millisecond)
 	for {
 		_, statErr := os.Stat(resultPath)
 		if statErr == nil {
-			break
+			data, readErr := os.ReadFile(resultPath)
+			if readErr == nil && strings.TrimSpace(string(data)) != "" {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+			continue
 		}
 		if !os.IsNotExist(statErr) {
 			t.Fatalf("cannot stat task-switch result file: %v", statErr)

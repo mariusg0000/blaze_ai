@@ -6,7 +6,6 @@ package compaction
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -30,32 +29,13 @@ type DetectResult struct {
 	Summary string
 }
 
-// TaskSwitchPending stores the active async task-switch job metadata.
-//
-// WHAT:  Persists one in-flight task-switch detection job in the session folder.
-// WHY:   The runtime must prevent concurrent workers and invalidate stale workers explicitly.
-type TaskSwitchPending struct {
-	JobID                string `json:"job_id"`
-	Status               string `json:"status"`
-	SnapshotUserCount    int    `json:"snapshot_user_count"`
-	SnapshotMessageCount int    `json:"snapshot_message_count"`
-	StartedAt            string `json:"started_at"`
-	DeadlineAt           string `json:"deadline_at"`
-}
-
-// TaskSwitchResult stores the finished async task-switch outcome.
+// TaskSwitchFile stores a completed async task-switch result.
 //
 // WHAT:  Persists the detector decision for later consumption by the main runtime.
 // WHY:   The detector must not modify session history directly.
-type TaskSwitchResult struct {
-	JobID          string `json:"job_id"`
-	Status         string `json:"status"`
-	Changed        bool   `json:"changed"`
-	UserIndex      int    `json:"user_index,omitempty"`
-	SwitchUserHash string `json:"switch_user_hash,omitempty"`
-	Summary        string `json:"summary,omitempty"`
-	Error          string `json:"error,omitempty"`
-	FinishedAt     string `json:"finished_at"`
+type TaskSwitchFile struct {
+	UserIndex int    `json:"user_index"`
+	Summary   string `json:"summary"`
 }
 
 // truncatedLen is the max character length for tool calls and tool results in the detection transcript.
@@ -64,8 +44,10 @@ const truncatedLen = 150
 const taskSwitchTimeout = 15 * time.Second
 
 const (
-	taskSwitchPendingFile = "taskswitch.pending.json"
-	taskSwitchResultFile  = "taskswitch.result.json"
+	taskSwitchFile       = "taskswitch.json"
+	taskSwitchTempFile   = "taskswitch.json.tmp"
+	taskSwitchPromptFile = "taskswitch_prompt.txt"
+	taskSwitchReplyFile  = "taskswitch_response.txt"
 )
 
 // DetectTaskSwitch sends a compact transcript to the summarization LLM and parses the response.
@@ -120,30 +102,31 @@ func (m *Manager) DetectTaskSwitch(ctx context.Context, sess *session.Session, e
 
 	result := parseDetectionResponse(resp.Content)
 
-	// Debug: write the parsed result as JSON.
-	resultJSON, _ := json.MarshalIndent(result, "", "  ")
-	_ = os.WriteFile(filepath.Join(sess.Folder, "taskswitch_result.json"), resultJSON, 0644)
-
 	return result, nil
 }
 
-// HasTaskSwitchState reports whether a pending or finished task-switch file exists.
+// HasTaskSwitchState reports whether a task-switch protocol file exists.
 func (m *Manager) HasTaskSwitchState(sessionFolder string) (bool, error) {
-	for _, name := range []string{taskSwitchPendingFile, taskSwitchResultFile} {
-		_, err := os.Stat(filepath.Join(sessionFolder, name))
-		if err == nil {
-			return true, nil
-		}
-		if err != nil && !os.IsNotExist(err) {
-			return false, fmt.Errorf("cannot stat %s: %w", name, err)
-		}
+	_, err := os.Stat(filepath.Join(sessionFolder, taskSwitchFile))
+	if err == nil {
+		return true, nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return false, fmt.Errorf("cannot stat %s: %w", taskSwitchFile, err)
 	}
 	return false, nil
 }
 
-// RemoveTaskSwitchState deletes any pending or result files for the current session.
+// RemoveTaskSwitchState deletes task-switch protocol and debug files for the current session.
 func (m *Manager) RemoveTaskSwitchState(sessionFolder string) error {
-	for _, name := range []string{taskSwitchPendingFile, taskSwitchResultFile} {
+	for _, name := range []string{
+		taskSwitchFile,
+		taskSwitchTempFile,
+		taskSwitchPromptFile,
+		taskSwitchReplyFile,
+		"taskswitch.pending.json",
+		"taskswitch.result.json",
+	} {
 		if err := os.Remove(filepath.Join(sessionFolder, name)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("cannot remove %s: %w", name, err)
 		}
@@ -151,131 +134,111 @@ func (m *Manager) RemoveTaskSwitchState(sessionFolder string) error {
 	return nil
 }
 
-// StartTaskSwitchJob creates one pending task-switch job and starts the async detector.
+// StartTaskSwitchJob creates the task-switch marker file and starts the async detector.
 func (m *Manager) StartTaskSwitchJob(parentCtx context.Context, sess *session.Session, snapshot []session.Message, existingSummaries string) error {
 	if m == nil || m.SummarizationProvider == nil || sess == nil {
-		return nil
-	}
-	hasState, err := m.HasTaskSwitchState(sess.Folder)
-	if err != nil {
-		return err
-	}
-	if hasState {
 		return nil
 	}
 	if parentCtx == nil {
 		parentCtx = context.Background()
 	}
-	jobID := fmt.Sprintf("%d", time.Now().UnixNano())
-	now := time.Now().UTC()
-	pending := TaskSwitchPending{
-		JobID:                jobID,
-		Status:               "running",
-		SnapshotUserCount:    countUserMessages(snapshot),
-		SnapshotMessageCount: len(snapshot),
-		StartedAt:            now.Format(time.RFC3339Nano),
-		DeadlineAt:           now.Add(taskSwitchTimeout).Format(time.RFC3339Nano),
+	markerPath := filepath.Join(sess.Folder, taskSwitchFile)
+	marker, err := os.OpenFile(markerPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		if os.IsExist(err) {
+			return nil
+		}
+		return fmt.Errorf("cannot create %s: %w", taskSwitchFile, err)
 	}
-	if err := writeTaskSwitchJSONAtomic(filepath.Join(sess.Folder, taskSwitchPendingFile), pending); err != nil {
-		return err
+	if err := marker.Close(); err != nil {
+		return fmt.Errorf("cannot close %s: %w", taskSwitchFile, err)
 	}
 	snapshotCopy := make([]session.Message, len(snapshot))
 	copy(snapshotCopy, snapshot)
-	go m.runTaskSwitchJob(parentCtx, sess.Folder, jobID, snapshotCopy, existingSummaries)
+	go m.runTaskSwitchJob(parentCtx, sess.Folder, snapshotCopy, existingSummaries)
 	return nil
 }
 
 // ConsumeTaskSwitchResult applies any finished task-switch result and clears task-switch state.
 //
-// WHAT:  Reads a finished detector result, validates it against the current session, and applies it.
+// WHAT:  Reads a finished detector result from taskswitch.json, validates it, and applies it.
 // WHY:   Only the main runtime is allowed to mutate session history.
-// RETURNS: result — consumed task-switch result or nil when no result file exists.
-func (m *Manager) ConsumeTaskSwitchResult(sess *session.Session) (*TaskSwitchResult, error) {
+// RETURNS: result — consumed task-switch result or nil when the worker is still pending or absent.
+func (m *Manager) ConsumeTaskSwitchResult(sess *session.Session) (*TaskSwitchFile, error) {
 	if m == nil || sess == nil {
 		return nil, nil
 	}
-	resultPath := filepath.Join(sess.Folder, taskSwitchResultFile)
-	if _, err := os.Stat(resultPath); err != nil {
+	resultPath := filepath.Join(sess.Folder, taskSwitchFile)
+	data, err := os.ReadFile(resultPath)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("cannot stat %s: %w", taskSwitchResultFile, err)
+		return nil, fmt.Errorf("cannot read %s: %w", taskSwitchFile, err)
 	}
-	pending, err := readTaskSwitchPending(sess.Folder)
+	if strings.TrimSpace(string(data)) == "" {
+		return nil, nil
+	}
+	result, err := readTaskSwitchFile(data)
 	if err != nil {
-		return nil, err
-	}
-	result, err := readTaskSwitchResult(sess.Folder)
-	if err != nil {
-		return nil, err
-	}
-	if pending.JobID == "" || result.JobID == "" || pending.JobID != result.JobID {
-		return nil, fmt.Errorf("task-switch job mismatch: pending=%q result=%q", pending.JobID, result.JobID)
-	}
-	if result.Status == "timeout" || !result.Changed {
-		if err := m.RemoveTaskSwitchState(sess.Folder); err != nil {
-			return nil, err
+		if removeErr := m.RemoveTaskSwitchProtocolFile(sess.Folder); removeErr != nil {
+			return nil, fmt.Errorf("invalid %s and cannot remove it: %w", taskSwitchFile, removeErr)
 		}
-		return &result, nil
+		return nil, fmt.Errorf("invalid %s removed: %w", taskSwitchFile, err)
+	}
+	if result.UserIndex <= 0 {
+		if removeErr := m.RemoveTaskSwitchProtocolFile(sess.Folder); removeErr != nil {
+			return nil, fmt.Errorf("invalid %s and cannot remove it: %w", taskSwitchFile, removeErr)
+		}
+		return nil, fmt.Errorf("invalid %s removed: user_index must be greater than 0", taskSwitchFile)
 	}
 	if strings.TrimSpace(result.Summary) == "" {
-		return nil, fmt.Errorf("task-switch result missing summary")
-	}
-	currentHash, err := userMessageHashAt(sess.Messages, result.UserIndex)
-	if err != nil {
-		return nil, err
-	}
-	if currentHash != result.SwitchUserHash {
-		return nil, fmt.Errorf("task-switch user hash mismatch at user %d", result.UserIndex)
+		if removeErr := m.RemoveTaskSwitchProtocolFile(sess.Folder); removeErr != nil {
+			return nil, fmt.Errorf("invalid %s and cannot remove it: %w", taskSwitchFile, removeErr)
+		}
+		return nil, fmt.Errorf("invalid %s removed: summary is empty", taskSwitchFile)
 	}
 	if err := m.CompactByTaskSwitch(sess, result.UserIndex, result.Summary); err != nil {
 		return nil, err
 	}
-	if err := m.RemoveTaskSwitchState(sess.Folder); err != nil {
+	if err := m.RemoveTaskSwitchProtocolFile(sess.Folder); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
-func (m *Manager) runTaskSwitchJob(parentCtx context.Context, sessionFolder string, jobID string, snapshot []session.Message, existingSummaries string) {
+// RemoveTaskSwitchProtocolFile removes only the protocol file(s), not debug artifacts.
+func (m *Manager) RemoveTaskSwitchProtocolFile(sessionFolder string) error {
+	for _, name := range []string{taskSwitchFile, taskSwitchTempFile} {
+		if err := os.Remove(filepath.Join(sessionFolder, name)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("cannot remove %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func (m *Manager) runTaskSwitchJob(parentCtx context.Context, sessionFolder string, snapshot []session.Message, existingSummaries string) {
 	ctx, cancel := context.WithTimeout(parentCtx, taskSwitchTimeout)
 	defer cancel()
-	result := TaskSwitchResult{
-		JobID:      jobID,
-		Status:     "done",
-		Changed:    false,
-		FinishedAt: time.Now().UTC().Format(time.RFC3339Nano),
-	}
 	snapSess := &session.Session{Messages: snapshot, Folder: sessionFolder}
 	detect, err := m.DetectTaskSwitch(ctx, snapSess, existingSummaries)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			result.Status = "timeout"
-			result.Error = fmt.Sprintf("task-switch detection timed out after %s", taskSwitchTimeout)
-		} else if ctx.Err() == context.Canceled {
-			return
-		} else {
-			result.Status = "error"
-			result.Error = err.Error()
-		}
-	} else if detect.Changed {
-		hash, hashErr := userMessageHashAt(snapshot, detect.Index)
-		if hashErr != nil {
-			result.Status = "error"
-			result.Error = hashErr.Error()
-		} else {
-			result.Changed = true
-			result.UserIndex = detect.Index
-			result.SwitchUserHash = hash
-			result.Summary = detect.Summary
-		}
-	}
-	result.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	pending, err := readTaskSwitchPending(sessionFolder)
-	if err != nil || pending.JobID != jobID {
+		_ = m.RemoveTaskSwitchProtocolFile(sessionFolder)
 		return
 	}
-	_ = writeTaskSwitchJSONAtomic(filepath.Join(sessionFolder, taskSwitchResultFile), result)
+	if ctx.Err() == context.Canceled {
+		_ = m.RemoveTaskSwitchProtocolFile(sessionFolder)
+		return
+	}
+	if !detect.Changed {
+		_ = m.RemoveTaskSwitchProtocolFile(sessionFolder)
+		return
+	}
+	if _, err := os.Stat(filepath.Join(sessionFolder, taskSwitchFile)); err != nil {
+		return
+	}
+	result := TaskSwitchFile{UserIndex: detect.Index, Summary: detect.Summary}
+	_ = writeTaskSwitchJSONAtomic(filepath.Join(sessionFolder, taskSwitchFile), result)
 }
 
 func writeTaskSwitchJSONAtomic(path string, value any) error {
@@ -293,48 +256,12 @@ func writeTaskSwitchJSONAtomic(path string, value any) error {
 	return nil
 }
 
-func readTaskSwitchPending(sessionFolder string) (TaskSwitchPending, error) {
-	var pending TaskSwitchPending
-	data, err := os.ReadFile(filepath.Join(sessionFolder, taskSwitchPendingFile))
-	if err != nil {
-		return pending, fmt.Errorf("cannot read %s: %w", taskSwitchPendingFile, err)
-	}
-	if err := json.Unmarshal(data, &pending); err != nil {
-		return pending, fmt.Errorf("cannot parse %s: %w", taskSwitchPendingFile, err)
-	}
-	return pending, nil
-}
-
-func readTaskSwitchResult(sessionFolder string) (TaskSwitchResult, error) {
-	var result TaskSwitchResult
-	data, err := os.ReadFile(filepath.Join(sessionFolder, taskSwitchResultFile))
-	if err != nil {
-		return result, fmt.Errorf("cannot read %s: %w", taskSwitchResultFile, err)
-	}
+func readTaskSwitchFile(data []byte) (TaskSwitchFile, error) {
+	var result TaskSwitchFile
 	if err := json.Unmarshal(data, &result); err != nil {
-		return result, fmt.Errorf("cannot parse %s: %w", taskSwitchResultFile, err)
+		return result, err
 	}
 	return result, nil
-}
-
-func countUserMessages(messages []session.Message) int {
-	count := 0
-	for _, msg := range messages {
-		if msg.Role == "user" {
-			count++
-		}
-	}
-	return count
-}
-
-func userMessageHashAt(messages []session.Message, userIndex int) (string, error) {
-	idx := userIndexToSessionIndex(messages, userIndex)
-	if idx < 0 {
-		return "", fmt.Errorf("task-switch user index out of range: %d", userIndex)
-	}
-	content, _ := messages[idx].Content.(string)
-	sum := sha256.Sum256([]byte(content))
-	return fmt.Sprintf("sha256:%x", sum[:]), nil
 }
 
 // buildDetectionTranscript creates a compact text transcript of session messages.

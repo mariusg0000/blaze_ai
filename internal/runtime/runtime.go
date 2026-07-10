@@ -176,6 +176,11 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 		WorkDir:     workDir,
 		OS:          os,
 	}
+	if agent.Compactor != nil {
+		if err := agent.Compactor.RemoveTaskSwitchState(sess.Folder); err != nil {
+			return nil, fmt.Errorf("cannot clear stale task-switch state: %w", err)
+		}
+	}
 
 	// Build resolver for skill tools: resolves names against current discovery.
 	skillResolver := func(name string) (string, error) {
@@ -278,6 +283,15 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 	}); err != nil {
 		return fmt.Errorf("cannot persist user message: %w", err)
 	}
+	if a.Compactor != nil {
+		consumed, err := a.Compactor.ConsumeTaskSwitchResult(a.Session)
+		if err != nil {
+			return fmt.Errorf("cannot consume task-switch result before new detection: %w", err)
+		}
+		if consumed != nil && a.Handler != nil {
+			a.Handler.OnSystem("Task switch detected: " + consumed.Summary)
+		}
+	}
 
 	// Snapshot the session for task-switch detection before the LLM loop adds messages.
 	// The detector runs in parallel with the main LLM call.
@@ -303,7 +317,7 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 			if err != nil {
 				return fmt.Errorf("cannot consume task-switch result: %w", err)
 			}
-			if consumed != nil && consumed.Changed && a.Handler != nil {
+			if consumed != nil && a.Handler != nil {
 				a.Handler.OnSystem("Task switch detected: " + consumed.Summary)
 			}
 		}
@@ -482,10 +496,12 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 	// Turn completed normally. Wait for task-switch detection and apply it if needed.
 	// No task switch result consumed during the loop — run normal token-based compaction.
 	if turnCompletedNormally && a.Compactor != nil {
-		if a.Compactor.ShouldCompact(lastUsage) {
-			if err := a.Compactor.RemoveTaskSwitchState(a.Session.Folder); err != nil {
-				return fmt.Errorf("cannot clear task-switch state before compaction: %w", err)
-			}
+		hasTaskSwitchState, err := a.Compactor.HasTaskSwitchState(a.Session.Folder)
+		if err != nil {
+			return fmt.Errorf("cannot inspect task-switch state before compaction: %w", err)
+		}
+		if hasTaskSwitchState {
+			return nil
 		}
 		if _, err := a.Compactor.Compact(a.Session, lastUsage); err != nil {
 			return fmt.Errorf("compaction failed: %w", err)
