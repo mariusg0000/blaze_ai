@@ -284,20 +284,11 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 	snapshot := make([]session.Message, len(a.Session.Messages))
 	copy(snapshot, a.Session.Messages)
 
-	// Start task-switch detection goroutine in parallel.
-	detectCh := make(chan compaction.DetectResult, 1)
 	detectionStarted := a.Compactor != nil && a.Compactor.SummarizationProvider != nil && a.Compactor.ShouldDetectTaskSwitch()
 	if detectionStarted {
-		go func() {
-			defer func() { recover() }()
-			// Build a temporary session with only the snapshot for detection.
-			snapSess := &session.Session{
-				Messages: snapshot,
-				Folder:   a.Session.Folder,
-			}
-			result, _ := a.Compactor.DetectTaskSwitch(snapSess, a.Compactor.LoadSummariesText(a.Session.Folder))
-			detectCh <- result
-		}()
+		if err := a.Compactor.StartTaskSwitchJob(ctx, a.Session, snapshot, a.Compactor.LoadSummariesText(a.Session.Folder)); err != nil {
+			return fmt.Errorf("cannot start task-switch job: %w", err)
+		}
 	}
 
 	var lastUsage *provider.Usage
@@ -306,6 +297,15 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 	for {
 		if err := a.sanitizeSession(); err != nil {
 			return err
+		}
+		if a.Compactor != nil {
+			consumed, err := a.Compactor.ConsumeTaskSwitchResult(a.Session)
+			if err != nil {
+				return fmt.Errorf("cannot consume task-switch result: %w", err)
+			}
+			if consumed != nil && consumed.Changed && a.Handler != nil {
+				a.Handler.OnSystem("Task switch detected: " + consumed.Summary)
+			}
 		}
 
 		// Build full prompt from disk + session history.
@@ -378,6 +378,11 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		}
 
 		if errors.Is(err, provider.ErrAborted) {
+			if a.Compactor != nil {
+				if removeErr := a.Compactor.RemoveTaskSwitchState(a.Session.Folder); removeErr != nil {
+					return fmt.Errorf("cannot clear task-switch state after abort: %w", removeErr)
+				}
+			}
 			if err := a.appendAbortedToolResults(resp.ToolCalls, 0); err != nil {
 				return err
 			}
@@ -475,21 +480,13 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 	}
 
 	// Turn completed normally. Wait for task-switch detection and apply it if needed.
-	if detectionStarted {
-		detection := <-detectCh
-		if detection.Changed && turnCompletedNormally {
-			if err := a.Compactor.CompactByTaskSwitch(a.Session, detection.Index, detection.Summary); err != nil {
-				return fmt.Errorf("task-switch compaction failed: %w", err)
-			}
-			if a.Handler != nil {
-				a.Handler.OnSystem("Task switch detected: " + detection.Summary)
-			}
-			return nil
-		}
-	}
-
-	// No task switch — run normal token-based compaction.
+	// No task switch result consumed during the loop — run normal token-based compaction.
 	if turnCompletedNormally && a.Compactor != nil {
+		if a.Compactor.ShouldCompact(lastUsage) {
+			if err := a.Compactor.RemoveTaskSwitchState(a.Session.Folder); err != nil {
+				return fmt.Errorf("cannot clear task-switch state before compaction: %w", err)
+			}
+		}
 		if _, err := a.Compactor.Compact(a.Session, lastUsage); err != nil {
 			return fmt.Errorf("compaction failed: %w", err)
 		}
@@ -715,6 +712,11 @@ func (a *Agent) NextMode() (*config.Mode, error) {
 
 // CloseSession marks the session as cleanly closed.
 func (a *Agent) CloseSession() error {
+	if a.Compactor != nil {
+		if err := a.Compactor.RemoveTaskSwitchState(a.Session.Folder); err != nil {
+			return fmt.Errorf("cannot clear task-switch state: %w", err)
+		}
+	}
 	return a.Session.Close()
 }
 
@@ -727,6 +729,9 @@ func (a *Agent) ResetConversation() error {
 	if a.Compactor != nil {
 		if err := a.Compactor.ClearSummaries(a.Session.Folder); err != nil {
 			return fmt.Errorf("cannot clear summaries: %w", err)
+		}
+		if err := a.Compactor.RemoveTaskSwitchState(a.Session.Folder); err != nil {
+			return fmt.Errorf("cannot clear task-switch state: %w", err)
 		}
 	}
 	if err := os.Remove(filepath.Join(a.Session.Folder, "prompt.json")); err != nil && !os.IsNotExist(err) {

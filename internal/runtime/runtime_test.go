@@ -22,13 +22,13 @@ import (
 
 // mockHandler captures handler calls for verification.
 type mockHandler struct {
-	content      []string
-	toolCalls    []string
-	toolResults  []string
-	usages       []int
-	systemMsgs   []string
-	onContent    func(string)
-	onToolCall   func(string, string)
+	content     []string
+	toolCalls   []string
+	toolResults []string
+	usages      []int
+	systemMsgs  []string
+	onContent   func(string)
+	onToolCall  func(string, string)
 }
 
 func (h *mockHandler) OnContent(delta string) {
@@ -1019,9 +1019,9 @@ func setupAgentWithSummarization(t *testing.T, defaultHandler, summaryHandler ht
 	return agent, h, defaultServer, summaryServer
 }
 
-// TestRunTurnTaskSwitchAppliesCleanup verifies that task-switch detection removes old messages
-// and creates a summary when the summarization model detects a task change.
-func TestRunTurnTaskSwitchAppliesCleanup(t *testing.T) {
+// TestRunTurnTaskSwitchLeavesPendingResultUntilNextBoundary verifies that a single-call turn
+// completes without waiting for task-switch detection and leaves the result for later consumption.
+func TestRunTurnTaskSwitchLeavesPendingResultUntilNextBoundary(t *testing.T) {
 	agent, h, defServer, sumServer := setupAgentWithSummarization(t,
 		// Default LLM handler: responds with text.
 		func(w http.ResponseWriter, r *http.Request) {
@@ -1036,6 +1036,7 @@ func TestRunTurnTaskSwitchAppliesCleanup(t *testing.T) {
 		// Summarization LLM handler: detects task switch at user message 3.
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/event-stream")
+			time.Sleep(50 * time.Millisecond)
 			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"{\"index\":3,\"summary\":\"User debugged auth flow and fixed token refresh bug.\"}"}}]}`)
 			fmt.Fprintln(w)
 			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`)
@@ -1054,11 +1055,11 @@ func TestRunTurnTaskSwitchAppliesCleanup(t *testing.T) {
 
 	// Seed session with old task messages.
 	oldMessages := []session.Message{
-		{Role: "user", Content: "let's debug auth"},        // index 0
-		{Role: "assistant", Content: "ok let's debug"},      //
-		{Role: "user", Content: "check the login flow"},     // index 1
+		{Role: "user", Content: "let's debug auth"},           // index 0
+		{Role: "assistant", Content: "ok let's debug"},        //
+		{Role: "user", Content: "check the login flow"},       // index 1
 		{Role: "assistant", Content: "login flow looks fine"}, //
-		{Role: "user", Content: "what about token refresh"}, // index 2 (last old task)
+		{Role: "user", Content: "what about token refresh"},   // index 2 (last old task)
 		{Role: "assistant", Content: "found bug in token refresh"},
 	}
 	if err := agent.Session.AppendAll(oldMessages); err != nil {
@@ -1066,10 +1067,13 @@ func TestRunTurnTaskSwitchAppliesCleanup(t *testing.T) {
 	}
 	originalLen := len(agent.Session.Messages)
 
-	// Run a turn with a new task message (user index 3 in the snapshot).
+	start := time.Now()
 	err := agent.RunTurn(context.Background(), "now add analytics endpoint")
 	if err != nil {
 		t.Fatalf("RunTurn() error: %v", err)
+	}
+	if time.Since(start) >= 50*time.Millisecond {
+		t.Fatalf("RunTurn() waited for task-switch detection")
 	}
 
 	// OnContent must still be called for the new response.
@@ -1077,24 +1081,26 @@ func TestRunTurnTaskSwitchAppliesCleanup(t *testing.T) {
 		t.Error("OnContent was not called")
 	}
 
-	// OnSystem must be called with the task-switch summary.
-	if len(h.systemMsgs) == 0 {
-		t.Error("OnSystem was not called after task switch")
-	} else if !strings.Contains(h.systemMsgs[0], "User debugged auth flow") {
-		t.Errorf("OnSystem message = %q, want summary content", h.systemMsgs[0])
+	if len(h.systemMsgs) != 0 {
+		t.Errorf("OnSystem called during single-call turn: %v", h.systemMsgs)
 	}
-
-	// Session should have fewer messages than original + new (old ones pruned).
-	// Expected: synthetic summary + last user msg + new assistant reply = 3 messages.
-	if len(agent.Session.Messages) >= originalLen+2 {
-		t.Errorf("session has %d messages, want fewer after task-switch cleanup (old were %d + new user + assistant)",
-			len(agent.Session.Messages), originalLen)
+	if len(agent.Session.Messages) != originalLen+2 {
+		t.Errorf("session has %d messages, want %d before later task-switch consumption", len(agent.Session.Messages), originalLen+2)
 	}
-
-	// First message should be a synthetic summary.
-	firstContent, ok := agent.Session.Messages[0].Content.(string)
-	if !ok || !strings.Contains(firstContent, syntheticPrefix) {
-		t.Error("first message is not a synthetic summary after task switch")
+	resultPath := filepath.Join(agent.Session.Folder, "taskswitch.result.json")
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for {
+		_, statErr := os.Stat(resultPath)
+		if statErr == nil {
+			break
+		}
+		if !os.IsNotExist(statErr) {
+			t.Fatalf("cannot stat task-switch result file: %v", statErr)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected task-switch result file to appear")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -1102,7 +1108,7 @@ func TestRunTurnTaskSwitchAppliesCleanup(t *testing.T) {
 const syntheticPrefix = "These are historical segment summaries"
 
 // TestRunTurnNoTaskSwitchKeepsMessages verifies that messages are NOT pruned when
-// the summarization model returns null.
+// the summarization model returns null and the result is consumed on the next boundary.
 func TestRunTurnNoTaskSwitchKeepsMessages(t *testing.T) {
 	agent, h, defServer, sumServer := setupAgentWithSummarization(t,
 		// Default LLM handler.
@@ -1151,8 +1157,11 @@ func TestRunTurnNoTaskSwitchKeepsMessages(t *testing.T) {
 
 	// Session should have original + 2 (new user + assistant).
 	if len(agent.Session.Messages) != originalLen+2 {
-		t.Errorf("session has %d messages, want %d (no task switch, kept all)", 
+		t.Errorf("session has %d messages, want %d (no task switch, kept all)",
 			len(agent.Session.Messages), originalLen+2)
+	}
+	if err := agent.RunTurn(context.Background(), "one more follow-up"); err != nil {
+		t.Fatalf("second RunTurn() error: %v", err)
 	}
 
 	// No synthetic summary should appear.
@@ -1165,6 +1174,68 @@ func TestRunTurnNoTaskSwitchKeepsMessages(t *testing.T) {
 	// OnSystem must NOT be called.
 	if len(h.systemMsgs) > 0 {
 		t.Errorf("OnSystem was called %d times when no task switch detected: %v", len(h.systemMsgs), h.systemMsgs)
+	}
+}
+
+// TestRunTurnTaskSwitchAppliesCleanupDuringToolLoop verifies that a finished task-switch result
+// is consumed before the follow-up LLM prompt in the same turn after tool execution.
+func TestRunTurnTaskSwitchAppliesCleanupDuringToolLoop(t *testing.T) {
+	callCount := 0
+	agent, h, defServer, sumServer := setupAgentWithSummarization(t,
+		func(w http.ResponseWriter, r *http.Request) {
+			callCount++
+			w.Header().Set("Content-Type", "text/event-stream")
+			if callCount == 1 {
+				fmt.Fprintln(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"shell","arguments":"{\"command\":\"echo hi\"}"}}]}}]}`)
+				fmt.Fprintln(w)
+				fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}`)
+				fmt.Fprintln(w)
+				fmt.Fprintln(w, "data: [DONE]")
+				fmt.Fprintln(w)
+				return
+			}
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"New task reply"}}]}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":20,"completion_tokens":3,"total_tokens":23}}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "data: [DONE]")
+			fmt.Fprintln(w)
+		},
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"{\"index\":3,\"summary\":\"User debugged auth flow and fixed token refresh bug.\"}"}}]}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "data: [DONE]")
+			fmt.Fprintln(w)
+		},
+	)
+	defer defServer.Close()
+	defer sumServer.Close()
+
+	oldMessages := []session.Message{
+		{Role: "user", Content: "let's debug auth"},
+		{Role: "assistant", Content: "ok let's debug"},
+		{Role: "user", Content: "check the login flow"},
+		{Role: "assistant", Content: "login flow looks fine"},
+		{Role: "user", Content: "what about token refresh"},
+		{Role: "assistant", Content: "found bug in token refresh"},
+	}
+	if err := agent.Session.AppendAll(oldMessages); err != nil {
+		t.Fatalf("AppendAll() failed: %v", err)
+	}
+
+	err := agent.RunTurn(context.Background(), "now add analytics endpoint")
+	if err != nil {
+		t.Fatalf("RunTurn() error: %v", err)
+	}
+	if len(h.systemMsgs) == 0 || !strings.Contains(h.systemMsgs[0], "User debugged auth flow") {
+		t.Fatalf("OnSystem message = %v, want task-switch summary", h.systemMsgs)
+	}
+	firstContent, ok := agent.Session.Messages[0].Content.(string)
+	if !ok || !strings.Contains(firstContent, syntheticPrefix) {
+		t.Fatal("first message is not a synthetic summary after in-turn task switch")
 	}
 }
 
@@ -1215,7 +1286,7 @@ func TestRunTurnTaskSwitchSkipsOnAbort(t *testing.T) {
 
 	// Session should still have old messages + new user + partial assistant + abort marker.
 	if len(agent.Session.Messages) <= originalLen+1 {
-		t.Errorf("session has %d messages, want more than %d (aborted, no cleanup)", 
+		t.Errorf("session has %d messages, want more than %d (aborted, no cleanup)",
 			len(agent.Session.Messages), originalLen+1)
 	}
 
