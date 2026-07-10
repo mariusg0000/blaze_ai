@@ -155,6 +155,20 @@ func TestValidateEmptyProviderField(t *testing.T) {
 	}
 }
 
+// TestValidateOAuthProvider verifies OAuth providers do not require an API key.
+func TestValidateOAuthProvider(t *testing.T) {
+	cfg := validConfig()
+	cfg.Providers = append(cfg.Providers, Provider{
+		Name:     "openai-chatgpt-oauth",
+		Endpoint: "https://chatgpt.com/backend-api/codex/responses",
+		AuthType: OAuthAuthType,
+		OAuth:    &OAuthCredential{RefreshToken: "refresh-token"},
+	})
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() OAuth provider error: %v", err)
+	}
+}
+
 // TestValidateFavoriteModelBadProvider verifies favorite model with missing provider fails.
 func TestValidateFavoriteModelBadProvider(t *testing.T) {
 	cfg := validConfig()

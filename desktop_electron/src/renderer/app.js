@@ -18,6 +18,7 @@
   const themeEl = document.getElementById('theme');
   const fontSizeEl = document.getElementById('fontSize');
   const pickDirEl = document.getElementById('pickDir');
+  const connectOpenAIEl = document.getElementById('connectOpenAI');
   const darkThemeLink = document.getElementById('hljs-dark');
   const lightThemeLink = document.getElementById('hljs-light');
   const statusTextEl = document.getElementById('statusText');
@@ -298,6 +299,32 @@
       path: selected.path,
       resume_last_clean: selected.resumeLastClean
     }));
+  }));
+
+  connectOpenAIEl.addEventListener('click', () => runAction(async () => {
+    connectOpenAIEl.disabled = true;
+    statusTextEl.textContent = 'Opening ChatGPT authorization...';
+    try {
+      const started = await callBackend('start_openai_chatgpt_oauth');
+      await window.blazeDesktop.openExternal(started.url);
+      statusTextEl.textContent = 'Complete ChatGPT authorization in the browser...';
+      const deadline = Date.now() + 5 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const result = await callBackend('poll_openai_chatgpt_oauth');
+        if (result.status === 'success') {
+          statusTextEl.textContent = 'ChatGPT connected. Select an OAuth model.';
+          await refresh();
+          return;
+        }
+        if (result.status === 'error') {
+          throw new Error(result.error || 'ChatGPT authorization failed');
+        }
+      }
+      throw new Error('ChatGPT authorization timed out');
+    } finally {
+      connectOpenAIEl.disabled = false;
+    }
   }));
 
   quitEl.addEventListener('click', () => runAction(async () => {

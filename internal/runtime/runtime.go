@@ -372,10 +372,11 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 
 		// Build assistant message.
 		assistantMsg := session.Message{
-			Role:             "assistant",
-			Content:          resp.Content,
-			Reasoning:        resp.Reasoning,
-			ReasoningPresent: resp.Reasoning != "",
+			Role:               "assistant",
+			Content:            resp.Content,
+			Reasoning:          resp.Reasoning,
+			ReasoningPresent:   resp.Reasoning != "",
+			ReasoningEncrypted: resp.ReasoningEncrypted,
 		}
 		if len(resp.ToolCalls) > 0 {
 			openaiCalls := make([]tools.OpenAIToolCall, 0, len(resp.ToolCalls))
@@ -514,7 +515,7 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 // shouldPersistAssistantMessage reports whether a partial or complete assistant message is worth saving.
 func shouldPersistAssistantMessage(msg session.Message) bool {
 	content, _ := msg.Content.(string)
-	return content != "" || msg.Reasoning != "" || msg.ToolCalls != nil
+	return content != "" || msg.Reasoning != "" || msg.ReasoningEncrypted != "" || msg.ToolCalls != nil
 }
 
 // injectDirective appends the mode directive to the most recent user message in a copy of the

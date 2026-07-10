@@ -1,7 +1,7 @@
 // main.js — Electron desktop shell bootstrap.
 // Starts the Go desktop backend, restores the last saved window geometry, and
 // bridges renderer requests to the backend through ipcMain.
-const { app, BrowserWindow, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -203,6 +203,15 @@ ipcMain.handle('desktop:cancel', async () => {
     return false;
   }
   await backend.call('cancel', {});
+  return true;
+});
+
+ipcMain.handle('desktop:open-external', async (_event, target) => {
+  const url = new URL(String(target || ''));
+  if (url.protocol !== 'https:' || url.hostname !== 'auth.openai.com') {
+    throw new Error('external URL is not an approved OpenAI authorization URL');
+  }
+  await shell.openExternal(url.toString());
   return true;
 });
 

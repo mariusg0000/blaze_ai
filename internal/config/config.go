@@ -39,16 +39,36 @@ var ErrModeModelInvalid = errors.New("mode model invalid")
 // ErrLastModeNotFound is returned when last_mode references a mode that does not exist.
 var ErrLastModeNotFound = errors.New("last_mode references a non-existent mode")
 
-// Provider defines a single OpenAI-compatible endpoint.
+// Provider defines a single OpenAI-compatible or OAuth-backed endpoint.
 //
 // WHAT:  Represents one API provider with credentials.
-// WHY:   The runtime needs endpoint and key to make LLM calls.
-// PARAMS: Name — unique provider identifier; Endpoint — base API URL; APIKey — secret key.
+// WHY:   The runtime needs endpoint and credentials to make LLM calls.
+// PARAMS: Name — unique provider identifier; Endpoint — base API URL; APIKey — API secret;
+// AuthType/OAuth — optional refreshable OAuth credential for providers such as ChatGPT Codex.
 type Provider struct {
-	Name     string `json:"name"`
-	Endpoint string `json:"endpoint"`
-	APIKey   string `json:"api_key"`
+	Name     string           `json:"name"`
+	Endpoint string           `json:"endpoint"`
+	APIKey   string           `json:"api_key,omitempty"`
+	AuthType string           `json:"auth_type,omitempty"`
+	OAuth    *OAuthCredential `json:"oauth,omitempty"`
 }
+
+// OAuthCredential stores the refreshable credential used by an OAuth provider.
+//
+// WHAT:  Holds OAuth access and refresh tokens plus their account metadata.
+// WHY:   ChatGPT OAuth providers do not use an API key and need refresh state across restarts.
+// HOW:   The access token is refreshed from the refresh token when expired; config files remain mode 0600.
+// PARAMS: AccessToken — short-lived bearer token; RefreshToken — long-lived refresh token;
+// ExpiresAt — Unix time in milliseconds; AccountID — ChatGPT account identifier.
+// RETURNS: N/A.
+type OAuthCredential struct {
+	AccessToken  string `json:"access_token,omitempty"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresAt    int64  `json:"expires_at,omitempty"`
+	AccountID    string `json:"account_id,omitempty"`
+}
+
+const OAuthAuthType = "oauth"
 
 // Roles maps model roles to provider/model_name identifiers.
 //
@@ -121,15 +141,15 @@ type HelperSetup struct {
 //	HelperSetup — UX preferences for optional host helper installation prompts;
 //	ReasoningMaxHeight — max reasoning lines displayed (0 = unlimited).
 type Config struct {
-	Providers      []Provider     `json:"providers"`
-	FavoriteModels []string       `json:"favorite_models"`
-	Roles          Roles          `json:"roles"`
-	Compaction     Compaction     `json:"compaction"`
-	StripReasoning StripReasoning `json:"stripReasoning"`
-	LastModel      string         `json:"last_model,omitempty"`
-	HelperSetup    HelperSetup    `json:"helperSetup,omitempty"`
-	ShowReasoning      bool `json:"showReasoning"`
-	ReasoningMaxHeight int  `json:"reasoning_max_height"`
+	Providers          []Provider     `json:"providers"`
+	FavoriteModels     []string       `json:"favorite_models"`
+	Roles              Roles          `json:"roles"`
+	Compaction         Compaction     `json:"compaction"`
+	StripReasoning     StripReasoning `json:"stripReasoning"`
+	LastModel          string         `json:"last_model,omitempty"`
+	HelperSetup        HelperSetup    `json:"helperSetup,omitempty"`
+	ShowReasoning      bool           `json:"showReasoning"`
+	ReasoningMaxHeight int            `json:"reasoning_max_height"`
 }
 
 // DefaultCompaction returns the pre-filled compaction thresholds from spec 05.
@@ -169,11 +189,11 @@ func DefaultStripReasoning() StripReasoning {
 // RETURNS: Config — defaults populated, providers/models/roles empty.
 func Default() *Config {
 	return &Config{
-		Providers:      []Provider{},
-		FavoriteModels: []string{},
-		Roles:          Roles{},
-		Compaction:     DefaultCompaction(),
-		StripReasoning: DefaultStripReasoning(),
+		Providers:          []Provider{},
+		FavoriteModels:     []string{},
+		Roles:              Roles{},
+		Compaction:         DefaultCompaction(),
+		StripReasoning:     DefaultStripReasoning(),
 		ShowReasoning:      false,
 		ReasoningMaxHeight: 150,
 		HelperSetup: HelperSetup{
@@ -414,13 +434,19 @@ func validateProviders(providers []Provider) error {
 		if p.Endpoint == "" {
 			return fmt.Errorf("provider %q: endpoint is empty", p.Name)
 		}
-		if p.APIKey == "" {
-			return fmt.Errorf("provider %q: api_key is empty", p.Name)
-		}
 		if seen[p.Name] {
 			return fmt.Errorf("%w: %s", ErrDuplicateProvider, p.Name)
 		}
 		seen[p.Name] = true
+		if p.AuthType == OAuthAuthType {
+			if p.OAuth == nil || strings.TrimSpace(p.OAuth.RefreshToken) == "" {
+				return fmt.Errorf("provider %q: oauth credentials are incomplete", p.Name)
+			}
+			continue
+		}
+		if p.APIKey == "" {
+			return fmt.Errorf("provider %q: api_key is empty", p.Name)
+		}
 	}
 	return nil
 }

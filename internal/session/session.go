@@ -37,23 +37,26 @@ const sessionJSONName = "session.json"
 // OpenAI-compatible fields and legacy reasoning read support.
 // Tool calls and tool results are preserved as-is for session replay.
 // Reasoning is stored intact on disk as reasoning_content and stripped only from
-// the LLM payload.
+// the LLM payload. Responses API encrypted reasoning is preserved separately for
+// providers that require it when continuing a tool loop.
 //
 // WHAT:  One message in the conversation history.
 // WHY:   session.json stores the complete message array for prompt rebuilding and resume.
 // PARAMS: Role — sender role; Content — message text; Reasoning — reasoning text serialized as reasoning_content;
 //
 //	ReasoningPresent — forces reasoning_content to remain present even when stripped to an empty string;
+//	ReasoningEncrypted — provider-owned encrypted reasoning continuation data;
 //	ToolCalls — optional tool call array; ToolCallID — optional tool result reference ID;
 //	Name — optional tool name for results.
 type Message struct {
-	Role             string      `json:"-"`
-	Content          interface{} `json:"-"`
-	Reasoning        string      `json:"-"`
-	ReasoningPresent bool        `json:"-"`
-	ToolCalls        interface{} `json:"-"`
-	ToolCallID       string      `json:"-"`
-	Name             string      `json:"-"`
+	Role               string      `json:"-"`
+	Content            interface{} `json:"-"`
+	Reasoning          string      `json:"-"`
+	ReasoningPresent   bool        `json:"-"`
+	ReasoningEncrypted string      `json:"-"`
+	ToolCalls          interface{} `json:"-"`
+	ToolCallID         string      `json:"-"`
+	Name               string      `json:"-"`
 }
 
 // MarshalJSON writes the current message using reasoning_content while preserving
@@ -71,20 +74,22 @@ type Message struct {
 // RETURNS: []byte — encoded JSON object; error if encoding fails.
 func (m Message) MarshalJSON() ([]byte, error) {
 	type jsonMessage struct {
-		Role             string      `json:"role"`
-		Content          interface{} `json:"content,omitempty"`
-		ReasoningContent *string     `json:"reasoning_content,omitempty"`
-		ToolCalls        interface{} `json:"tool_calls,omitempty"`
-		ToolCallID       string      `json:"tool_call_id,omitempty"`
-		Name             string      `json:"name,omitempty"`
+		Role               string      `json:"role"`
+		Content            interface{} `json:"content,omitempty"`
+		ReasoningContent   *string     `json:"reasoning_content,omitempty"`
+		ReasoningEncrypted string      `json:"reasoning_encrypted_content,omitempty"`
+		ToolCalls          interface{} `json:"tool_calls,omitempty"`
+		ToolCallID         string      `json:"tool_call_id,omitempty"`
+		Name               string      `json:"name,omitempty"`
 	}
 
 	payload := jsonMessage{
-		Role:       m.Role,
-		Content:    m.Content,
-		ToolCalls:  m.ToolCalls,
-		ToolCallID: m.ToolCallID,
-		Name:       m.Name,
+		Role:               m.Role,
+		Content:            m.Content,
+		ReasoningEncrypted: m.ReasoningEncrypted,
+		ToolCalls:          m.ToolCalls,
+		ToolCallID:         m.ToolCallID,
+		Name:               m.Name,
 	}
 	if m.ReasoningPresent || m.Reasoning != "" {
 		reasoning := m.Reasoning
@@ -102,13 +107,14 @@ func (m Message) MarshalJSON() ([]byte, error) {
 // RETURNS: error if decoding fails.
 func (m *Message) UnmarshalJSON(data []byte) error {
 	type jsonMessage struct {
-		Role             string      `json:"role"`
-		Content          interface{} `json:"content,omitempty"`
-		ReasoningContent *string     `json:"reasoning_content"`
-		LegacyReasoning  *string     `json:"reasoning"`
-		ToolCalls        interface{} `json:"tool_calls,omitempty"`
-		ToolCallID       string      `json:"tool_call_id,omitempty"`
-		Name             string      `json:"name,omitempty"`
+		Role               string      `json:"role"`
+		Content            interface{} `json:"content,omitempty"`
+		ReasoningContent   *string     `json:"reasoning_content"`
+		LegacyReasoning    *string     `json:"reasoning"`
+		ReasoningEncrypted string      `json:"reasoning_encrypted_content,omitempty"`
+		ToolCalls          interface{} `json:"tool_calls,omitempty"`
+		ToolCallID         string      `json:"tool_call_id,omitempty"`
+		Name               string      `json:"name,omitempty"`
 	}
 
 	var payload jsonMessage
@@ -117,11 +123,12 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 	}
 
 	*m = Message{
-		Role:       payload.Role,
-		Content:    payload.Content,
-		ToolCalls:  payload.ToolCalls,
-		ToolCallID: payload.ToolCallID,
-		Name:       payload.Name,
+		Role:               payload.Role,
+		Content:            payload.Content,
+		ToolCalls:          payload.ToolCalls,
+		ToolCallID:         payload.ToolCallID,
+		Name:               payload.Name,
+		ReasoningEncrypted: payload.ReasoningEncrypted,
 	}
 	switch {
 	case payload.ReasoningContent != nil:

@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"blazeai/internal/config"
@@ -50,10 +51,11 @@ type Usage struct {
 // WHY:   The runtime needs the full assistant message, tool calls, and usage after streaming ends.
 // PARAMS: Content — accumulated text; Reasoning — accumulated reasoning text; ToolCalls — parsed tool calls; Usage — token counts.
 type Response struct {
-	Content   string
-	Reasoning string
-	ToolCalls []tools.ToolCall
-	Usage     *Usage
+	Content            string
+	Reasoning          string
+	ReasoningEncrypted string
+	ToolCalls          []tools.ToolCall
+	Usage              *Usage
 }
 
 // StreamPhase identifies the current provider streaming phase for UI feedback.
@@ -75,10 +77,14 @@ const (
 // WHY:   The runtime uses one client per provider to send chat completion requests.
 // PARAMS: Endpoint — base API URL; APIKey — secret key; Model — bare model name; HTTP — HTTP client.
 type Client struct {
-	Endpoint string
-	APIKey   string
-	Model    string
-	HTTP     *http.Client
+	Endpoint   string
+	APIKey     string
+	Model      string
+	AuthType   string
+	OAuth      *config.OAuthCredential
+	OAuthStore func(config.OAuthCredential) error
+	HTTP       *http.Client
+	oauthMu    sync.Mutex
 }
 
 // NewClient creates a Client from a config provider and a model identifier.
@@ -93,12 +99,26 @@ func NewClient(cfg *config.Config, modelID string) (*Client, error) {
 	if p == nil {
 		return nil, fmt.Errorf("provider not found: %s", providerName)
 	}
-	return &Client{
+	client := &Client{
 		Endpoint: p.Endpoint,
 		APIKey:   p.APIKey,
 		Model:    modelName,
+		AuthType: p.AuthType,
 		HTTP:     newHTTPClient(),
-	}, nil
+	}
+	if p.OAuth != nil {
+		credential := *p.OAuth
+		client.OAuth = &credential
+		client.OAuthStore = func(updated config.OAuthCredential) error {
+			current := cfg.ProviderByName(providerName)
+			if current == nil {
+				return fmt.Errorf("provider not found while saving OAuth credential: %s", providerName)
+			}
+			current.OAuth = &updated
+			return cfg.Save()
+		}
+	}
+	return client, nil
 }
 
 // NewClientRaw creates a Client directly from endpoint and API key without config.
@@ -154,6 +174,15 @@ type modelsResponse struct {
 // HOW:   GET {endpoint}/models with Authorization header, parse JSON response.
 // RETURNS: []string — sorted list of model IDs; error if the request or parse fails.
 func (c *Client) ListModels() ([]string, error) {
+	if c.AuthType == config.OAuthAuthType {
+		models := ChatGPTOAuthModels()
+		result := make([]string, 0, len(models))
+		for _, modelID := range models {
+			_, modelName := config.SplitModelID(modelID)
+			result = append(result, modelName)
+		}
+		return result, nil
+	}
 	url := strings.TrimRight(c.Endpoint, "/") + "/models"
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -270,6 +299,9 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, toolDef
 // StreamWithPhase sends a chat completion request with streaming and reports high-level
 // provider phases for transports that want richer waiting indicators.
 func (c *Client) StreamWithPhase(ctx context.Context, messages []session.Message, toolDefs []tools.OpenAITool, onContent func(string), onReasoning func(string), onPhase func(StreamPhase)) (*Response, error) {
+	if c.AuthType == config.OAuthAuthType {
+		return c.streamChatGPT(ctx, messages, toolDefs, onContent, onReasoning, onPhase)
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -316,6 +348,35 @@ func (c *Client) StreamWithPhase(ctx context.Context, messages []session.Message
 	}
 
 	return parseSSEStream(ctx, resp.Body, onContent, onReasoning, onPhase)
+}
+
+// oauthAccessToken returns a valid ChatGPT access token, refreshing and persisting it when needed.
+//
+// WHAT:  Resolves the bearer token used by the private ChatGPT Codex endpoint.
+// WHY:   Access tokens expire while refresh tokens are intended to persist.
+// HOW:   Serializes refreshes so concurrent requests do not rotate the credential repeatedly.
+// PARAMS: ctx — request cancellation context.
+// RETURNS: string — valid access token; error if refresh fails.
+func (c *Client) oauthAccessToken(ctx context.Context) (string, error) {
+	c.oauthMu.Lock()
+	defer c.oauthMu.Unlock()
+	if c.OAuth == nil || c.OAuth.RefreshToken == "" {
+		return "", fmt.Errorf("ChatGPT OAuth is not connected")
+	}
+	if c.OAuth.AccessToken != "" && c.OAuth.ExpiresAt > time.Now().Add(30*time.Second).UnixMilli() {
+		return c.OAuth.AccessToken, nil
+	}
+	updated, err := refreshChatGPTCredential(ctx, *c.OAuth)
+	if err != nil {
+		return "", err
+	}
+	*c.OAuth = updated
+	if c.OAuthStore != nil {
+		if err := c.OAuthStore(updated); err != nil {
+			return "", fmt.Errorf("cannot persist refreshed ChatGPT credential: %w", err)
+		}
+	}
+	return c.OAuth.AccessToken, nil
 }
 
 // parseSSEStream reads an SSE stream, parses JSON chunks, and accumulates the response.
