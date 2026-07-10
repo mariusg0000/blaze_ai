@@ -1,6 +1,6 @@
 // session.go — file-based session persistence.
 // Each session is a folder under app_home/sessions/ with a random name containing session.json.
-// session.json holds the complete message array exactly as sent to the LLM and a closed_cleanly flag.
+// session.json holds the complete message array in BlazeAI's persisted wire shape and a closed_cleanly flag.
 // New sessions start by default; -c resumes the last cleanly closed session.
 // Layer: session storage. Dependencies: internal/platform (app home path resolution).
 package session
@@ -33,24 +33,105 @@ var ErrSessionNotFound = errors.New("session not found")
 // sessionJSONName is the filename for the session data inside each session folder.
 const sessionJSONName = "session.json"
 
-// Message represents a single message in the conversation, exactly as sent to the LLM.
-// The structure follows the OpenAI chat message format with role and content.
+// Message represents a single message in the conversation, serialized with
+// OpenAI-compatible fields and legacy reasoning read support.
 // Tool calls and tool results are preserved as-is for session replay.
-// Reasoning is stored intact on disk and stripped only from the LLM payload.
+// Reasoning is stored intact on disk as reasoning_content and stripped only from
+// the LLM payload.
 //
 // WHAT:  One message in the conversation history.
 // WHY:   session.json stores the complete message array for prompt rebuilding and resume.
-// PARAMS: Role — sender role; Content — message text; Reasoning — reasoning text (kept intact on disk);
+// PARAMS: Role — sender role; Content — message text; Reasoning — reasoning text serialized as reasoning_content;
 //
+//	ReasoningPresent — forces reasoning_content to remain present even when stripped to an empty string;
 //	ToolCalls — optional tool call array; ToolCallID — optional tool result reference ID;
 //	Name — optional tool name for results.
 type Message struct {
-	Role       string      `json:"role"`
-	Content    interface{} `json:"content,omitempty"`
-	Reasoning  string      `json:"reasoning,omitempty"`
-	ToolCalls  interface{} `json:"tool_calls,omitempty"`
-	ToolCallID string      `json:"tool_call_id,omitempty"`
-	Name       string      `json:"name,omitempty"`
+	Role             string      `json:"-"`
+	Content          interface{} `json:"-"`
+	Reasoning        string      `json:"-"`
+	ReasoningPresent bool        `json:"-"`
+	ToolCalls        interface{} `json:"-"`
+	ToolCallID       string      `json:"-"`
+	Name             string      `json:"-"`
+}
+
+// MarshalJSON writes the current message using reasoning_content while preserving
+// stripped reasoning blocks as an explicit empty string.
+//
+// WHAT:  Serializes Message to the on-wire and on-disk JSON shape.
+// WHY:   Providers expect reasoning_content, and stripped history must keep the
+//
+//	reasoning block present with an empty string instead of dropping the field.
+//
+// HOW:   Builds a small JSON view and includes reasoning_content when the message
+//
+//	had reasoning originally or currently has non-empty reasoning text.
+//
+// RETURNS: []byte — encoded JSON object; error if encoding fails.
+func (m Message) MarshalJSON() ([]byte, error) {
+	type jsonMessage struct {
+		Role             string      `json:"role"`
+		Content          interface{} `json:"content,omitempty"`
+		ReasoningContent *string     `json:"reasoning_content,omitempty"`
+		ToolCalls        interface{} `json:"tool_calls,omitempty"`
+		ToolCallID       string      `json:"tool_call_id,omitempty"`
+		Name             string      `json:"name,omitempty"`
+	}
+
+	payload := jsonMessage{
+		Role:       m.Role,
+		Content:    m.Content,
+		ToolCalls:  m.ToolCalls,
+		ToolCallID: m.ToolCallID,
+		Name:       m.Name,
+	}
+	if m.ReasoningPresent || m.Reasoning != "" {
+		reasoning := m.Reasoning
+		payload.ReasoningContent = &reasoning
+	}
+	return json.Marshal(payload)
+}
+
+// UnmarshalJSON reads both reasoning_content and the legacy reasoning field.
+//
+// WHAT:  Decodes Message from session.json and provider-debug payloads.
+// WHY:   Existing sessions may still contain the old reasoning field on disk.
+// HOW:   Prefers reasoning_content when present, then falls back to reasoning.
+// PARAMS: data — raw JSON object bytes.
+// RETURNS: error if decoding fails.
+func (m *Message) UnmarshalJSON(data []byte) error {
+	type jsonMessage struct {
+		Role             string      `json:"role"`
+		Content          interface{} `json:"content,omitempty"`
+		ReasoningContent *string     `json:"reasoning_content"`
+		LegacyReasoning  *string     `json:"reasoning"`
+		ToolCalls        interface{} `json:"tool_calls,omitempty"`
+		ToolCallID       string      `json:"tool_call_id,omitempty"`
+		Name             string      `json:"name,omitempty"`
+	}
+
+	var payload jsonMessage
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return err
+	}
+
+	*m = Message{
+		Role:       payload.Role,
+		Content:    payload.Content,
+		ToolCalls:  payload.ToolCalls,
+		ToolCallID: payload.ToolCallID,
+		Name:       payload.Name,
+	}
+	switch {
+	case payload.ReasoningContent != nil:
+		m.Reasoning = *payload.ReasoningContent
+		m.ReasoningPresent = true
+	case payload.LegacyReasoning != nil:
+		m.Reasoning = *payload.LegacyReasoning
+		m.ReasoningPresent = true
+	}
+	return nil
 }
 
 // Session holds the persisted state of a single conversation session.
@@ -135,8 +216,10 @@ func Load(folder string) (*Session, error) {
 //
 // WHAT:  Persists the session state to disk with raw characters preserved.
 // WHY:   Default json.Marshal escapes <, >, & to Unicode sequences, making XML
+//
 //	injected prompt content unreadable in the on-disk JSON. The LLM receives
 //	the correct data regardless (unescape on read), but on-disk readability matters.
+//
 // RETURNS: error if encoding or writing fails.
 func (s *Session) save() error {
 	path := filepath.Join(s.Folder, sessionJSONName)

@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"blazeai/internal/config"
 	"blazeai/internal/helpers"
@@ -359,6 +360,73 @@ func TestOnToolResultGenericError(t *testing.T) {
 	}
 	if !strings.Contains(output, "unknown tool") {
 		t.Errorf("output missing error content: %q", output)
+	}
+}
+
+// TestFormatTurnErrorProviderIdleTimeout verifies hung provider streams show a concise message.
+func TestFormatTurnErrorProviderIdleTimeout(t *testing.T) {
+	err := errors.New("provider stream idle timeout after 3m0s with no events")
+	got := formatTurnError(err)
+	want := "error: provider stream stalled for 3m with no events"
+	if got != want {
+		t.Fatalf("formatTurnError() = %q, want %q", got, want)
+	}
+}
+
+// TestFormatTurnErrorProviderHeaderTimeout verifies startup header stalls show a concise message.
+func TestFormatTurnErrorProviderHeaderTimeout(t *testing.T) {
+	err := errors.New("HTTP request failed: Post \"https://example.com/chat/completions\": net/http: timeout awaiting response headers")
+	got := formatTurnError(err)
+	want := "error: provider timed out before starting the response"
+	if got != want {
+		t.Fatalf("formatTurnError() = %q, want %q", got, want)
+	}
+}
+
+// TestSpinnerStopsBeforeContent verifies the spinner clears before assistant text starts.
+func TestSpinnerStopsBeforeContent(t *testing.T) {
+	oldInterval := spinnerFrameInterval
+	spinnerFrameInterval = 5 * time.Millisecond
+	defer func() {
+		spinnerFrameInterval = oldInterval
+	}()
+
+	c, out := newConsole(mockAgent(t))
+	c.startSpinner("thinking...")
+	time.Sleep(20 * time.Millisecond)
+	c.OnContent("hello")
+	c.stopSpinner()
+
+	plain := stripANSICodes(strings.ReplaceAll(out.String(), "\r", ""))
+	if !strings.Contains(plain, "thinking...") {
+		t.Fatalf("output missing spinner text: %q", plain)
+	}
+	if !strings.Contains(plain, "[BLAZE]\nhello") {
+		t.Fatalf("output missing assistant content after spinner: %q", plain)
+	}
+}
+
+// TestSpinnerStopsBeforeToolCall verifies the spinner clears before tool activity lines.
+func TestSpinnerStopsBeforeToolCall(t *testing.T) {
+	oldInterval := spinnerFrameInterval
+	spinnerFrameInterval = 5 * time.Millisecond
+	defer func() {
+		spinnerFrameInterval = oldInterval
+	}()
+
+	c, out := newConsole(mockAgent(t))
+	c.startSpinner("thinking...")
+	time.Sleep(20 * time.Millisecond)
+	c.OnToolCall("shell", "ls")
+	c.OnToolResult("shell", "ok")
+	c.stopSpinner()
+
+	plain := stripANSICodes(strings.ReplaceAll(out.String(), "\r", ""))
+	if !strings.Contains(plain, "thinking...") {
+		t.Fatalf("output missing spinner text: %q", plain)
+	}
+	if !strings.Contains(plain, "💻 ls … ✔️") {
+		t.Fatalf("output missing tool line after spinner: %q", plain)
 	}
 }
 

@@ -15,7 +15,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"blazeai/internal/config"
 	"blazeai/internal/helpers"
@@ -29,14 +31,14 @@ const (
 	colorReset       = "\033[0m"
 	colorBold        = "\033[1m"
 	colorItalic      = "\033[3m"
-	colorRed         = "\033[1;31m"  // bold red
-	colorGreen       = "\033[1;32m"  // bold green
-	colorBrightGreen = "\033[1;32m"  // bold green (same as colorGreen, for checkmark)
-	colorLightGray   = "\033[37m"    // standard white (subtle separators)
-	colorBlue        = "\033[1;34m"  // bold blue
-	colorPurple      = "\033[1;35m"  // bold magenta
-	colorOrange      = "\033[1;33m"  // bold yellow
-	colorBrightBlue  = "\033[1;34m"  // bold blue (same as colorBlue, for borders)
+	colorRed         = "\033[1;31m"     // bold red
+	colorGreen       = "\033[1;32m"     // bold green
+	colorBrightGreen = "\033[1;32m"     // bold green (same as colorGreen, for checkmark)
+	colorLightGray   = "\033[37m"       // standard white (subtle separators)
+	colorBlue        = "\033[1;34m"     // bold blue
+	colorPurple      = "\033[1;35m"     // bold magenta
+	colorOrange      = "\033[1;33m"     // bold yellow
+	colorBrightBlue  = "\033[1;34m"     // bold blue (same as colorBlue, for borders)
 	colorReasoning   = "\033[38;5;244m" // medium gray
 	colorCtx         = "\033[1;96m"
 )
@@ -57,6 +59,10 @@ var slashCommands = []slashCmd{
 	{"/exit", "close session cleanly"},
 }
 
+var spinnerFrameInterval = 120 * time.Millisecond
+
+var spinnerFrames = []string{"|", "/", "-", "\\"}
+
 // Console is the console transport implementing runtime.Handler.
 //
 // WHAT:  The terminal REPL transport that renders LLM output and handles user input.
@@ -68,6 +74,8 @@ type Console struct {
 	Agent  *runtime.Agent
 	Reader *Reader
 
+	outMu sync.Mutex
+
 	contentStarted   bool
 	contentBuffer    string
 	inCodeBlock      bool
@@ -78,6 +86,13 @@ type Console struct {
 	lastToolArgs     string
 	reasoningStarted bool
 	reasoningLines   int
+	spinnerActive    bool
+	spinnerVisible   bool
+	spinnerFrame     int
+	spinnerWidth     int
+	spinnerLabel     string
+	spinnerStop      chan struct{}
+	spinnerDone      chan struct{}
 
 	switchLineActive bool // true when a mode/model status line is present and can be overwritten
 	switchLineWidth  int  // visible width of the current status line for reliable space-padding
@@ -95,6 +110,107 @@ func NewConsole(agent *runtime.Agent) *Console {
 		Agent:    agent,
 		Reader:   NewReader(os.Stdin, true),
 		lineOpen: false,
+	}
+}
+
+// lockOutput stops the spinner and returns a held output mutex for direct console writes.
+//
+// WHAT:  Serializes all console output that can overlap with the spinner goroutine.
+// WHY:   Spinner animation and runtime callbacks can otherwise interleave bytes on the TTY.
+// HOW:   Takes the output mutex first, then clears any visible spinner line before writes.
+func (c *Console) lockOutput() {
+	c.outMu.Lock()
+	c.stopSpinnerLocked()
+}
+
+// unlockOutput releases the console output mutex.
+func (c *Console) unlockOutput() {
+	c.outMu.Unlock()
+}
+
+// startSpinner begins animating a single status line until the next visible output arrives.
+//
+// WHAT:  Starts the console spinner for an active assistant turn.
+// WHY:   Provider calls can stay silent for a while before the first chunk or next tool step.
+// HOW:   Runs a ticker goroutine that rewrites one padded line in place under the output mutex.
+// PARAMS: label — short status text such as "thinking...".
+func (c *Console) startSpinner(label string) {
+	c.outMu.Lock()
+	defer c.outMu.Unlock()
+	c.startSpinnerLocked(label)
+}
+
+func (c *Console) startSpinnerLocked(label string) {
+	if c.spinnerActive {
+		return
+	}
+	c.spinnerActive = true
+	c.spinnerVisible = false
+	c.spinnerFrame = 0
+	c.spinnerWidth = 0
+	c.spinnerLabel = label
+	c.spinnerStop = make(chan struct{})
+	c.spinnerDone = make(chan struct{})
+	go c.runSpinner(c.spinnerStop, c.spinnerDone)
+}
+
+// stopSpinner clears the spinner line and waits for the animation goroutine to exit.
+func (c *Console) stopSpinner() {
+	c.outMu.Lock()
+	defer c.outMu.Unlock()
+	c.stopSpinnerLocked()
+}
+
+func (c *Console) stopSpinnerLocked() {
+	if !c.spinnerActive {
+		return
+	}
+	stop := c.spinnerStop
+	done := c.spinnerDone
+	c.spinnerActive = false
+	c.spinnerStop = nil
+	c.spinnerDone = nil
+	if stop != nil {
+		close(stop)
+	}
+	if c.spinnerVisible {
+		fmt.Fprintf(c.Out, "\r%s\r", strings.Repeat(" ", c.spinnerWidth))
+		c.spinnerVisible = false
+		c.spinnerWidth = 0
+	}
+	if done != nil {
+		c.outMu.Unlock()
+		<-done
+		c.outMu.Lock()
+	}
+}
+
+func (c *Console) runSpinner(stop <-chan struct{}, done chan<- struct{}) {
+	ticker := time.NewTicker(spinnerFrameInterval)
+	defer ticker.Stop()
+	defer close(done)
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			c.outMu.Lock()
+			if !c.spinnerActive {
+				c.outMu.Unlock()
+				return
+			}
+			frame := spinnerFrames[c.spinnerFrame%len(spinnerFrames)]
+			c.spinnerFrame++
+			line := frame + " " + c.spinnerLabel
+			width := len(line)
+			if c.spinnerWidth > width {
+				width = c.spinnerWidth
+			}
+			fmt.Fprintf(c.Out, "\r%-*s\r%s", width, "", line)
+			c.spinnerVisible = true
+			c.spinnerWidth = len(line)
+			c.outMu.Unlock()
+		}
 	}
 }
 
@@ -337,6 +453,8 @@ func formatSkillName(name string) string {
 // WHAT:  Prints a formatted system notification.
 // PARAMS: message — the system notification text.
 func (c *Console) OnSystem(message string) {
+	c.lockOutput()
+	defer c.unlockOutput()
 	c.ensureLineBreakBeforeBlock()
 	fmt.Fprintln(c.Out, c.color(colorOrange, "⚡ System: "+message))
 }
@@ -357,6 +475,8 @@ func (c *Console) OnReasoning(delta string) {
 	if c.turnAborting.Load() {
 		return
 	}
+	c.lockOutput()
+	defer c.unlockOutput()
 	maxHeight := c.Agent.Config.ReasoningMaxHeight
 	if maxHeight > 0 && c.reasoningLines >= maxHeight {
 		return
@@ -402,6 +522,8 @@ func (c *Console) OnContent(delta string) {
 	if c.turnAborting.Load() {
 		return
 	}
+	c.lockOutput()
+	defer c.unlockOutput()
 	if c.reasoningStarted {
 		fmt.Fprintln(c.Out)
 		fmt.Fprintln(c.Out) // blank line after reasoning
@@ -445,6 +567,8 @@ func (c *Console) OnToolCall(name string, args string) {
 	if c.turnAborting.Load() {
 		return
 	}
+	c.lockOutput()
+	defer c.unlockOutput()
 	c.ensureLineBreakBeforeBlock()
 	c.toolsStarted = true
 
@@ -508,6 +632,8 @@ func (c *Console) OnToolResult(name string, result string) {
 		c.lastToolArgs = ""
 		return
 	}
+	c.lockOutput()
+	defer c.unlockOutput()
 	badge, content, colorCode := parseToolResult(result)
 	icon := c.color(colorGreen, toolEmoji(name))
 	args := c.lastToolArgs
@@ -565,6 +691,7 @@ func (c *Console) OnToolResult(name string, result string) {
 		}
 	}
 	c.lineOpen = false
+	c.startSpinnerLocked("thinking...")
 }
 
 // RequestSudoApproval prompts the user for confirmation before executing a sudo command.
@@ -575,6 +702,8 @@ func (c *Console) OnToolResult(name string, result string) {
 // PARAMS: command — the shell command that contains sudo.
 // RETURNS: approved — true if user confirmed; password — the sudo password, empty if declined.
 func (c *Console) RequestSudoApproval(command string) (approved bool, password string) {
+	c.lockOutput()
+	defer c.unlockOutput()
 	c.ensureLineBreakBeforeBlock()
 	label := c.color(colorOrange, "sudo")
 	fmt.Fprintf(c.Out, "\n%s: %s\n", label, command)
@@ -649,6 +778,29 @@ func parseToolResult(result string) (badge, content, colorCode string) {
 	}
 
 	return "DONE", "", colorBrightGreen
+}
+
+// formatTurnError rewrites low-level runtime/provider failures into short
+// console-facing messages when the underlying cause is known.
+//
+// WHAT:  Maps turn-level errors to concise user-visible console text.
+// WHY:   Raw provider/network errors are noisy and hide the actionable reason.
+// HOW:   Matches known timeout signatures and falls back to the original error.
+// PARAMS: err — the error returned by runAgentTurn.
+// RETURNS: string — formatted message prefixed with "error: ".
+func formatTurnError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "provider stream idle timeout"):
+		return "error: provider stream stalled for 3m with no events"
+	case strings.Contains(msg, "timeout awaiting response headers"):
+		return "error: provider timed out before starting the response"
+	default:
+		return "error: " + msg
+	}
 }
 
 // extractToolSection extracts the content of a labeled section such as "stdout:" or "stderr:".
@@ -1020,7 +1172,7 @@ func (c *Console) runTTY() error {
 
 		turnErr := c.runAgentTurn(input, interrupts)
 		if turnErr != nil && !errors.Is(turnErr, runtime.ErrTurnAborted) {
-			fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("error: %v", turnErr)))
+			fmt.Fprintln(c.Out, c.color(colorRed, formatTurnError(turnErr)))
 			c.lineOpen = false
 		}
 		signal.Stop(interrupts)
@@ -1036,10 +1188,14 @@ func (c *Console) runTTY() error {
 //
 // WHAT:  Reliably prints a switch status line using space-padding for clearing.
 // WHY:   \033[K can leave artifacts when the old line contains ANSI color codes.
-//        Spaces are universally reliable regardless of terminal.
+//
+//	Spaces are universally reliable regardless of terminal.
+//
 // HOW:   If a switch line is already present, moves up with \033[F first.
-//        Then pads with spaces matching the maximum of old and new line widths,
-//        returns to column 0, and prints the new status.
+//
+//	Then pads with spaces matching the maximum of old and new line widths,
+//	returns to column 0, and prints the new status.
+//
 // PARAMS: status — the formatted status line text (without trailing newline).
 func (c *Console) writeSwitchStatus(status string) {
 	if c.switchLineActive {
@@ -1079,6 +1235,8 @@ func (c *Console) resetTurnState() {
 func (c *Console) runAgentTurn(input string, interrupts <-chan os.Signal) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	c.startSpinner("thinking...")
+	defer c.stopSpinner()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -1101,6 +1259,8 @@ func (c *Console) runAgentTurn(input string, interrupts <-chan os.Signal) error 
 func (c *Console) abortCurrentTurn(cancel context.CancelFunc) {
 	c.turnAborting.Store(true)
 	cancel()
+	c.lockOutput()
+	defer c.unlockOutput()
 	c.contentBuffer = ""
 	if c.lineOpen {
 		fmt.Fprintln(c.Out)

@@ -12,8 +12,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"blazeai/internal/config"
 	"blazeai/internal/session"
@@ -22,6 +24,14 @@ import (
 
 // ErrAborted reports that the active provider stream was canceled by the user.
 var ErrAborted = errors.New("provider stream aborted")
+
+const (
+	providerConnectTimeout        = 10 * time.Second
+	providerTLSHandshakeTimeout   = 10 * time.Second
+	providerResponseHeaderTimeout = 60 * time.Second
+)
+
+var providerStreamIdleTimeout = 180 * time.Second
 
 // Usage holds token usage from the provider response.
 //
@@ -74,7 +84,7 @@ func NewClient(cfg *config.Config, modelID string) (*Client, error) {
 		Endpoint: p.Endpoint,
 		APIKey:   p.APIKey,
 		Model:    modelName,
-		HTTP:     &http.Client{},
+		HTTP:     newHTTPClient(),
 	}, nil
 }
 
@@ -89,8 +99,29 @@ func NewClientRaw(endpoint, apiKey string) *Client {
 	return &Client{
 		Endpoint: endpoint,
 		APIKey:   apiKey,
-		HTTP:     &http.Client{},
+		HTTP:     newHTTPClient(),
 	}
+}
+
+// newHTTPClient builds the provider HTTP client with startup timeouts that are
+// safe for long-running SSE streams.
+//
+// WHAT:  Creates the HTTP client used for provider API calls.
+// WHY:   Connect, TLS, and response-header phases must fail explicitly instead
+//
+//	of hanging forever, while SSE body streaming must remain uncapped in total duration.
+//
+// HOW:   Uses a custom Transport with bounded connect, handshake, and header waits.
+// RETURNS: *http.Client — configured client.
+func newHTTPClient() *http.Client {
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout: providerConnectTimeout,
+		}).DialContext,
+		TLSHandshakeTimeout:   providerTLSHandshakeTimeout,
+		ResponseHeaderTimeout: providerResponseHeaderTimeout,
+	}
+	return &http.Client{Transport: transport}
 }
 
 // modelEntry represents one model in the provider's model list response.
@@ -271,89 +302,114 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, toolDef
 //	onReasoning — callback for reasoning deltas (may be nil).
 //
 // RETURNS: *Response — accumulated response; error on parse failure.
-func parseSSEStream(ctx context.Context, reader io.Reader, onContent func(string), onReasoning func(string)) (*Response, error) {
+func parseSSEStream(ctx context.Context, reader io.ReadCloser, onContent func(string), onReasoning func(string)) (*Response, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
+	type scanResult struct {
+		line string
+		err  error
+	}
+	scanCh := make(chan scanResult, 1)
+	go func() {
+		for scanner.Scan() {
+			scanCh <- scanResult{line: scanner.Text()}
+		}
+		scanCh <- scanResult{err: scanner.Err()}
+	}()
 
 	result := &Response{}
 	toolCallMap := make(map[int]*tools.ToolCall)
 	var toolCallOrder []int
+	idleTimer := time.NewTimer(providerStreamIdleTimeout)
+	defer idleTimer.Stop()
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
-		if data == "[DONE]" {
-			break
-		}
-
-		var chunk streamChunk
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			continue
-		}
-
-		if chunk.Usage != nil {
-			result.Usage = chunk.Usage
-		}
-
-		for _, choice := range chunk.Choices {
-			delta := choice.Delta
-
-			if delta.Content != "" {
-				result.Content += delta.Content
-				if onContent != nil {
-					onContent(delta.Content)
-				}
-			}
-
-			if delta.ReasoningContent != "" {
-				result.Reasoning += delta.ReasoningContent
-				if onReasoning != nil {
-					onReasoning(delta.ReasoningContent)
-				}
-			}
-
-			for _, tc := range delta.ToolCalls {
-				existing, ok := toolCallMap[tc.Index]
-				if !ok {
-					existing = &tools.ToolCall{
-						ID:   tc.ID,
-						Name: tc.Function.Name,
-					}
-					toolCallMap[tc.Index] = existing
-					toolCallOrder = append(toolCallOrder, tc.Index)
-				}
-				if tc.ID != "" && existing.ID == "" {
-					existing.ID = tc.ID
-				}
-				if tc.Function.Name != "" && existing.Name == "" {
-					existing.Name = tc.Function.Name
-				}
-				existing.Arguments = appendRawJSON(existing.Arguments, tc.Function.Arguments)
-			}
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		if ctx.Err() != nil {
+	for {
+		select {
+		case <-ctx.Done():
+			_ = reader.Close()
 			finalizeToolCalls(result, toolCallMap, toolCallOrder)
 			return result, ErrAborted
+		case <-idleTimer.C:
+			_ = reader.Close()
+			return nil, fmt.Errorf("provider stream idle timeout after %s with no events", providerStreamIdleTimeout)
+		case scan := <-scanCh:
+			if !idleTimer.Stop() {
+				select {
+				case <-idleTimer.C:
+				default:
+				}
+			}
+			idleTimer.Reset(providerStreamIdleTimeout)
+			if scan.err != nil {
+				if ctx.Err() != nil {
+					finalizeToolCalls(result, toolCallMap, toolCallOrder)
+					return result, ErrAborted
+				}
+				return nil, fmt.Errorf("error reading SSE stream: %w", scan.err)
+			}
+			if scan.line == "" {
+				continue
+			}
+			line := scan.line
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			data := strings.TrimPrefix(line, "data: ")
+			if data == "[DONE]" {
+				finalizeToolCalls(result, toolCallMap, toolCallOrder)
+				return result, nil
+			}
+
+			var chunk streamChunk
+			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+				continue
+			}
+
+			if chunk.Usage != nil {
+				result.Usage = chunk.Usage
+			}
+
+			for _, choice := range chunk.Choices {
+				delta := choice.Delta
+
+				if delta.Content != "" {
+					result.Content += delta.Content
+					if onContent != nil {
+						onContent(delta.Content)
+					}
+				}
+
+				if delta.ReasoningContent != "" {
+					result.Reasoning += delta.ReasoningContent
+					if onReasoning != nil {
+						onReasoning(delta.ReasoningContent)
+					}
+				}
+
+				for _, tc := range delta.ToolCalls {
+					existing, ok := toolCallMap[tc.Index]
+					if !ok {
+						existing = &tools.ToolCall{
+							ID:   tc.ID,
+							Name: tc.Function.Name,
+						}
+						toolCallMap[tc.Index] = existing
+						toolCallOrder = append(toolCallOrder, tc.Index)
+					}
+					if tc.ID != "" && existing.ID == "" {
+						existing.ID = tc.ID
+					}
+					if tc.Function.Name != "" && existing.Name == "" {
+						existing.Name = tc.Function.Name
+					}
+					existing.Arguments = appendRawJSON(existing.Arguments, tc.Function.Arguments)
+				}
+			}
 		}
-		return nil, fmt.Errorf("error reading SSE stream: %w", err)
 	}
-	if ctx.Err() != nil {
-		finalizeToolCalls(result, toolCallMap, toolCallOrder)
-		return result, ErrAborted
-	}
-
-	finalizeToolCalls(result, toolCallMap, toolCallOrder)
-
-	return result, nil
 }
 
 // finalizeToolCalls appends only complete tool calls assembled from the SSE stream.

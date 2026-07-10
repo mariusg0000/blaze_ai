@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"blazeai/internal/config"
 	"blazeai/internal/session"
@@ -44,6 +47,13 @@ func TestNewClient(t *testing.T) {
 	}
 	if client.APIKey != "sk-test" {
 		t.Errorf("APIKey = %q, want 'sk-test'", client.APIKey)
+	}
+	transport, ok := client.HTTP.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("Transport type = %T, want *http.Transport", client.HTTP.Transport)
+	}
+	if transport.ResponseHeaderTimeout != providerResponseHeaderTimeout {
+		t.Fatalf("ResponseHeaderTimeout = %s, want %s", transport.ResponseHeaderTimeout, providerResponseHeaderTimeout)
 	}
 }
 
@@ -93,6 +103,67 @@ func TestStreamReasoning(t *testing.T) {
 	}
 	if resp.Content != "42" {
 		t.Errorf("Content = %q, want '42'", resp.Content)
+	}
+}
+
+// TestStreamRequestUsesReasoningContent verifies outbound history uses reasoning_content.
+func TestStreamRequestUsesReasoningContent(t *testing.T) {
+	var requestBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		requestBody = string(data)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "data: [DONE]")
+		fmt.Fprintln(w)
+	}))
+	defer server.Close()
+
+	cfg := mockProvider(t, server)
+	client, err := NewClient(cfg, "test/test-model")
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+
+	_, err = client.Stream(context.Background(), []session.Message{{Role: "assistant", Content: "answer", Reasoning: "chain of thought"}}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Stream() error: %v", err)
+	}
+	if !strings.Contains(requestBody, `"reasoning_content":"chain of thought"`) {
+		t.Fatalf("request body missing reasoning_content: %s", requestBody)
+	}
+	if strings.Contains(requestBody, `"reasoning":`) {
+		t.Fatalf("request body still contains legacy reasoning field: %s", requestBody)
+	}
+}
+
+// TestStreamRequestKeepsExplicitEmptyReasoning verifies stripped history keeps an empty reasoning_content field.
+func TestStreamRequestKeepsExplicitEmptyReasoning(t *testing.T) {
+	var requestBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		requestBody = string(data)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "data: [DONE]")
+		fmt.Fprintln(w)
+	}))
+	defer server.Close()
+
+	cfg := mockProvider(t, server)
+	client, err := NewClient(cfg, "test/test-model")
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+
+	_, err = client.Stream(context.Background(), []session.Message{{Role: "assistant", Content: "answer", ReasoningPresent: true}}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Stream() error: %v", err)
+	}
+	if !strings.Contains(requestBody, `"reasoning_content":""`) {
+		t.Fatalf("request body missing empty reasoning_content: %s", requestBody)
 	}
 }
 
@@ -203,6 +274,75 @@ func TestStreamErrorStatus(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "401") {
 		t.Errorf("error = %q, want it to contain '401'", err.Error())
+	}
+}
+
+// TestStreamResponseHeaderTimeout verifies startup stalls fail with a header timeout.
+func TestStreamResponseHeaderTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(120 * time.Millisecond)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, "data: [DONE]")
+		fmt.Fprintln(w)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		Endpoint: server.URL,
+		APIKey:   "sk-test",
+		Model:    "test-model",
+		HTTP: &http.Client{Transport: &http.Transport{
+			DialContext:           (&net.Dialer{Timeout: time.Second}).DialContext,
+			ResponseHeaderTimeout: 50 * time.Millisecond,
+		}},
+	}
+
+	_, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "hi"}}, nil, nil, nil)
+	if err == nil {
+		t.Fatal("Stream() expected timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "timeout") {
+		t.Fatalf("Stream() error = %v, want timeout-related error", err)
+	}
+}
+
+// TestStreamIdleTimeout verifies hung SSE streams fail explicitly after idle timeout.
+func TestStreamIdleTimeout(t *testing.T) {
+	oldIdleTimeout := providerStreamIdleTimeout
+	providerStreamIdleTimeout = 50 * time.Millisecond
+	defer func() {
+		providerStreamIdleTimeout = oldIdleTimeout
+	}()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("response writer does not support flushing")
+		}
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"Hello"}}]}`)
+		fmt.Fprintln(w)
+		flusher.Flush()
+		time.Sleep(200 * time.Millisecond)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		Endpoint: server.URL,
+		APIKey:   "sk-test",
+		Model:    "test-model",
+		HTTP:     newHTTPClient(),
+	}
+
+	resp, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "hi"}}, nil, nil, nil)
+	if err == nil {
+		t.Fatal("Stream() expected idle timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "idle timeout") {
+		t.Fatalf("Stream() error = %v, want idle timeout error", err)
+	}
+	if resp != nil {
+		t.Fatalf("Stream() response = %#v, want nil on idle timeout", resp)
 	}
 }
 

@@ -688,12 +688,19 @@ func userIndexToSessionIndex(messages []session.Message, userIndex int) int {
 	return -1
 }
 
-// StripReasoningFromPayload replaces reasoning parts in the message array with empty text.
+// StripReasoningFromPayload replaces older reasoning parts with empty text while
+// keeping the reasoning_content field present.
 // Only the newest N reasoning parts are kept. The count is global across all messages.
 //
 // WHAT:  Removes reasoning from the payload sent to the LLM, keeping only the newest N.
-// WHY:   Reduces token usage while preserving the newest reasoning context.
-// HOW:   Counts messages with non-empty reasoning from the end, clears reasoning on older messages.
+// WHY:   Reduces token usage while preserving the newest reasoning context and the
+//
+//	message-level reasoning block shape expected by replay-sensitive providers.
+//
+// HOW:   Counts messages with non-empty reasoning from the end, clears older reasoning
+//
+//	text, and marks the field as explicitly present so it serializes as an empty string.
+//
 // PARAMS: messages — the message array to strip.
 // RETURNS: []session.Message — new array with reasoning stripped on older messages.
 func (m *Manager) StripReasoningFromPayload(messages []session.Message) []session.Message {
@@ -728,8 +735,9 @@ func (m *Manager) StripReasoningFromPayload(messages []session.Message) []sessio
 			kept++
 			continue
 		}
-		// Strip reasoning from this message.
+		// Strip reasoning text but preserve an explicit empty reasoning_content field.
 		result[i].Reasoning = ""
+		result[i].ReasoningPresent = true
 	}
 
 	return result

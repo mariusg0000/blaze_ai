@@ -3,8 +3,10 @@
 package session
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,6 +86,79 @@ func TestAppend(t *testing.T) {
 	}
 	if len(loaded.Messages) != 1 {
 		t.Errorf("Loaded Messages = %d, want 1", len(loaded.Messages))
+	}
+}
+
+// TestSaveWritesReasoningContent verifies session.json uses reasoning_content on disk.
+func TestSaveWritesReasoningContent(t *testing.T) {
+	dir := t.TempDir()
+	s, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() failed: %v", err)
+	}
+	msg := Message{Role: "assistant", Content: "hi", Reasoning: "thinking"}
+	if err := s.Append(msg); err != nil {
+		t.Fatalf("Append() unexpected error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(s.Folder, "session.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(session.json) failed: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `"reasoning_content": "thinking"`) {
+		t.Fatalf("session.json missing reasoning_content: %s", text)
+	}
+	if strings.Contains(text, `"reasoning":`) {
+		t.Fatalf("session.json still contains legacy reasoning field: %s", text)
+	}
+}
+
+// TestLoadLegacyReasoningField verifies old sessions with reasoning still load.
+func TestLoadLegacyReasoningField(t *testing.T) {
+	dir := t.TempDir()
+	s, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() failed: %v", err)
+	}
+	path := filepath.Join(s.Folder, "session.json")
+	legacy := `{"messages":[{"role":"assistant","content":"hi","reasoning":"legacy thinking"}],"closed_cleanly":false}`
+	if err := os.WriteFile(path, []byte(legacy), 0644); err != nil {
+		t.Fatalf("WriteFile(session.json) failed: %v", err)
+	}
+	loaded, err := Load(s.Folder)
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+	if len(loaded.Messages) != 1 {
+		t.Fatalf("Loaded Messages = %d, want 1", len(loaded.Messages))
+	}
+	if loaded.Messages[0].Reasoning != "legacy thinking" {
+		t.Fatalf("Reasoning = %q, want %q", loaded.Messages[0].Reasoning, "legacy thinking")
+	}
+	if !loaded.Messages[0].ReasoningPresent {
+		t.Fatal("ReasoningPresent = false, want true for legacy reasoning field")
+	}
+	if err := loaded.Save(); err != nil {
+		t.Fatalf("Save() after Load failed: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(session.json) failed: %v", err)
+	}
+	if strings.Contains(string(data), `"reasoning":`) {
+		t.Fatalf("legacy reasoning field survived rewrite: %s", string(data))
+	}
+}
+
+// TestMessageMarshalKeepsExplicitEmptyReasoning verifies stripped reasoning stays present as an empty string.
+func TestMessageMarshalKeepsExplicitEmptyReasoning(t *testing.T) {
+	data, err := json.Marshal(Message{Role: "assistant", Content: "", ReasoningPresent: true})
+	if err != nil {
+		t.Fatalf("json.Marshal() error: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `"reasoning_content":""`) {
+		t.Fatalf("encoded message missing empty reasoning_content: %s", text)
 	}
 }
 

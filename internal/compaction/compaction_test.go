@@ -444,6 +444,12 @@ func TestStripReasoningStripsOlder(t *testing.T) {
 	if result[1].Reasoning != "" {
 		t.Errorf("r2 not stripped, got %q", result[1].Reasoning)
 	}
+	if !result[0].ReasoningPresent {
+		t.Error("r1 strip lost explicit reasoning_content presence")
+	}
+	if !result[1].ReasoningPresent {
+		t.Error("r2 strip lost explicit reasoning_content presence")
+	}
 	if result[2].Reasoning != "r3" {
 		t.Errorf("r3 stripped, got %q", result[2].Reasoning)
 	}

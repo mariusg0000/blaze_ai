@@ -109,6 +109,10 @@ func (r *Reader) ReadEvent() (string, string, error) {
 		os.Stdout.Write(buf)
 		r.prefill = ""
 	}
+	// Save cursor position for redrawLine. Restoring to this position
+	// and clearing to end of screen reliably overwrites multiline content
+	// regardless of terminal wrapping or Unicode character widths.
+	os.Stdout.Write([]byte("\033[s"))
 	csiBuf := make([]byte, 0, 8)
 	csiState := 0 // 0=normal, 1=saw ESC, 2=in CSI
 	pasteMode := false
@@ -222,9 +226,37 @@ func (r *Reader) ReadEvent() (string, string, error) {
 			}
 		case 0x7f, 0x08: // Backspace
 			if pos > 0 {
-				buf = append(buf[:pos-1], buf[pos:]...)
-				pos--
-				r.redrawLine(buf, pos)
+				if pos == len(buf) {
+					// Cursor at end — local ANSI erase. Avoids
+					// redrawing the entire multiline buffer and
+					// the resulting visual flicker.
+					removed := buf[pos-1]
+					buf = buf[:pos-1]
+					pos--
+					if removed == '\n' {
+						// Erase trailing newline: move up,
+						// position at end of previous line,
+						// clear from there to end of screen.
+						lastNL := bytes.LastIndexByte(buf[:pos], '\n')
+						col := pos
+						if lastNL >= 0 {
+							col = pos - lastNL - 1
+						}
+						fmt.Fprint(os.Stdout, "\033[A")
+						fmt.Fprint(os.Stdout, "\r")
+						if col > 0 {
+							fmt.Fprintf(os.Stdout, "\033[%dC", col)
+						}
+						fmt.Fprint(os.Stdout, "\033[J")
+					} else {
+						fmt.Fprint(os.Stdout, "\b \b")
+					}
+				} else {
+					// Mid-buffer deletion — full redraw.
+					buf = append(buf[:pos-1], buf[pos:]...)
+					pos--
+					r.redrawLine(buf, pos)
+				}
 			}
 		default:
 			if ch >= 0x20 { // Printable
@@ -259,18 +291,43 @@ func (r *Reader) insertChar(buf *[]byte, pos *int, ch byte) {
 
 // redrawLine reprints the input line from column 0 and positions the cursor.
 //
-// WHAT:  Redraws the complete input line (prompt + buffer) and places
-//        the cursor at the correct editing position.
-// WHY:   Required after insert, delete, or any mutation in the middle
-//        of the buffer. Appending at the end does not need a redraw.
+// WHAT:  Redraws the complete input line and places the cursor at the correct
+//        editing position. Handles multiline buffers reliably by restoring the
+//        cursor to the saved position (right after the prompt), clearing to end
+//        of screen, then rewriting the buffer — this works regardless of terminal
+//        wrapping or Unicode character widths.
+// WHY:   Required after insert, delete, or any mutation in the middle of the
+//        buffer. The old approach of counting newlines for \033[<N>A breaks
+//        when terminal wrapping causes content to span more visual lines than
+//        the literal \n count.
 // PARAMS: buf — the full input buffer; pos — desired cursor position (0..len(buf)).
 func (r *Reader) redrawLine(buf []byte, pos int) {
-	fmt.Fprint(os.Stdout, "\r")
-	fmt.Fprint(os.Stdout, r.prompt)
+	// Restore cursor to the saved position (right after the initial prompt).
+	fmt.Fprint(os.Stdout, "\033[u")
+	// Clear from cursor to end of screen — removes all previous input lines
+	// regardless of visual wrapping.
+	fmt.Fprint(os.Stdout, "\033[J")
+	// Write the buffer content with \r\n for newlines. The prompt text is
+	// already on screen from the original print in ReadEvent.
 	os.Stdout.Write(bytes.ReplaceAll(buf, []byte{'\n'}, []byte{'\r', '\n'}))
-	fmt.Fprint(os.Stdout, "\033[K")
-	if back := len(buf) - pos; back > 0 {
-		fmt.Fprintf(os.Stdout, "\033[%dD", back)
+
+	// Reposition cursor to the desired editing position.
+	// After the write above, the cursor is at the end of content. Only move
+	// when the desired position is not the end.
+	if pos < len(buf) {
+		trailingLines := bytes.Count(buf[pos:], []byte{'\n'})
+		if trailingLines > 0 {
+			fmt.Fprintf(os.Stdout, "\033[%dA", trailingLines)
+		}
+		fmt.Fprint(os.Stdout, "\r")
+		lastNL := bytes.LastIndexByte(buf[:pos], '\n')
+		col := pos
+		if lastNL >= 0 {
+			col = pos - lastNL - 1
+		}
+		if col > 0 {
+			fmt.Fprintf(os.Stdout, "\033[%dC", col)
+		}
 	}
 }
 

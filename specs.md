@@ -4,6 +4,8 @@
 
 !! IMPORTANT MANDATORY !! Do not implement fallbacks. If something is missing or not configured, app must stop with a relevant error message !!! A fallback must be considered as a silent critical error !
 
+!! IMPORTANT MANDATORY !! NEVER overwrite ~/.local/bin/blazeai. It is a bash wrapper script that compiles the project from source and runs the resulting binary. Never replace it with a compiled ELF binary, never `go build -o ~/.local/bin/blazeai`, never `cp ./blazeai ~/.local/bin/`, never `install ./blazeai ~/.local/bin/`. If the binary needs updating, use `go build -o /tmp/blazeai .` only. The wrapper script is the single source of truth for local execution.
+
 ========== AGENT GENERATED ==========
 
 ### Purpose

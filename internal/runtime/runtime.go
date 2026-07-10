@@ -349,9 +349,10 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 
 		// Build assistant message.
 		assistantMsg := session.Message{
-			Role:      "assistant",
-			Content:   resp.Content,
-			Reasoning: resp.Reasoning,
+			Role:             "assistant",
+			Content:          resp.Content,
+			Reasoning:        resp.Reasoning,
+			ReasoningPresent: resp.Reasoning != "",
 		}
 		if len(resp.ToolCalls) > 0 {
 			openaiCalls := make([]tools.OpenAIToolCall, 0, len(resp.ToolCalls))
@@ -647,10 +648,14 @@ func (a *Agent) SetMode(name string) error {
 // NextFavoriteModel cycles to the next model in FavoriteModels and applies it.
 //
 // WHAT:  Advances to the next favorite model with wrap-around and persists the selection
-//        into the current mode or LastModel (same side effects as SetModel).
+//
+//	into the current mode or LastModel (same side effects as SetModel).
+//
 // WHY:   Ctrl+\ needs fast model cycling through the user's favorite list.
 // HOW:   Finds the index of the current ModelID in FavoriteModels, picks the next index
-//        with wrap-around, then calls SetModel to apply and persist. No-op if 0 or 1 favorites.
+//
+//	with wrap-around, then calls SetModel to apply and persist. No-op if 0 or 1 favorites.
+//
 // RETURNS: error if SetModel fails; nil on success or trivial no-op.
 func (a *Agent) NextFavoriteModel() error {
 	if len(a.Config.FavoriteModels) == 0 || len(a.Config.FavoriteModels) == 1 {
