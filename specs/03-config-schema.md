@@ -75,16 +75,29 @@ type Config struct {
 
 ```go
 type Provider struct {
-    Name     string `json:"name"`     // unique identifier, e.g. "openai"
-    Endpoint string `json:"endpoint"` // base URL, e.g. "https://api.openai.com/v1"
-    APIKey   string `json:"api_key"`  // secret key, stored directly in config.json
+    Name     string            `json:"name"`                  // unique identifier, e.g. "openai"
+    Endpoint string            `json:"endpoint"`              // base URL
+    APIKey   string            `json:"api_key,omitempty"`      // API-key credential
+    AuthType string            `json:"auth_type,omitempty"`    // "oauth" for OAuth providers
+    OAuth    *OAuthCredential  `json:"oauth,omitempty"`        // refreshable OAuth credential
+}
+
+type OAuthCredential struct {
+    IDToken      string `json:"id_token,omitempty"`
+    AccessToken  string `json:"access_token,omitempty"`
+    RefreshToken string `json:"refresh_token"`
+    APIKey       string `json:"api_key,omitempty"`
+    ExpiresAt    int64  `json:"expires_at,omitempty"`
+    AccountID    string `json:"account_id,omitempty"`
 }
 ```
 
 Validation rules:
 - `Name` must be non-empty and unique (no duplicate names)
 - `Endpoint` must be non-empty
-- `APIKey` must be non-empty
+- API-key providers must have a non-empty `APIKey`
+- OAuth providers must have `AuthType: "oauth"` and a non-empty refresh token
+- ChatGPT OAuth login persists the identity token, access token, refresh token, account ID, and the token-exchange API key
 
 ### Roles
 

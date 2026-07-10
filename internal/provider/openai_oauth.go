@@ -1,6 +1,6 @@
 // openai_oauth.go — browser OAuth flow and token refresh for the ChatGPT provider.
 // Owns the loopback callback server, PKCE authorization, token exchange, and
-// refresh requests used by the local desktop integration.
+// refresh requests used by the primary console integration.
 // Layer: external authentication. Dependencies: internal/config and net/http.
 package provider
 
@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -24,27 +25,58 @@ import (
 
 const (
 	// ChatGPTOAuthProviderName is the persisted provider id for ChatGPT OAuth.
-	ChatGPTOAuthProviderName = "openai-chatgpt-oauth"
-	chatGPTOAuthIssuer       = "https://auth.openai.com"
-	chatGPTCodexEndpoint     = "https://chatgpt.com/backend-api/codex/responses"
-	chatGPTOAuthClientID     = "app_EMoamEEZ73f0CkXaXp7hrann"
-	chatGPTOAuthPort         = 1455
-	chatGPTOAuthTimeout      = 5 * time.Minute
+	ChatGPTOAuthProviderName  = "openai-chatgpt-oauth"
+	chatGPTOAuthIssuer        = "https://auth.openai.com"
+	chatGPTCodexBaseEndpoint  = "https://chatgpt.com/backend-api/codex"
+	chatGPTCodexEndpoint      = chatGPTCodexBaseEndpoint + "/responses"
+	chatGPTCodexClientVersion = "0.144.0"
+	chatGPTOAuthClientID      = "app_EMoamEEZ73f0CkXaXp7hrann"
+	chatGPTOAuthPort          = 1455
+	chatGPTOAuthTimeout       = 5 * time.Minute
 )
 
-// ChatGPTOAuthModels lists models exposed by the ChatGPT/Codex entitlement.
-//
-// WHAT:  Returns the known model identifiers accepted by the OAuth endpoint.
-// WHY:   The private Codex endpoint does not expose the public /models listing.
-// HOW:   Keeps the supported set explicit and avoids probing undocumented routes.
-// PARAMS: none.
-// RETURNS: []string — provider-qualified model identifiers.
-func ChatGPTOAuthModels() []string {
-	return []string{
-		ChatGPTOAuthProviderName + "/gpt-5.5",
-		ChatGPTOAuthProviderName + "/gpt-5.4",
-		ChatGPTOAuthProviderName + "/gpt-5.4-mini",
+// chatGPTCodexBaseURL normalizes both the current base endpoint and the old
+// persisted endpoint that included the /responses path.
+func chatGPTCodexBaseURL(endpoint string) string {
+	base := strings.TrimRight(endpoint, "/")
+	if base == "" {
+		return chatGPTCodexBaseEndpoint
 	}
+	return strings.TrimSuffix(base, "/responses")
+}
+
+// ChatGPTProvider returns the config entry used by the console OAuth flow.
+//
+// WHAT:  Creates the provider definition for an authenticated ChatGPT account.
+// WHY:   Keeps the endpoint and authentication marker identical across first-run and /auth.
+// PARAMS: credential — exchanged OAuth tokens.
+// RETURNS: config.Provider — provider ready to be added to runtime config.
+func ChatGPTProvider(credential config.OAuthCredential) config.Provider {
+	return config.Provider{
+		Name:     ChatGPTOAuthProviderName,
+		Endpoint: chatGPTCodexBaseEndpoint,
+		AuthType: config.OAuthAuthType,
+		OAuth:    &credential,
+	}
+}
+
+// InstallChatGPTProvider adds or replaces the authenticated ChatGPT provider.
+//
+// WHAT:  Updates provider credentials.
+// WHY:   Console authentication must leave a complete, validated provider configuration.
+// PARAMS: cfg — runtime config; credential — exchanged OAuth tokens.
+// RETURNS: error if config or favorite model updates are invalid.
+func InstallChatGPTProvider(cfg *config.Config, credential config.OAuthCredential) error {
+	if cfg == nil {
+		return fmt.Errorf("config is required")
+	}
+	provider := ChatGPTProvider(credential)
+	if existing := cfg.ProviderByName(provider.Name); existing != nil {
+		*existing = provider
+	} else {
+		cfg.Providers = append(cfg.Providers, provider)
+	}
+	return nil
 }
 
 // OAuthFlowStatus identifies the current browser authorization state.
@@ -57,8 +89,8 @@ const (
 	OAuthFlowError   OAuthFlowStatus = "error"
 )
 
-// OAuthFlowResult is the non-secret status returned to the desktop service.
-// Credential is populated only for internal persistence after success.
+// OAuthFlowResult is the status returned by the console-owned OAuth flow.
+// Credential is populated only for local config persistence after success.
 type OAuthFlowResult struct {
 	Status     OAuthFlowStatus
 	Error      string
@@ -83,8 +115,8 @@ type OAuthManager struct {
 
 // NewOAuthManager creates an idle ChatGPT OAuth flow manager.
 //
-// WHAT:  Creates the state holder used by the desktop backend.
-// WHY:   Each desktop backend owns at most one active login attempt.
+// WHAT:  Creates the state holder used by the console command.
+// WHY:   Each console authentication command owns one active login attempt.
 // HOW:   Starts no listener until Begin is called.
 // PARAMS: none.
 // RETURNS: *OAuthManager — idle manager.
@@ -136,10 +168,10 @@ func (m *OAuthManager) Begin() (string, error) {
 
 // Status returns a snapshot of the current authorization state.
 //
-// WHAT:  Reads the browser flow result without exposing it through the UI.
-// WHY:   Electron polls this small state while the browser is open.
+// WHAT:  Reads the browser flow result for the waiting console command.
+// WHY:   The terminal waits without exposing OAuth state through a desktop UI.
 // PARAMS: none.
-// RETURNS: OAuthFlowResult — current status and, on success, credential data for backend use.
+// RETURNS: OAuthFlowResult — current status and, on success, credential data for local persistence.
 func (m *OAuthManager) Status() OAuthFlowResult {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -170,6 +202,64 @@ func (m *OAuthManager) Close() {
 	if server != nil {
 		_ = server.Close()
 	}
+}
+
+// Wait waits for the browser callback and returns the completed OAuth result.
+//
+// WHAT:  Blocks the console provider command until OAuth succeeds or fails.
+// WHY:   The terminal transport owns the complete provider integration flow.
+// HOW:   Polls the manager state with a bounded five-minute timeout.
+// PARAMS: ctx — cancellation context.
+// RETURNS: OAuthFlowResult — completed result; error on cancellation or timeout.
+func (m *OAuthManager) Wait(ctx context.Context) (OAuthFlowResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.NewTimer(chatGPTOAuthTimeout)
+	defer timeout.Stop()
+	for {
+		status := m.Status()
+		if status.Status == OAuthFlowSuccess || status.Status == OAuthFlowError {
+			return status, nil
+		}
+		select {
+		case <-ctx.Done():
+			return OAuthFlowResult{}, ctx.Err()
+		case <-timeout.C:
+			return OAuthFlowResult{}, fmt.Errorf("ChatGPT OAuth timed out after %s", chatGPTOAuthTimeout)
+		case <-ticker.C:
+		}
+	}
+}
+
+// AuthenticateChatGPT starts the browser OAuth flow and waits for completion.
+//
+// WHAT:  Performs one complete ChatGPT login for a terminal user.
+// WHY:   Provider integrations are configured from the primary console transport.
+// HOW:   Prints the authorization URL, waits for the localhost callback, and returns the credential.
+// PARAMS: ctx — cancellation context; output — terminal writer receiving user instructions.
+// RETURNS: config.OAuthCredential — refreshable credential; error if authentication fails.
+func AuthenticateChatGPT(ctx context.Context, output io.Writer) (config.OAuthCredential, error) {
+	manager := NewOAuthManager()
+	defer manager.Close()
+	url, err := manager.Begin()
+	if err != nil {
+		return config.OAuthCredential{}, err
+	}
+	fmt.Fprintf(output, "Open this URL in your browser to authenticate ChatGPT:\n%s\n", url)
+	status, err := manager.Wait(ctx)
+	if err != nil {
+		return config.OAuthCredential{}, err
+	}
+	if status.Status != OAuthFlowSuccess || status.Credential == nil {
+		if status.Error == "" {
+			return config.OAuthCredential{}, fmt.Errorf("ChatGPT OAuth failed")
+		}
+		return config.OAuthCredential{}, fmt.Errorf("ChatGPT OAuth failed: %s", status.Error)
+	}
+	return *status.Credential, nil
 }
 
 func (m *OAuthManager) callbackHandler(verifier, redirectURI string) http.Handler {
@@ -235,6 +325,10 @@ type chatGPTTokenResponse struct {
 }
 
 func exchangeChatGPTCode(ctx context.Context, code, redirectURI, verifier string) (config.OAuthCredential, error) {
+	return exchangeChatGPTCodeAt(ctx, chatGPTOAuthIssuer, code, redirectURI, verifier)
+}
+
+func exchangeChatGPTCodeAt(ctx context.Context, issuer, code, redirectURI, verifier string) (config.OAuthCredential, error) {
 	var token chatGPTTokenResponse
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
@@ -243,10 +337,24 @@ func exchangeChatGPTCode(ctx context.Context, code, redirectURI, verifier string
 		"client_id":     {chatGPTOAuthClientID},
 		"code_verifier": {verifier},
 	}
-	if err := oauthPost(ctx, chatGPTOAuthIssuer+"/oauth/token", form, &token); err != nil {
+	if err := oauthPost(ctx, strings.TrimRight(issuer, "/")+"/oauth/token", form, &token); err != nil {
 		return config.OAuthCredential{}, fmt.Errorf("OAuth token exchange failed: %w", err)
 	}
-	return credentialFromToken(token)
+	if token.IDToken == "" {
+		return config.OAuthCredential{}, fmt.Errorf("OAuth response did not include an id token")
+	}
+	// The Codex endpoint authenticates with the OAuth access token. The separate
+	// openai-api-key exchange is optional and is not available for every account.
+	// Keep the OAuth login valid when that supplemental exchange returns 401.
+	apiKey, _ := obtainChatGPTAPIKey(ctx, issuer, token.IDToken)
+	credential, err := credentialFromToken(token, apiKey)
+	if err != nil {
+		return config.OAuthCredential{}, err
+	}
+	if credential.RefreshToken == "" {
+		return config.OAuthCredential{}, fmt.Errorf("OAuth response did not include a refresh token")
+	}
+	return credential, nil
 }
 
 func refreshChatGPTCredential(ctx context.Context, current config.OAuthCredential) (config.OAuthCredential, error) {
@@ -259,9 +367,12 @@ func refreshChatGPTCredential(ctx context.Context, current config.OAuthCredentia
 	if err := oauthPost(ctx, chatGPTOAuthIssuer+"/oauth/token", form, &token); err != nil {
 		return config.OAuthCredential{}, fmt.Errorf("OAuth token refresh failed: %w", err)
 	}
-	refreshed, err := credentialFromToken(token)
+	refreshed, err := credentialFromToken(token, current.APIKey)
 	if err != nil {
 		return config.OAuthCredential{}, err
+	}
+	if refreshed.IDToken == "" {
+		refreshed.IDToken = current.IDToken
 	}
 	if refreshed.RefreshToken == "" {
 		refreshed.RefreshToken = current.RefreshToken
@@ -272,20 +383,45 @@ func refreshChatGPTCredential(ctx context.Context, current config.OAuthCredentia
 	return refreshed, nil
 }
 
-func credentialFromToken(token chatGPTTokenResponse) (config.OAuthCredential, error) {
-	if token.AccessToken == "" || token.RefreshToken == "" {
-		return config.OAuthCredential{}, fmt.Errorf("OAuth response did not include required tokens")
+func credentialFromToken(token chatGPTTokenResponse, apiKey string) (config.OAuthCredential, error) {
+	if token.AccessToken == "" {
+		return config.OAuthCredential{}, fmt.Errorf("OAuth response did not include an access token")
 	}
 	expiresIn := token.ExpiresIn
 	if expiresIn <= 0 {
 		expiresIn = 3600
 	}
 	return config.OAuthCredential{
+		IDToken:      token.IDToken,
 		AccessToken:  token.AccessToken,
 		RefreshToken: token.RefreshToken,
+		APIKey:       apiKey,
 		ExpiresAt:    time.Now().Add(time.Duration(expiresIn) * time.Second).UnixMilli(),
 		AccountID:    firstNonEmpty(extractChatGPTAccountID(token.IDToken), extractChatGPTAccountID(token.AccessToken)),
 	}, nil
+}
+
+func obtainChatGPTAPIKey(ctx context.Context, issuer, idToken string) (string, error) {
+	if idToken == "" {
+		return "", fmt.Errorf("id token is required")
+	}
+	var response struct {
+		AccessToken string `json:"access_token"`
+	}
+	form := url.Values{
+		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
+		"client_id":          {chatGPTOAuthClientID},
+		"requested_token":    {"openai-api-key"},
+		"subject_token":      {idToken},
+		"subject_token_type": {"urn:ietf:params:oauth:token-type:id_token"},
+	}
+	if err := oauthPost(ctx, strings.TrimRight(issuer, "/")+"/oauth/token", form, &response); err != nil {
+		return "", err
+	}
+	if response.AccessToken == "" {
+		return "", fmt.Errorf("token exchange response did not include an access token")
+	}
+	return response.AccessToken, nil
 }
 
 func firstNonEmpty(values ...string) string {
@@ -339,7 +475,7 @@ func buildChatGPTAuthorizeURL(redirectURI, challenge, state string) string {
 		"response_type":              {"code"},
 		"client_id":                  {chatGPTOAuthClientID},
 		"redirect_uri":               {redirectURI},
-		"scope":                      {"openid profile email offline_access"},
+		"scope":                      {"openid profile email offline_access api.connectors.read api.connectors.invoke"},
 		"code_challenge":             {challenge},
 		"code_challenge_method":      {"S256"},
 		"id_token_add_organizations": {"true"},

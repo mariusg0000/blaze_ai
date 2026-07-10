@@ -19,15 +19,24 @@ import (
 )
 
 type chatGPTResponsesRequest struct {
-	Model        string                 `json:"model"`
-	Input        []json.RawMessage      `json:"input"`
-	Instructions string                 `json:"instructions,omitempty"`
-	Tools        []chatGPTResponsesTool `json:"tools,omitempty"`
-	Store        bool                   `json:"store"`
-	Stream       bool                   `json:"stream"`
-	Include      []string               `json:"include,omitempty"`
-	Reasoning    chatGPTReasoning       `json:"reasoning,omitempty"`
-	Text         chatGPTText            `json:"text,omitempty"`
+	Model             string                 `json:"model"`
+	Input             []json.RawMessage      `json:"input"`
+	Instructions      string                 `json:"instructions,omitempty"`
+	Tools             []chatGPTResponsesTool `json:"tools,omitempty"`
+	ToolChoice        string                 `json:"tool_choice,omitempty"`
+	ParallelToolCalls *bool                  `json:"parallel_tool_calls,omitempty"`
+	Store             bool                   `json:"store"`
+	Stream            bool                   `json:"stream"`
+	Include           []string               `json:"include,omitempty"`
+	Reasoning         chatGPTReasoning       `json:"reasoning,omitempty"`
+	Text              chatGPTText            `json:"text,omitempty"`
+	ServiceTier       string                 `json:"service_tier,omitempty"`
+	PromptCacheKey    string                 `json:"prompt_cache_key,omitempty"`
+	ClientMetadata    map[string]string      `json:"client_metadata,omitempty"`
+}
+
+func isResponsesLiteModel(model string) bool {
+	return strings.HasPrefix(model, "gpt-5.6-")
 }
 
 type chatGPTResponsesTool struct {
@@ -108,14 +117,14 @@ func (c *Client) streamChatGPT(ctx context.Context, messages []session.Message, 
 	if err != nil {
 		return nil, fmt.Errorf("cannot marshal ChatGPT request: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, chatGPTCodexEndpoint, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, chatGPTCodexBaseURL(c.Endpoint)+"/responses", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("cannot create ChatGPT request: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "text/event-stream")
 	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set("Originator", "blazeai")
+	request.Header.Set("Originator", "codex_cli_rs")
 	request.Header.Set("User-Agent", "BlazeAI")
 	if c.OAuth != nil && c.OAuth.AccountID != "" {
 		request.Header.Set("ChatGPT-Account-Id", c.OAuth.AccountID)
@@ -139,10 +148,117 @@ func (c *Client) streamChatGPT(ctx context.Context, messages []session.Message, 
 }
 
 func buildChatGPTRequest(model string, messages []session.Message, toolDefs []tools.OpenAITool) (chatGPTResponsesRequest, error) {
+	if isResponsesLiteModel(model) {
+		return buildChatGPTLiteRequest(model, messages, toolDefs)
+	}
+	responseTools := buildResponseTools(toolDefs)
 	input, instructions, err := buildChatGPTInput(messages)
 	if err != nil {
 		return chatGPTResponsesRequest{}, err
 	}
+	return chatGPTResponsesRequest{
+		Model:             model,
+		Input:             input,
+		Instructions:      instructions,
+		Tools:             responseTools,
+		ToolChoice:        "auto",
+		ParallelToolCalls: ptr(true),
+		Store:             false,
+		Stream:            true,
+		Include:           []string{"reasoning.encrypted_content"},
+		Reasoning:         chatGPTReasoning{Effort: "medium", Summary: "auto"},
+		Text:              chatGPTText{Verbosity: "low"},
+	}, nil
+}
+
+func buildChatGPTLiteRequest(model string, messages []session.Message, toolDefs []tools.OpenAITool) (chatGPTResponsesRequest, error) {
+	input, err := buildChatGPTLiteInput(messages, toolDefs)
+	if err != nil {
+		return chatGPTResponsesRequest{}, err
+	}
+	return chatGPTResponsesRequest{
+		Model:             model,
+		Input:             input,
+		ToolChoice:        "auto",
+		ParallelToolCalls: ptr(false),
+		Store:             false,
+		Stream:            true,
+		Include:           []string{"reasoning.encrypted_content"},
+		Reasoning:         chatGPTReasoning{Effort: "medium", Summary: "auto"},
+		Text:              chatGPTText{Verbosity: "low"},
+	}, nil
+}
+
+func buildChatGPTLiteInput(messages []session.Message, toolDefs []tools.OpenAITool) ([]json.RawMessage, error) {
+	input := make([]json.RawMessage, 0, len(messages)+2)
+	instructions := make([]string, 0, 1)
+	for _, message := range messages {
+		switch message.Role {
+		case "system":
+			if text := messageContentText(message.Content); text != "" {
+				instructions = append(instructions, text)
+			}
+		case "user":
+			input = append(input, mustJSON(map[string]interface{}{
+				"role":    "user",
+				"content": []interface{}{map[string]string{"type": "input_text", "text": messageContentText(message.Content)}},
+			}))
+		case "assistant":
+			if message.ReasoningEncrypted != "" {
+				input = append(input, mustJSON(map[string]interface{}{
+					"type":              "reasoning",
+					"summary":           []interface{}{},
+					"encrypted_content": message.ReasoningEncrypted,
+				}))
+			}
+			calls, err := decodeOpenAIToolCalls(message.ToolCalls)
+			if err != nil {
+				return nil, err
+			}
+			if len(calls) > 0 {
+				for _, call := range calls {
+					input = append(input, mustJSON(map[string]interface{}{
+						"type":      "function_call",
+						"call_id":   call.ID,
+						"name":      call.Function.Name,
+						"arguments": call.Function.Arguments,
+					}))
+				}
+				continue
+			}
+			if text := messageContentText(message.Content); text != "" {
+				input = append(input, mustJSON(map[string]interface{}{
+					"role":    "assistant",
+					"content": []interface{}{map[string]string{"type": "output_text", "text": text}},
+				}))
+			}
+		case "tool":
+			input = append(input, mustJSON(map[string]interface{}{
+				"type":    "function_call_output",
+				"call_id": message.ToolCallID,
+				"output":  messageContentText(message.Content),
+			}))
+		}
+	}
+	prefix := make([]json.RawMessage, 0, 2)
+	if len(toolDefs) > 0 {
+		responseTools := buildResponseTools(toolDefs)
+		prefix = append(prefix, mustJSON(map[string]interface{}{
+			"role":  "developer",
+			"type":  "additional_tools",
+			"tools": responseTools,
+		}))
+	}
+	if len(instructions) > 0 {
+		prefix = append(prefix, mustJSON(map[string]interface{}{
+			"role":    "developer",
+			"content": []interface{}{map[string]string{"type": "input_text", "text": strings.Join(instructions, "\n\n")}},
+		}))
+	}
+	return append(prefix, input...), nil
+}
+
+func buildResponseTools(toolDefs []tools.OpenAITool) []chatGPTResponsesTool {
 	responseTools := make([]chatGPTResponsesTool, 0, len(toolDefs))
 	for _, tool := range toolDefs {
 		parameters := tool.Function.Parameters
@@ -157,17 +273,7 @@ func buildChatGPTRequest(model string, messages []session.Message, toolDefs []to
 			Strict:      false,
 		})
 	}
-	return chatGPTResponsesRequest{
-		Model:        model,
-		Input:        input,
-		Instructions: instructions,
-		Tools:        responseTools,
-		Store:        false,
-		Stream:       true,
-		Include:      []string{"reasoning.encrypted_content"},
-		Reasoning:    chatGPTReasoning{Effort: "medium", Summary: "auto"},
-		Text:         chatGPTText{Verbosity: "low"},
-	}, nil
+	return responseTools
 }
 
 func buildChatGPTInput(messages []session.Message) ([]json.RawMessage, string, error) {
@@ -222,6 +328,10 @@ func buildChatGPTInput(messages []session.Message) ([]json.RawMessage, string, e
 		}
 	}
 	return input, strings.Join(instructions, "\n\n"), nil
+}
+
+func ptr(b bool) *bool {
+	return &b
 }
 
 func decodeOpenAIToolCalls(value interface{}) ([]tools.OpenAIToolCall, error) {

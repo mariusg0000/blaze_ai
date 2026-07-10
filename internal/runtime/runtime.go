@@ -640,13 +640,11 @@ func (a *Agent) SetWorkDir(dir string) error {
 
 // ListProviderModels fetches the list of available model IDs from a configured provider.
 func (a *Agent) ListProviderModels(providerName string) ([]string, error) {
-	for _, p := range a.Config.Providers {
-		if p.Name == providerName {
-			client := provider.NewClientRaw(p.Endpoint, p.APIKey)
-			return client.ListModels()
-		}
+	client, err := provider.NewClientForProvider(a.Config, providerName)
+	if err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("provider not found: %s", providerName)
+	return client.ListModels()
 }
 
 // SetMode switches the active work mode by name.

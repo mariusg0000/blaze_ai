@@ -588,6 +588,18 @@ func TestHandleCommandExit(t *testing.T) {
 	}
 }
 
+// TestHandleCommandAuthUsage verifies /auth rejects unsupported providers explicitly.
+func TestHandleCommandAuthUsage(t *testing.T) {
+	c, _ := newConsole(mockAgent(t))
+	handled, exit, err := c.handleCommand("/auth")
+	if !handled || exit {
+		t.Errorf("handled=%v exit=%v, want true/false", handled, exit)
+	}
+	if err == nil || err.Error() != "usage: /auth openai" {
+		t.Fatalf("/auth error = %v, want usage error", err)
+	}
+}
+
 // TestHandleCommandModelList verifies /model without arg is handled (starts interactive flow).
 func TestHandleCommandModelList(t *testing.T) {
 	c, _ := newConsole(mockAgent(t))

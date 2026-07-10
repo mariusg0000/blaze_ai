@@ -68,28 +68,6 @@ type SetWindowBoundsParams struct {
 	Height int `json:"height"`
 }
 
-// OpenAIAuthStartResponse is returned after the browser OAuth listener starts.
-//
-// WHAT:  Carries the URL Electron must open in the user's browser.
-// WHY:   The Go backend owns the callback listener while Electron owns browser launching.
-// PARAMS: URL — OpenAI authorization URL; Status — pending flow status.
-// RETURNS: N/A.
-type OpenAIAuthStartResponse struct {
-	URL    string `json:"url"`
-	Status string `json:"status"`
-}
-
-// OpenAIAuthStatusResponse is the poll result for a browser OAuth attempt.
-//
-// WHAT:  Exposes only non-secret OAuth state to the renderer.
-// WHY:   Access and refresh tokens must never cross the Electron IPC boundary.
-// PARAMS: Status — idle, pending, success, or error; Error — safe failure text.
-// RETURNS: N/A.
-type OpenAIAuthStatusResponse struct {
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
-}
-
 // BackendOptions configures one backend server instance.
 //
 // WHAT:  Carries startup-time desktop backend options resolved by the binary entrypoint.

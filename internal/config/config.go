@@ -58,12 +58,15 @@ type Provider struct {
 // WHAT:  Holds OAuth access and refresh tokens plus their account metadata.
 // WHY:   ChatGPT OAuth providers do not use an API key and need refresh state across restarts.
 // HOW:   The access token is refreshed from the refresh token when expired; config files remain mode 0600.
-// PARAMS: AccessToken — short-lived bearer token; RefreshToken — long-lived refresh token;
+// PARAMS: IDToken — OpenAI identity token; AccessToken — short-lived bearer token;
+// RefreshToken — long-lived refresh token; APIKey — token-exchange result for OpenAI API clients;
 // ExpiresAt — Unix time in milliseconds; AccountID — ChatGPT account identifier.
 // RETURNS: N/A.
 type OAuthCredential struct {
+	IDToken      string `json:"id_token,omitempty"`
 	AccessToken  string `json:"access_token,omitempty"`
 	RefreshToken string `json:"refresh_token"`
+	APIKey       string `json:"api_key,omitempty"`
 	ExpiresAt    int64  `json:"expires_at,omitempty"`
 	AccountID    string `json:"account_id,omitempty"`
 }

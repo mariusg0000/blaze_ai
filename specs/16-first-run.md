@@ -4,7 +4,7 @@
 
 | File | Role |
 |------|------|
-| `firstrun.go` | Interactive setup: provider selection, API key, model retrieval, role assignment |
+| `firstrun.go` | Interactive setup: provider selection, API-key/OAuth authentication, model retrieval, role assignment |
 | `firstrun_test.go` | Unit tests for all interactive steps |
 | `main.go` | Detection, setup trigger, startup sequence |
 | `internal/skills/config-manager.md` | Builtin skill for LLM-assisted reconfiguration |
@@ -13,7 +13,7 @@
 
 First-run setup triggers when the config is missing or `default` role is
 unassigned. It is an interactive console wizard that guides the user through
-provider selection, API key entry, model retrieval, and role assignment.
+provider selection, authentication, model retrieval, and role assignment.
 
 The setup lives in the root package (`package main`) because it calls
 `os.Stdout`/`os.Stdin` directly. Test helpers accept explicit `io.Writer` and
@@ -48,19 +48,18 @@ firstRun(out, reader)
   │
   ├─ Step 1: selectProvider(out, reader)
   │    ├─ Display curated list (max 15)
+  │    ├─ Option: ChatGPT OAuth browser login
   │    ├─ Option: custom provider
   │    └─ Return selected Provider{Name, Endpoint}
   │
-  ├─ Step 2: API key entry
-  │    ├─ Prompt: "Enter API key for <provider>"
-  │    ├─ Read line from stdin
-  │    ├─ Trim whitespace
-  │    └─ Error if empty
+  ├─ Step 2: provider authentication
+  │    ├─ API-key provider: prompt for API key and reject empty input
+  │    └─ ChatGPT OAuth: print authorization URL and wait for localhost callback
   │
   ├─ Step 3: Model retrieval
-  │    ├─ provider.NewClientRaw(endpoint, apiKey)
-  │    ├─ client.ListModels() → retrieve from /v1/models
-  │    ├─ Sort alphabetically
+  │    ├─ API-key provider: client.ListModels() → retrieve from /v1/models
+  │    ├─ ChatGPT OAuth: use the explicit Codex entitlement catalog
+  │    ├─ Preserve the OAuth entitlement order; sort API models alphabetically
   │    └─ Error if retrieval fails or returns empty list
   │
   ├─ Step 4: selectModel(out, reader, models, providerName)
@@ -111,16 +110,21 @@ Curated list of 15 providers matching the spec maximum:
 | 14 | opencode-go | `https://opencode.ai/zen/go/v1` |
 | 15 | lmstudio | `http://localhost:1234/v1` |
 
-Option 16: Custom — prompts for name, endpoint, API key manually.
+Option 16: ChatGPT OAuth — browser authentication for the ChatGPT/Codex provider.
+Option 17: Custom — prompts for name, endpoint, API key manually.
 
 ## Model Retrieval
 
-Uses `provider.NewClientRaw(endpoint, apiKey)` to create a temporary client
-(session-independent) and calls `ListModels()` which hits the provider's
-`/v1/models` endpoint.
+API-key providers use `provider.NewClientRaw(endpoint, apiKey)` and call
+`ListModels()` against the provider's `/v1/models` endpoint. ChatGPT OAuth
+uses the authenticated Codex `/models?client_version=...` endpoint and reads
+the account-scoped `models[].slug` values returned by ChatGPT. First-run
+preserves the provider order and assigns the first returned model as the
+default role for the OAuth provider.
 
-Models are sorted alphabetically for consistent display. The user selects by
-number, and the result is formatted as `provider_name/model_id`.
+API models are sorted alphabetically for consistent display. The OAuth result
+keeps its account-provided order and assigns its first model as the default.
+The result is formatted as `provider_name/model_id`.
 
 ## Role Assignment
 
@@ -143,18 +147,18 @@ All selected optional models are appended to `FavoriteModels`.
 ## Output
 
 Config files written:
-- `app_home/config/config.json` — providers, roles, models, compaction settings
+- `app_home/config/config.json` — providers, credentials, roles, models, compaction settings
 - `app_home/config/modes.json` — default work mode
 
 Permissions:
-- `config.json`: 0600 (owner read/write only — contains API keys)
+- `config.json`: 0600 (owner read/write only — contains provider credentials)
 - `modes.json`: 0644
 
 ## Reconfiguration with config-manager
 
 After first-run, the builtin `config-manager` skill provides LLM-assisted
 reconfiguration for:
-- Adding/modifying providers and API keys
+- Adding/modifying providers and credentials
 - Changing role assignments
 - Editing modes
 - Updating model selections

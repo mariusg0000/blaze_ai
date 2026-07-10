@@ -6,6 +6,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -58,34 +59,55 @@ func firstRun(out io.Writer, reader *bufio.Reader) (*config.Config, error) {
 		return nil, err
 	}
 
-	// Step 2: API key entry
-	fmt.Fprintf(out, "Enter API key for %s: ", p.Name)
-	key, err := reader.ReadString('\n')
-	if err != nil {
-		return nil, fmt.Errorf("cannot read API key: %w", err)
-	}
-	p.APIKey = strings.TrimSpace(key)
-	if p.APIKey == "" {
-		return nil, fmt.Errorf("API key cannot be empty")
-	}
+	// Step 2: authenticate and retrieve models.
+	var models []string
+	if p.AuthType == config.OAuthAuthType {
+		credential, authErr := provider.AuthenticateChatGPT(context.Background(), out)
+		if authErr != nil {
+			return nil, authErr
+		}
+		p.OAuth = &credential
+		client := provider.NewOAuthClientRaw(p.Endpoint, credential)
+		models, err = client.ListModels()
+		if err != nil {
+			return nil, fmt.Errorf("cannot retrieve ChatGPT models: %w", err)
+		}
+	} else {
+		fmt.Fprintf(out, "Enter API key for %s: ", p.Name)
+		key, keyErr := reader.ReadString('\n')
+		if keyErr != nil {
+			return nil, fmt.Errorf("cannot read API key: %w", keyErr)
+		}
+		p.APIKey = strings.TrimSpace(key)
+		if p.APIKey == "" {
+			return nil, fmt.Errorf("API key cannot be empty")
+		}
 
-	// Step 3: model retrieval
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Retrieving models from provider...")
-	client := provider.NewClientRaw(p.Endpoint, p.APIKey)
-	models, err := client.ListModels()
-	if err != nil {
-		return nil, fmt.Errorf("cannot retrieve models: %w", err)
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Retrieving models from provider...")
+		client := provider.NewClientRaw(p.Endpoint, p.APIKey)
+		models, err = client.ListModels()
+		if err != nil {
+			return nil, fmt.Errorf("cannot retrieve models: %w", err)
+		}
 	}
 	if len(models) == 0 {
 		return nil, fmt.Errorf("provider returned no models")
 	}
-	sort.Strings(models)
+	if p.AuthType != config.OAuthAuthType {
+		sort.Strings(models)
+	}
 
 	// Step 4: model selection
-	modelID, err := selectModel(out, reader, models, p.Name)
-	if err != nil {
-		return nil, err
+	var modelID string
+	if p.AuthType == config.OAuthAuthType {
+		modelID = p.Name + "/" + models[0]
+		fmt.Fprintf(out, "Using ChatGPT default model: %s\n", modelID)
+	} else {
+		modelID, err = selectModel(out, reader, models, p.Name)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Step 5: build config
@@ -127,7 +149,10 @@ func selectProvider(out io.Writer, reader *bufio.Reader) (config.Provider, error
 	for i, p := range knownProviders {
 		fmt.Fprintf(out, "  %2d. %s (%s)\n", i+1, p.Name, p.Endpoint)
 	}
-	fmt.Fprintf(out, "  %2d. Custom (enter name, endpoint, API key manually)\n", len(knownProviders)+1)
+	oauthChoice := len(knownProviders) + 1
+	customChoice := oauthChoice + 1
+	fmt.Fprintf(out, "  %2d. ChatGPT (OAuth browser login)\n", oauthChoice)
+	fmt.Fprintf(out, "  %2d. Custom (enter name, endpoint, API key manually)\n", customChoice)
 	fmt.Fprintln(out)
 	fmt.Fprint(out, "Enter number: ")
 	input, err := reader.ReadString('\n')
@@ -144,7 +169,11 @@ func selectProvider(out io.Writer, reader *bufio.Reader) (config.Provider, error
 		return knownProviders[num-1], nil
 	}
 
-	if num == len(knownProviders)+1 {
+	if num == oauthChoice {
+		return provider.ChatGPTProvider(config.OAuthCredential{}), nil
+	}
+
+	if num == customChoice {
 		return customProvider(out, reader)
 	}
 

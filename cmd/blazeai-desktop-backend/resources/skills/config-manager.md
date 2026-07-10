@@ -10,7 +10,7 @@ Load for BlazeAI auto-configuration: providers, API keys, favorite models, role 
 - Before inspecting or modifying any other file in one of those folders, read that folder's `README.md` first.
 - Runtime configuration lives at `{APP_HOME}/config/config.json` — providers, models, roles, compaction, reasoning.
 - Work modes live separately at `{APP_HOME}/config/modes.json` — mode definitions and last active mode.
-- API keys are stored in config.json. Modes reference provider/model names but never contain keys.
+- Provider credentials are stored in config.json. API-key providers use `api_key`; ChatGPT OAuth uses `auth_type: "oauth"` and stores the identity, access, refresh, account, and token-exchange API-key credentials. Modes reference provider/model names but never contain credentials.
 
 ## Config Structure
 ```json
@@ -47,8 +47,10 @@ Load for BlazeAI auto-configuration: providers, API keys, favorite models, role 
 ```
 
 ## Provider Definition
-- Each provider has exactly three fields: `name`, `endpoint`, `api_key`.
+- API-key providers have `name`, `endpoint`, and `api_key`.
+- OAuth providers have `name`, `endpoint`, `auth_type: "oauth"`, and OAuth credentials.
 - Only OpenAI-compatible providers are supported.
+- Configure or authenticate providers from the primary console. Use `/auth openai` for ChatGPT browser OAuth.
 - No fallback providers. No automatic provider switching on failure.
 
 ## Model Roles

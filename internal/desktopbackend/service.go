@@ -15,7 +15,6 @@ import (
 
 	"blazeai/internal/config"
 	"blazeai/internal/platform"
-	"blazeai/internal/provider"
 	runtimecore "blazeai/internal/runtime"
 	"blazeai/internal/session"
 )
@@ -112,9 +111,7 @@ type Service struct {
 	pendingResumeLastClean bool
 	quitRequested          bool
 
-	cancelFn context.CancelFunc
-	oauth    *provider.OAuthManager
-
+	cancelFn         context.CancelFunc
 	mu               sync.Mutex
 	blocks           []transcriptBlock
 	status           string
@@ -238,93 +235,12 @@ func (s *Service) handleRequest(req Request) (Response, bool, error) {
 	case "next_mode":
 		state, err := s.nextMode()
 		return Response{ID: req.ID, OK: err == nil, Result: state, Error: errorText(err)}, false, nil
-	case "start_openai_chatgpt_oauth":
-		result, err := s.startOpenAIChatGPTOAuth()
-		return Response{ID: req.ID, OK: err == nil, Result: result, Error: errorText(err)}, false, nil
-	case "poll_openai_chatgpt_oauth":
-		result, err := s.pollOpenAIChatGPTOAuth()
-		return Response{ID: req.ID, OK: err == nil, Result: result, Error: errorText(err)}, false, nil
 	case "quit":
 		state, err := s.quit()
 		return Response{ID: req.ID, OK: err == nil, Result: state, Error: errorText(err)}, err == nil, nil
 	default:
 		return Response{}, false, fmt.Errorf("unknown desktop backend method: %s", req.Method)
 	}
-}
-
-// startOpenAIChatGPTOAuth starts the browser-based ChatGPT provider login.
-//
-// WHAT:  Starts one local PKCE callback flow and returns its authorization URL.
-// WHY:   ChatGPT OAuth credentials are distinct from public OpenAI API keys.
-// HOW:   The provider package owns the listener; the renderer opens the returned URL.
-// PARAMS: none.
-// RETURNS: OpenAIAuthStartResponse — URL and pending status; error if startup fails.
-func (s *Service) startOpenAIChatGPTOAuth() (OpenAIAuthStartResponse, error) {
-	if s.oauth == nil {
-		s.oauth = provider.NewOAuthManager()
-	}
-	url, err := s.oauth.Begin()
-	if err != nil {
-		return OpenAIAuthStartResponse{}, err
-	}
-	return OpenAIAuthStartResponse{URL: url, Status: string(provider.OAuthFlowPending)}, nil
-}
-
-// pollOpenAIChatGPTOAuth returns flow state and persists a successful credential.
-//
-// WHAT:  Polls the local OAuth manager and installs the new provider on success.
-// WHY:   Renderer IPC must not carry bearer or refresh tokens.
-// HOW:   The credential stays in Go memory, is saved into the protected config file,
-// and the provider's known models are added to favorites.
-// PARAMS: none.
-// RETURNS: OpenAIAuthStatusResponse — non-secret flow result.
-func (s *Service) pollOpenAIChatGPTOAuth() (OpenAIAuthStatusResponse, error) {
-	if s.oauth == nil {
-		return OpenAIAuthStatusResponse{Status: string(provider.OAuthFlowIdle)}, nil
-	}
-	status := s.oauth.Status()
-	if status.Status == provider.OAuthFlowSuccess && status.Credential != nil {
-		if err := s.installChatGPTProvider(*status.Credential); err != nil {
-			return OpenAIAuthStatusResponse{}, err
-		}
-		s.oauth.Close()
-		s.oauth = nil
-		return OpenAIAuthStatusResponse{Status: string(provider.OAuthFlowSuccess)}, nil
-	}
-	if status.Status == provider.OAuthFlowError {
-		s.oauth.Close()
-		s.oauth = nil
-	}
-	return OpenAIAuthStatusResponse{Status: string(status.Status), Error: status.Error}, nil
-}
-
-// installChatGPTProvider updates config with the newly authorized provider.
-//
-// WHAT:  Adds or replaces the local ChatGPT OAuth provider and its models.
-// WHY:   Model selection and runtime construction already resolve providers from config.
-// HOW:   Stores the credential with the existing 0600 config persistence and keeps API providers unchanged.
-// PARAMS: credential — exchanged ChatGPT OAuth tokens and account metadata.
-// RETURNS: error if config persistence fails.
-func (s *Service) installChatGPTProvider(credential config.OAuthCredential) error {
-	chatGPT := s.cfg.ProviderByName(provider.ChatGPTOAuthProviderName)
-	if chatGPT == nil {
-		s.cfg.Providers = append(s.cfg.Providers, config.Provider{
-			Name:     provider.ChatGPTOAuthProviderName,
-			Endpoint: "https://chatgpt.com/backend-api/codex/responses",
-			AuthType: config.OAuthAuthType,
-			OAuth:    &credential,
-		})
-	} else {
-		chatGPT.Endpoint = "https://chatgpt.com/backend-api/codex/responses"
-		chatGPT.AuthType = config.OAuthAuthType
-		chatGPT.OAuth = &credential
-	}
-	for _, modelID := range provider.ChatGPTOAuthModels() {
-		if err := s.cfg.AddFavorite(modelID); err != nil {
-			return fmt.Errorf("cannot add ChatGPT model %s: %w", modelID, err)
-		}
-	}
-	return s.cfg.Save()
 }
 
 func (s *Service) sendMessage(text string) (stateResponse, error) {
@@ -496,10 +412,6 @@ func (s *Service) closeSession() (stateResponse, error) {
 func (s *Service) quit() (stateResponse, error) {
 	if s.isBusy() {
 		s.cancel()
-	}
-	if s.oauth != nil {
-		s.oauth.Close()
-		s.oauth = nil
 	}
 	s.quitRequested = true
 	s.AppendSystem("Desktop app is shutting down.")

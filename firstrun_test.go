@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"blazeai/internal/config"
+	providerpkg "blazeai/internal/provider"
 )
 
 // newBufReader wraps a string in a bufio.Reader for test input.
@@ -49,7 +50,7 @@ func TestSelectProviderKnown(t *testing.T) {
 // TestSelectProviderCustom verifies custom provider entry.
 func TestSelectProviderCustom(t *testing.T) {
 	var out bytes.Buffer
-	input := fmt.Sprintf("%d\nmyprov\nhttps://api.example.com/v1\n", len(knownProviders)+1)
+	input := fmt.Sprintf("%d\nmyprov\nhttps://api.example.com/v1\n", len(knownProviders)+2)
 	provider, err := selectProvider(&out, newBufReader(input))
 	if err != nil {
 		t.Fatalf("selectProvider() error: %v", err)
@@ -59,6 +60,21 @@ func TestSelectProviderCustom(t *testing.T) {
 	}
 	if provider.Endpoint != "https://api.example.com/v1" {
 		t.Errorf("endpoint = %q, want 'https://api.example.com/v1'", provider.Endpoint)
+	}
+}
+
+// TestSelectProviderChatGPTOAuth verifies the console OAuth provider choice.
+func TestSelectProviderChatGPTOAuth(t *testing.T) {
+	var out bytes.Buffer
+	provider, err := selectProvider(&out, newBufReader(fmt.Sprintf("%d\n", len(knownProviders)+1)))
+	if err != nil {
+		t.Fatalf("selectProvider() error: %v", err)
+	}
+	if provider.Name != providerpkg.ChatGPTOAuthProviderName {
+		t.Errorf("provider name = %q, want %q", provider.Name, providerpkg.ChatGPTOAuthProviderName)
+	}
+	if provider.AuthType != config.OAuthAuthType {
+		t.Errorf("auth type = %q, want %q", provider.AuthType, config.OAuthAuthType)
 	}
 }
 

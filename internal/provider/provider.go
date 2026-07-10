@@ -95,6 +95,24 @@ type Client struct {
 // RETURNS: *Client — configured client; error if provider not found or model invalid.
 func NewClient(cfg *config.Config, modelID string) (*Client, error) {
 	providerName, modelName := config.SplitModelID(modelID)
+	client, err := NewClientForProvider(cfg, providerName)
+	if err != nil {
+		return nil, err
+	}
+	client.Model = modelName
+	return client, nil
+}
+
+// NewClientForProvider creates a client for provider-level operations such as model listing.
+//
+// WHAT:  Builds a client with the provider's API key or OAuth credential.
+// WHY:   Console provider integration must list OAuth models without a model ID first.
+// PARAMS: cfg — runtime config; providerName — configured provider identifier.
+// RETURNS: *Client — provider client; error if the provider is missing.
+func NewClientForProvider(cfg *config.Config, providerName string) (*Client, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config is required")
+	}
 	p := cfg.ProviderByName(providerName)
 	if p == nil {
 		return nil, fmt.Errorf("provider not found: %s", providerName)
@@ -102,7 +120,6 @@ func NewClient(cfg *config.Config, modelID string) (*Client, error) {
 	client := &Client{
 		Endpoint: p.Endpoint,
 		APIKey:   p.APIKey,
-		Model:    modelName,
 		AuthType: p.AuthType,
 		HTTP:     newHTTPClient(),
 	}
@@ -132,6 +149,17 @@ func NewClientRaw(endpoint, apiKey string) *Client {
 	return &Client{
 		Endpoint: endpoint,
 		APIKey:   apiKey,
+		HTTP:     newHTTPClient(),
+	}
+}
+
+// NewOAuthClientRaw creates a ChatGPT OAuth client before a config exists.
+// Used during first-run setup to discover the account's live Codex models.
+func NewOAuthClientRaw(endpoint string, credential config.OAuthCredential) *Client {
+	return &Client{
+		Endpoint: endpoint,
+		AuthType: config.OAuthAuthType,
+		OAuth:    &credential,
 		HTTP:     newHTTPClient(),
 	}
 }
@@ -175,13 +203,7 @@ type modelsResponse struct {
 // RETURNS: []string — sorted list of model IDs; error if the request or parse fails.
 func (c *Client) ListModels() ([]string, error) {
 	if c.AuthType == config.OAuthAuthType {
-		models := ChatGPTOAuthModels()
-		result := make([]string, 0, len(models))
-		for _, modelID := range models {
-			_, modelName := config.SplitModelID(modelID)
-			result = append(result, modelName)
-		}
-		return result, nil
+		return c.listChatGPTModels()
 	}
 	url := strings.TrimRight(c.Endpoint, "/") + "/models"
 	req, err := http.NewRequest("GET", url, nil)
@@ -211,6 +233,61 @@ func (c *Client) ListModels() ([]string, error) {
 		ids = append(ids, m.ID)
 	}
 	return ids, nil
+}
+
+type chatGPTModelEntry struct {
+	Slug string `json:"slug"`
+}
+
+type chatGPTModelsResponse struct {
+	Models []chatGPTModelEntry `json:"models"`
+}
+
+// listChatGPTModels retrieves the account-scoped Codex model catalog.
+//
+// WHAT: Fetches model slugs from the ChatGPT Codex /models endpoint.
+// WHY: The account's entitlement, not a local catalog, determines which model IDs work.
+// HOW: Sends the OAuth bearer token and account ID, then parses models[].slug.
+func (c *Client) listChatGPTModels() ([]string, error) {
+	token, err := c.oauthAccessToken(context.Background())
+	if err != nil {
+		return nil, err
+	}
+
+	endpoint := chatGPTCodexBaseURL(c.Endpoint) + "/models?client_version=" + chatGPTCodexClientVersion
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create ChatGPT models request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Originator", "codex_cli_rs")
+	req.Header.Set("User-Agent", "BlazeAI")
+	if c.OAuth != nil && c.OAuth.AccountID != "" {
+		req.Header.Set("ChatGPT-Account-ID", c.OAuth.AccountID)
+	}
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ChatGPT models request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("ChatGPT models returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var result chatGPTModelsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("cannot parse ChatGPT models response: %w", err)
+	}
+	models := make([]string, 0, len(result.Models))
+	for _, model := range result.Models {
+		if model.Slug != "" {
+			models = append(models, model.Slug)
+		}
+	}
+	return models, nil
 }
 
 // chatRequest is the request body sent to the chat completions endpoint.

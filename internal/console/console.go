@@ -1,6 +1,6 @@
 // console.go — terminal REPL transport implementing the handler contract.
 // Implements OnContent, OnToolCall, OnToolResult. TTY-only: reads raw input for Tab mode cycling,
-// renders Markdown with ANSI colors, and handles slash commands (/exit, /model, /cd).
+// renders Markdown with ANSI colors, and handles slash commands (/auth, /exit, /model, /cd).
 // Layer: transport (console). Dependencies: internal/runtime, internal/config, internal/skills.
 package console
 
@@ -52,6 +52,7 @@ type slashCmd struct {
 
 // slashCommands lists all available slash commands for the startup splash.
 var slashCommands = []slashCmd{
+	{"/auth openai", "connect ChatGPT with browser OAuth"},
 	{"/model [model]", "list or switch model (+/- fav)"},
 	{"/cd <path>", "change working folder"},
 	{"/clear", "clear current session"},
@@ -1309,6 +1310,14 @@ func (c *Console) handleCommand(input string) (bool, bool, error) {
 	}
 
 	switch cmd {
+	case "/auth":
+		if arg != "openai" && arg != "chatgpt" {
+			return true, false, fmt.Errorf("usage: /auth openai")
+		}
+		if err := c.authenticateChatGPT(); err != nil {
+			return true, false, err
+		}
+		return true, false, nil
 	case "/exit":
 		if err := c.Agent.CloseSession(); err != nil {
 			return true, true, fmt.Errorf("cannot close session: %w", err)
@@ -1407,6 +1416,45 @@ func (c *Console) listModels() {
 		}
 		fmt.Fprintf(c.Out, "%s%s\n", marker, m)
 	}
+}
+
+// authenticateChatGPT connects the console to ChatGPT through browser OAuth.
+//
+// WHAT:  Performs OAuth, installs the provider, and persists the account's live models.
+// WHY:   Provider integration belongs to the primary console transport.
+// HOW:   Prints the authorization URL, waits for the localhost callback, then saves config.
+// RETURNS: error if OAuth, provider installation, or config persistence fails.
+func (c *Console) authenticateChatGPT() error {
+	credential, err := provider.AuthenticateChatGPT(context.Background(), c.Out)
+	if err != nil {
+		return err
+	}
+	if err := provider.InstallChatGPTProvider(c.Agent.Config, credential); err != nil {
+		return err
+	}
+	models, err := c.Agent.ListProviderModels(provider.ChatGPTOAuthProviderName)
+	if err != nil {
+		return fmt.Errorf("cannot retrieve ChatGPT models: %w", err)
+	}
+	if len(models) == 0 {
+		return fmt.Errorf("ChatGPT provider returned no models")
+	}
+	for _, model := range models {
+		modelID := provider.ChatGPTOAuthProviderName + "/" + model
+		if err := c.Agent.Config.AddFavorite(modelID); err != nil {
+			return fmt.Errorf("cannot save ChatGPT model %q: %w", modelID, err)
+		}
+	}
+	if err := c.Agent.Config.Save(); err != nil {
+		return fmt.Errorf("cannot save ChatGPT provider: %w", err)
+	}
+	fmt.Fprintln(c.Out, "ChatGPT provider connected.")
+	fmt.Fprintln(c.Out, "Available models:")
+	for _, model := range models {
+		fmt.Fprintf(c.Out, "  %s/%s\n", provider.ChatGPTOAuthProviderName, model)
+	}
+	fmt.Fprintln(c.Out, "Use /model to select a ChatGPT model.")
+	return nil
 }
 
 // interactiveSelectModel runs the interactive provider→model selection flow.

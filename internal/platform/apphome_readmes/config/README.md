@@ -7,7 +7,7 @@ This folder stores BlazeAI machine-local configuration files.
 
 `config.json` overview:
 
-- `providers`: provider definitions. Each item needs `name`, `endpoint`, and `api_key`.
+- `providers`: provider definitions. API-key providers need `name`, `endpoint`, and `api_key`; OAuth providers store `auth_type: "oauth"` plus the Codex identity, access, refresh, account, and token-exchange API-key credentials. Configure providers from the primary console.
 - `favorite_models`: quick-pick list of model IDs in `provider/model_name` form.
 - `roles`: model assignments. `default` is required; `vision`, `summarization`, and `advisor` are optional.
 - `compaction`: context compaction thresholds such as trigger, target, summary budget, file cap, local token estimate coefficient, and hard-cap backoff.
