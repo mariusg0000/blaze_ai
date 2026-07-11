@@ -22,13 +22,15 @@ import (
 
 // mockHandler captures handler calls for verification.
 type mockHandler struct {
-	content     []string
-	toolCalls   []string
-	toolResults []string
-	usages      []int
-	systemMsgs  []string
-	onContent   func(string)
-	onToolCall  func(string, string)
+	content            []string
+	toolCalls          []string
+	toolResults        []string
+	usages             []int
+	systemMsgs         []string
+	maintenanceCalls   []string
+	maintenanceResults []string
+	onContent          func(string)
+	onToolCall         func(string, string)
 }
 
 func (h *mockHandler) OnContent(delta string) {
@@ -46,9 +48,15 @@ func (h *mockHandler) OnToolCall(name string, args string) {
 func (h *mockHandler) OnToolResult(name string, result string) {
 	h.toolResults = append(h.toolResults, name+": "+result)
 }
-func (h *mockHandler) OnUsage(promptTokens int)                          { h.usages = append(h.usages, promptTokens) }
-func (h *mockHandler) OnReasoning(delta string)                          {}
-func (h *mockHandler) OnSystem(message string)                           { h.systemMsgs = append(h.systemMsgs, message) }
+func (h *mockHandler) OnUsage(promptTokens int) { h.usages = append(h.usages, promptTokens) }
+func (h *mockHandler) OnReasoning(delta string) {}
+func (h *mockHandler) OnSystem(message string)  { h.systemMsgs = append(h.systemMsgs, message) }
+func (h *mockHandler) OnMaintenanceCall(name string, args string) {
+	h.maintenanceCalls = append(h.maintenanceCalls, name+": "+args)
+}
+func (h *mockHandler) OnMaintenanceResult(name string, result string) {
+	h.maintenanceResults = append(h.maintenanceResults, name+": "+result)
+}
 func (h *mockHandler) RequestSudoApproval(command string) (bool, string) { return false, "" }
 
 // setupAgent creates a fully wired Agent with a mock SSE server.
@@ -1292,8 +1300,11 @@ func TestRunTurnTaskSwitchAppliesCleanupDuringToolLoop(t *testing.T) {
 	if err := agent.RunTurn(context.Background(), "continue analytics work"); err != nil {
 		t.Fatalf("second RunTurn() error: %v", err)
 	}
-	if len(h.systemMsgs) == 0 || !strings.Contains(h.systemMsgs[0], "User debugged auth flow") {
-		t.Fatalf("OnSystem message = %v, want task-switch summary", h.systemMsgs)
+	if len(h.maintenanceCalls) == 0 || !strings.Contains(h.maintenanceCalls[0], "task_switch: Topic change detected") {
+		t.Fatalf("maintenance call = %v, want task-switch notification", h.maintenanceCalls)
+	}
+	if len(h.maintenanceResults) == 0 || !strings.Contains(h.maintenanceResults[0], "task_switch: ok ") || !strings.Contains(h.maintenanceResults[0], "messages pruned and summarized") {
+		t.Fatalf("maintenance result = %v, want task-switch completion", h.maintenanceResults)
 	}
 	firstContent, ok := agent.Session.Messages[0].Content.(string)
 	if !ok || !strings.Contains(firstContent, syntheticPrefix) {

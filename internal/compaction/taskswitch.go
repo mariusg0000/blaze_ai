@@ -36,6 +36,7 @@ type DetectResult struct {
 type TaskSwitchFile struct {
 	UserIndex int    `json:"user_index"`
 	Summary   string `json:"summary"`
+	Error     string `json:"error,omitempty"`
 }
 
 // truncatedLen is the max character length for tool calls and tool results in the detection transcript.
@@ -195,6 +196,12 @@ func (m *Manager) ConsumeTaskSwitchResult(sess *session.Session) (*TaskSwitchFil
 		}
 		return nil, fmt.Errorf("invalid %s removed: %w", taskSwitchFile, err)
 	}
+	if strings.TrimSpace(result.Error) != "" {
+		if removeErr := m.RemoveTaskSwitchProtocolFile(sess.Folder); removeErr != nil {
+			return nil, fmt.Errorf("task-switch error and cannot remove it: %w", removeErr)
+		}
+		return nil, fmt.Errorf("task-switch summarization failed: %s", result.Error)
+	}
 	if result.UserIndex <= 0 {
 		if removeErr := m.RemoveTaskSwitchProtocolFile(sess.Folder); removeErr != nil {
 			return nil, fmt.Errorf("invalid %s and cannot remove it: %w", taskSwitchFile, removeErr)
@@ -259,7 +266,24 @@ func (m *Manager) runTaskSwitchJob(parentCtx context.Context, sessionFolder stri
 	defer cancel()
 	snapSess := &session.Session{Messages: snapshot, Folder: sessionFolder}
 	detect, err := m.DetectTaskSwitch(ctx, snapSess, existingSummaries)
-	if err != nil || ctx.Err() != nil || !detect.Changed {
+	if err != nil || ctx.Err() != nil {
+		m.taskSwitchMu.Lock()
+		defer m.taskSwitchMu.Unlock()
+		if generation != m.taskSwitchGeneration || ctx.Err() != nil && err == nil {
+			_ = removeTaskSwitchProtocolFile(sessionFolder)
+			return
+		}
+		if _, statErr := os.Stat(filepath.Join(sessionFolder, taskSwitchFile)); statErr == nil {
+			reason := err
+			if reason == nil {
+				reason = ctx.Err()
+			}
+			_ = writeTaskSwitchJSONAtomic(filepath.Join(sessionFolder, taskSwitchFile), TaskSwitchFile{Error: reason.Error()})
+		}
+		m.taskSwitchCancel = nil
+		return
+	}
+	if !detect.Changed {
 		_ = m.RemoveTaskSwitchProtocolFile(sessionFolder)
 		m.clearTaskSwitchCancel(generation)
 		return

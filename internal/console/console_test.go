@@ -50,6 +50,8 @@ func (h *mockHandler) OnToolResult(name string, result string)           {}
 func (h *mockHandler) OnUsage(promptTokens int)                          {}
 func (h *mockHandler) OnReasoning(delta string)                          {}
 func (h *mockHandler) OnSystem(message string)                           {}
+func (h *mockHandler) OnMaintenanceCall(name string, args string)        {}
+func (h *mockHandler) OnMaintenanceResult(name string, result string)    {}
 func (h *mockHandler) RequestSudoApproval(command string) (bool, string) { return false, "" }
 
 // newConsole creates a Console with a buffer for output in TTY mode.

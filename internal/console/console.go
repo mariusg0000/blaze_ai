@@ -472,6 +472,16 @@ func (c *Console) OnSystem(message string) {
 	fmt.Fprintln(c.Out, c.color(colorOrange, "⚡ System: "+message))
 }
 
+// OnMaintenanceCall renders an internal runtime operation using tool-style inline output.
+func (c *Console) OnMaintenanceCall(name string, args string) {
+	c.OnToolCall(name, args)
+}
+
+// OnMaintenanceResult renders the final internal operation status on the open tool line.
+func (c *Console) OnMaintenanceResult(name string, result string) {
+	c.OnToolResult(name, result)
+}
+
 // OnStreamPhase updates the waiting spinner label for transports that can show provider phases.
 func (c *Console) OnStreamPhase(phase provider.StreamPhase) {
 	switch phase {
@@ -637,6 +647,10 @@ func toolEmoji(name string) string {
 		return "🤝"
 	case "analyze_image":
 		return "🖼"
+	case "compaction":
+		return "🗜️"
+	case "task_switch":
+		return "🔀"
 	case "read_file":
 		return "📄"
 	case "write_file":

@@ -39,6 +39,9 @@ type Manager struct {
 	taskSwitchMu         sync.Mutex
 	taskSwitchCancel     context.CancelFunc
 	taskSwitchGeneration uint64
+
+	lastCompactionPruned int
+	lastTaskSwitchPruned int
 }
 
 // NewManager creates a compaction Manager from config and provider clients.
@@ -51,6 +54,16 @@ type Manager struct {
 // RETURNS: *Manager — ready to check and compact.
 func NewManager(cfg *config.Config, client *provider.Client, summarizationClient *provider.Client) *Manager {
 	return &Manager{Config: cfg, Provider: client, SummarizationProvider: summarizationClient}
+}
+
+// LastCompactionPruned returns the number of messages removed by the last compaction.
+func (m *Manager) LastCompactionPruned() int {
+	return m.lastCompactionPruned
+}
+
+// LastTaskSwitchPruned returns the number of messages removed by the last task switch.
+func (m *Manager) LastTaskSwitchPruned() int {
+	return m.lastTaskSwitchPruned
 }
 
 // ShouldDetectTaskSwitch gates task-switch detection to run every N user turns.
@@ -256,6 +269,7 @@ func (m *Manager) Compact(sess *session.Session, usage *provider.Usage) (bool, e
 
 	pruned := sess.Messages[:cutIndex]
 	retained := sess.Messages[cutIndex:]
+	m.lastCompactionPruned = len(pruned)
 	cleanRetained, removed := session.SanitizeMessages(retained)
 	pruned = append(pruned, removed...)
 	retained = cleanRetained
@@ -701,6 +715,7 @@ func (m *Manager) CompactByTaskSwitch(sess *session.Session, userIndex int, summ
 	}
 
 	// Remove messages before the switch point.
+	m.lastTaskSwitchPruned = sessionIndex
 	sess.Messages = sess.Messages[sessionIndex:]
 
 	// Prepend synthetic summary message.

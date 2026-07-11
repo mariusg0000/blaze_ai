@@ -169,6 +169,16 @@ func (h *Handler) OnSystem(message string) {
 	}
 }
 
+// OnMaintenanceCall renders an internal runtime operation in the tool activity area.
+func (h *Handler) OnMaintenanceCall(name string, args string) {
+	h.OnToolCall(name, args)
+}
+
+// OnMaintenanceResult renders the final internal operation status in the tool activity area.
+func (h *Handler) OnMaintenanceResult(name string, result string) {
+	h.OnToolResult(name, result)
+}
+
 // OnReasoning appends one streamed reasoning/thinking chunk as its own transcript row.
 func (h *Handler) OnReasoning(delta string) {
 	h.mu.Lock()

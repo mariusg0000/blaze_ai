@@ -52,6 +52,10 @@ type Handler interface {
 	// OnSystem is called when the runtime needs to display a system-level notification
 	// to the user, such as a detected task switch.
 	OnSystem(message string)
+	// OnMaintenanceCall starts a user-visible internal operation rendered like a tool.
+	OnMaintenanceCall(name string, args string)
+	// OnMaintenanceResult finishes a user-visible internal operation on the same line.
+	OnMaintenanceResult(name string, result string)
 
 	// RequestSudoApproval is called before executing a shell command that requires sudo.
 	// The handler prompts the user for confirmation, then reads a hidden password if approved.
@@ -287,12 +291,17 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 	if a.Compactor != nil {
 		consumed, err := a.Compactor.ConsumeTaskSwitchResult(a.Session)
 		if err != nil {
+			if a.Handler != nil {
+				a.Handler.OnMaintenanceCall("task_switch", "Topic change detected")
+				a.Handler.OnMaintenanceResult("task_switch", maintenanceErrorResult(err))
+			}
 			return fmt.Errorf("cannot consume task-switch result before new detection: %w", err)
 		}
 		if consumed != nil {
 			taskSwitchAppliedThisTurn = true
 			if a.Handler != nil {
-				a.Handler.OnSystem("Task switch detected: " + consumed.Summary)
+				a.Handler.OnMaintenanceCall("task_switch", "Topic change detected")
+				a.Handler.OnMaintenanceResult("task_switch", fmt.Sprintf("ok %d messages pruned and summarized", a.Compactor.LastTaskSwitchPruned()))
 			}
 		}
 	}
@@ -307,12 +316,17 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		if a.Compactor != nil {
 			consumed, err := a.Compactor.ConsumeTaskSwitchResult(a.Session)
 			if err != nil {
+				if a.Handler != nil {
+					a.Handler.OnMaintenanceCall("task_switch", "Topic change detected")
+					a.Handler.OnMaintenanceResult("task_switch", maintenanceErrorResult(err))
+				}
 				return fmt.Errorf("cannot consume task-switch result: %w", err)
 			}
 			if consumed != nil {
 				taskSwitchAppliedThisTurn = true
 				if a.Handler != nil {
-					a.Handler.OnSystem("Task switch detected: " + consumed.Summary)
+					a.Handler.OnMaintenanceCall("task_switch", "Topic change detected")
+					a.Handler.OnMaintenanceResult("task_switch", fmt.Sprintf("ok %d messages pruned and summarized", a.Compactor.LastTaskSwitchPruned()))
 				}
 			}
 		}
@@ -495,8 +509,22 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 			if err := a.Compactor.CancelTaskSwitch(a.Session.Folder); err != nil {
 				return fmt.Errorf("cannot cancel task-switch before compaction: %w", err)
 			}
-			if _, err := a.Compactor.Compact(a.Session, lastUsage); err != nil {
+			if a.Handler != nil {
+				a.Handler.OnMaintenanceCall("compaction", "Compacting on max token limits")
+			}
+			compacted, err := a.Compactor.Compact(a.Session, lastUsage)
+			if err != nil {
+				if a.Handler != nil {
+					a.Handler.OnMaintenanceResult("compaction", maintenanceErrorResult(err))
+				}
 				return fmt.Errorf("compaction failed: %w", err)
+			}
+			if a.Handler != nil {
+				count := a.Compactor.LastCompactionPruned()
+				if !compacted {
+					count = 0
+				}
+				a.Handler.OnMaintenanceResult("compaction", fmt.Sprintf("ok %d messages pruned and summarized", count))
 			}
 			return nil
 		}
@@ -517,6 +545,16 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 	}
 
 	return nil
+}
+
+// maintenanceErrorResult maps runtime errors to the tool-style UI status protocol.
+func maintenanceErrorResult(err error) string {
+	message := err.Error()
+	lower := strings.ToLower(message)
+	if strings.Contains(lower, "timeout") || strings.Contains(lower, "deadline exceeded") {
+		return "timeout " + message
+	}
+	return "error: " + message
 }
 
 // shouldPersistAssistantMessage reports whether a partial or complete assistant message is worth saving.

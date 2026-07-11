@@ -110,6 +110,16 @@ func (h *Handler) OnSystem(message string) {
 	h.sendNotice("⚡ " + message)
 }
 
+// OnMaintenanceCall renders an internal runtime operation using Telegram tool activity.
+func (h *Handler) OnMaintenanceCall(name string, args string) {
+	h.OnToolCall(name, args)
+}
+
+// OnMaintenanceResult renders the final internal operation status using Telegram tool activity.
+func (h *Handler) OnMaintenanceResult(name string, result string) {
+	h.OnToolResult(name, result)
+}
+
 // OnReasoning is a no-op for Telegram transport (reasoning not displayed via Telegram).
 func (h *Handler) OnReasoning(delta string) {
 	// No-op — Telegram does not display reasoning blocks.
