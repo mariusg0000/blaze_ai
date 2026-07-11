@@ -1,7 +1,6 @@
 # Tasks
 
-- [x] Add cancellable, generation-guarded TaskSwitcher job state
-- [x] Reorder runtime finalization so token compaction has priority over starting TaskSwitcher
-- [x] Remove pending TaskSwitcher protocol files when token compaction cancels a job
-- [x] Add regression tests for pending cancellation, stale results, and trigger ordering
-- [x] Run `go test ./...` and `go build ./...`
+- [x] Replace token-compaction summarization prompt with append-only delta-focused instructions
+- [x] Replace TaskSwitcher prompt with stricter classification and output rules
+- [x] Update or add prompt tests for required constraints and output contracts
+- [x] Run `gofmt`, `go test ./...`, and `go build ./...`

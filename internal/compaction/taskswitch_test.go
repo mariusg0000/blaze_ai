@@ -12,6 +12,23 @@ import (
 	"blazeai/internal/session"
 )
 
+func TestDetectionSystemPromptContract(t *testing.T) {
+	prompt := detectionSystemPrompt()
+	for _, fragment := range []string{
+		"classification and memory-boundary task",
+		"[user N]",
+		"null",
+		`{"index":"user N","summary":"<concise technical summary of all messages before this user message>"}`,
+		"Do not consider it a switch when:",
+		"Do not summarize the new task",
+		"Respond ONLY with null or the JSON object.",
+	} {
+		if !strings.Contains(prompt, fragment) {
+			t.Errorf("task-switch prompt missing %q", fragment)
+		}
+	}
+}
+
 // TestBuildDetectionTranscriptBasic verifies the compact transcript format.
 func TestBuildDetectionTranscriptBasic(t *testing.T) {
 	sess := &session.Session{

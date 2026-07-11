@@ -16,6 +16,28 @@ import (
 	"blazeai/internal/session"
 )
 
+func TestBuildSummaryPromptAppendOnlyContract(t *testing.T) {
+	prompt := buildSummaryPrompt("[user] new implementation detail", "old summary", 1234)
+	for _, fragment := range []string{
+		"append-only technical memory chunk",
+		"Summarize only NEW PRUNED MESSAGES.",
+		"EXISTING HISTORICAL SUMMARIES:",
+		"NEW PRUNED MESSAGES:",
+		"IMPLEMENTATION PLANS:",
+		"Do not:",
+		"1234 tokens",
+		"old summary",
+		"[user] new implementation detail",
+	} {
+		if !strings.Contains(prompt, fragment) {
+			t.Errorf("summary prompt missing %q", fragment)
+		}
+	}
+	if strings.Contains(prompt, "global project or session state") == false {
+		t.Error("summary prompt missing global-state exclusion")
+	}
+}
+
 // setupManager creates a compaction Manager with mock config and optional mock provider.
 func setupManager(t *testing.T, handler http.HandlerFunc) (*Manager, *httptest.Server) {
 	t.Helper()

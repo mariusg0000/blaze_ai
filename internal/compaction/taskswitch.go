@@ -353,39 +353,46 @@ func buildDetectionTranscript(sess *session.Session, existingSummaries string) s
 // WHY:   The LLM must return a predictable, parseable format: null or JSON.
 // RETURNS: string — the system prompt.
 func detectionSystemPrompt() string {
-	return `You are a task-switch detector. Analyze the conversation transcript below.
+	return `TASK:
+Detect whether the transcript contains a clear switch to a substantially different task, topic, domain, or goal.
 
-Each user message is labeled as [user 0], [user 1], [user 2], etc. These labels uniquely
-identify each user message. Use them — do NOT count messages yourself.
+This is a classification and memory-boundary task, not a conversation reply. Output only the required protocol value.
 
-Determine if the user has clearly switched to a substantially different task, topic, or goal.
+INPUT:
+The transcript may begin with EXISTING HISTORICAL SUMMARIES followed by normal messages. Each user message is labeled as [user N]. Use these labels exactly. Do not count session messages yourself.
 
-Consider it a TASK SWITCH when:
-- The user explicitly states they want to work on something new or different
-- The topic, domain, or goal shifts significantly from the prior conversation
-- The user dismisses, concludes, or abandons the previous topic and starts fresh
+EXISTING HISTORICAL SUMMARIES:
+Read-only context for continuity, references, names, prior decisions, and deduplication. They are not the new task and must not be summarized again unless the transcript explicitly changes, completes, contradicts, clarifies, or depends on them.
 
-Do NOT consider it a task switch when:
-- The user asks a follow-up question on the same topic
-- The user adds a related or supplementary request
-- The user clarifies, corrects, or iterates on the current task
-- The user continues working on the same project/domain with small variations
+TASK SWITCH RULES:
 
-If NO task switch is detected, respond with exactly:
+Consider it a switch only when:
+- the user explicitly starts something new or different
+- the topic, domain, or goal shifts substantially
+- the previous task is dismissed, concluded, abandoned, or replaced
+
+Do not consider it a switch when:
+- the user asks a follow-up on the same task
+- the request is related or supplementary
+- the user clarifies, corrects, or iterates
+- the user continues in the same project or domain with a small variation
+- the request changes implementation detail but keeps the same goal
+
+OUTPUT CONTRACT:
+
+If no clear task switch exists, respond exactly:
 null
 
-If a task switch IS detected, respond with exactly a JSON object:
-{"index": "user N", "summary": "<concise summary of all messages BEFORE this user message>"}
+If a switch exists, respond only with:
+{"index":"user N","summary":"<concise technical summary of all messages before this user message>"}
 
-Replace N with the number from the [user N] label where the new task starts — for example
-"user 3" if the switch occurs at the message labeled [user 3]. Do not use the session
-message position or any other numbering.
+N must be copied from the [user N] label where the new task starts. Do not use session-message positions or recount labels.
 
-The summary must cover all user and assistant messages up to but NOT including the
-switch message. Focus on decisions, facts, actions taken, and their outcomes.
-Omit pleasantries.
+The summary must cover only messages before the switch message. Preserve technical facts, decisions, actions, outcomes, failed attempts that explain decisions, validation, and unresolved items. Do not summarize the new task, later messages, or global project state.
 
-Respond ONLY with null or the JSON object. No other text.`
+Do not answer the conversation, reproduce dialogue, quote reasoning verbatim, add markdown fences, add explanations, or add extra JSON fields.
+
+Respond ONLY with null or the JSON object.`
 }
 
 // parseDetectionResponse extracts the detection result from the LLM response text.
