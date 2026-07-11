@@ -1,6 +1,6 @@
 # Tasks
 
-- [x] Detach TaskSwitcher worker lifecycle from the completed turn context
-- [x] Preserve cancellation through explicit TaskSwitcher cancellation and timeout
-- [x] Add regression coverage for a canceled parent turn context
+- [x] Restructure compaction prompt with clear section borders for existing summaries vs pruned messages
+- [x] Add explicit non-resummarization and incremental-only rules
+- [x] Update prompt contract test for the new sections
 - [x] Run formatting, tests, build, and inspect final diff

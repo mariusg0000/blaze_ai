@@ -7,12 +7,14 @@ package compaction
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"blazeai/internal/provider"
 	"blazeai/internal/session"
 )
 
@@ -264,6 +266,11 @@ func (m *Manager) runTaskSwitchJob(parentCtx context.Context, sessionFolder stri
 	defer cancel()
 	snapSess := &session.Session{Messages: snapshot, Folder: sessionFolder}
 	detect, err := m.DetectTaskSwitch(ctx, snapSess, existingSummaries)
+	if errors.Is(err, provider.ErrAborted) {
+		_ = m.RemoveTaskSwitchProtocolFile(sessionFolder)
+		m.clearTaskSwitchCancel(generation)
+		return
+	}
 	if err != nil || ctx.Err() != nil {
 		m.taskSwitchMu.Lock()
 		defer m.taskSwitchMu.Unlock()

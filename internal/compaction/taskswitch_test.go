@@ -2,7 +2,9 @@
 package compaction
 
 import (
+	"context"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -264,6 +266,24 @@ func TestConsumeTaskSwitchResultPending(t *testing.T) {
 	}
 	if result != nil {
 		t.Fatal("expected nil result for pending marker")
+	}
+}
+
+// TestTaskSwitchAbortRemovesProtocol verifies a canceled provider stream is not persisted as a task-switch failure.
+func TestTaskSwitchAbortRemovesProtocol(t *testing.T) {
+	m, server := setupManager(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, taskSwitchFile), nil, 0644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	m.runTaskSwitchJob(ctx, dir, []session.Message{{Role: "user", Content: "new task"}}, "", 1)
+
+	if _, err := os.Stat(filepath.Join(dir, taskSwitchFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("task-switch protocol remains after provider abort: %v", err)
 	}
 }
 

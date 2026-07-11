@@ -418,16 +418,27 @@ func (m *Manager) buildTranscript(pruned []session.Message) string {
 // RETURNS: string — the complete summarization prompt.
 func buildSummaryPrompt(transcript, existing string, maxTokens int) string {
 	var sb strings.Builder
-	sb.WriteString(`TASK:
-Write the next append-only technical memory chunk for exactly NEW PRUNED MESSAGES.
-Output only the new chunk, not a conversation reply.
+	sb.WriteString(`=== EXISTING HISTORICAL SUMMARIES — REFERENCE ONLY ===
+`)
+	if existing == "" {
+		sb.WriteString("(none)\n")
+	} else {
+		sb.WriteString(existing)
+	}
+	sb.WriteString(`
+RULES for this section:
+- These are read-only context for continuity, references, names, and deduplication.
+- Do NOT summarize them. Do NOT copy them. Do NOT rewrite them. Do NOT include them in your output.
+- Mention an old fact only when NEW PRUNED MESSAGES explicitly change, confirm, contradict, clarify, or depend on it.
 
-The chunk is a compact chronological work log. It is inserted after EXISTING HISTORICAL SUMMARIES and before retained messages.
+=== NEW PRUNED MESSAGES — ONLY CONTENT TO SUMMARIZE ===
+`)
+	sb.WriteString(transcript)
+	sb.WriteString(`
 
-SCOPE:
-- Summarize only NEW PRUNED MESSAGES.
-- EXISTING HISTORICAL SUMMARIES are read-only context for continuity, references, and deduplication.
-- Do not rewrite old summaries, summarize retained messages, or infer global project or session state.
+RULES for this section:
+- This is the ONLY source for your output. Summarize only these messages.
+- Produce exactly one append-only technical memory chunk. Output only the new chunk, not a conversation reply.
 
 CHRONOLOGICAL CONTENT:
 Record events in their actual order. Preserve, when present:
@@ -465,17 +476,7 @@ LENGTH:
 Keep under approximately `)
 	sb.WriteString(strconv.Itoa(maxTokens))
 	sb.WriteString(` tokens.
-
 `)
-
-	sb.WriteString("EXISTING HISTORICAL SUMMARIES:\n")
-	if existing == "" {
-		sb.WriteString("(none)\n")
-	} else {
-		sb.WriteString(existing)
-	}
-	sb.WriteString("\n\nNEW PRUNED MESSAGES:\n")
-	sb.WriteString(transcript)
 	return sb.String()
 }
 
