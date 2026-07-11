@@ -649,8 +649,6 @@ func toolEmoji(name string) string {
 		return "🖼"
 	case "compaction":
 		return "🗜️"
-	case "task_switch":
-		return "🔀"
 	case "read_file":
 		return "📄"
 	case "write_file":

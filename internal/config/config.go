@@ -110,7 +110,6 @@ type Compaction struct {
 	MaxSummaryFiles        int     `json:"maxSummaryFiles"`        // max summary chunks retained per session
 	TokenCoefficient       float64 `json:"tokenCoefficient"`       // char-to-token divisor for local estimator
 	MaxBackoffOffsetTokens int     `json:"maxBackoffOffsetTokens"` // max offset above base threshold (hard cap)
-	TaskSwitcherTurns      int     `json:"taskSwitcherTurns"`      // how often task-switch detection runs (every N user turns); 1=every turn, 0=never
 }
 
 // StripReasoning controls reasoning part stripping in the LLM payload.
@@ -168,7 +167,6 @@ func DefaultCompaction() Compaction {
 		MaxSummaryFiles:        10,
 		TokenCoefficient:       3.5,
 		MaxBackoffOffsetTokens: 25000,
-		TaskSwitcherTurns:      3,
 	}
 }
 

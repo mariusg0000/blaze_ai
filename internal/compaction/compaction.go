@@ -15,7 +15,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 
 	"blazeai/internal/config"
 	"blazeai/internal/provider"
@@ -28,20 +27,13 @@ import (
 // WHY:   Long sessions exceed model context windows; compaction keeps them usable.
 // PARAMS: Config — compaction thresholds and strip reasoning settings; Provider — default LLM client;
 //
-//	SummarizationProvider — dedicated client for summarization (falls back to Provider when nil);
-//	taskSwitchTurnCounter — counts user turns between task-switch detection calls.
+//	SummarizationProvider — dedicated client for summarization (falls back to Provider when nil).
 type Manager struct {
 	Config                *config.Config
 	Provider              *provider.Client
 	SummarizationProvider *provider.Client
-	taskSwitchTurnCounter int
-
-	taskSwitchMu         sync.Mutex
-	taskSwitchCancel     context.CancelFunc
-	taskSwitchGeneration uint64
 
 	lastCompactionPruned int
-	lastTaskSwitchPruned int
 }
 
 // NewManager creates a compaction Manager from config and provider clients.
@@ -59,40 +51,6 @@ func NewManager(cfg *config.Config, client *provider.Client, summarizationClient
 // LastCompactionPruned returns the number of messages removed by the last compaction.
 func (m *Manager) LastCompactionPruned() int {
 	return m.lastCompactionPruned
-}
-
-// LastTaskSwitchPruned returns the number of messages removed by the last task switch.
-func (m *Manager) LastTaskSwitchPruned() int {
-	return m.lastTaskSwitchPruned
-}
-
-// ShouldDetectTaskSwitch gates task-switch detection to run every N user turns.
-//
-// WHAT:  Increments an internal per-session counter and returns true on every Nth call.
-// WHY:   Task-switch detection via summarization LLM is expensive; running it every N turns
-//
-//	(recommended: 3) balances cost against timely detection.
-//
-// HOW:   taskSwitcherTurns=1 → always true; =0 → always false (disabled).
-// PARAMS: none.
-// RETURNS: bool — true if detection should run this turn.
-func (m *Manager) ShouldDetectTaskSwitch() bool {
-	if m == nil {
-		return false
-	}
-	turns := m.Config.Compaction.TaskSwitcherTurns
-	if turns <= 0 {
-		return false
-	}
-	if turns == 1 {
-		return true
-	}
-	m.taskSwitchTurnCounter++
-	if m.taskSwitchTurnCounter >= turns {
-		m.taskSwitchTurnCounter = 0
-		return true
-	}
-	return false
 }
 
 // ShouldCompact checks whether compaction should trigger based on provider-reported usage.
@@ -680,81 +638,6 @@ func (m *Manager) RebuildForResume(sess *session.Session) error {
 	// Prepend synthetic message.
 	sess.Messages = append([]session.Message{*synthetic}, sess.Messages...)
 	return sess.Save()
-}
-
-// CompactByTaskSwitch removes messages before a task-switch boundary, writes a summary,
-// and prepends a synthetic summary message. The caller provides the summary text.
-//
-// WHAT:  Applies task-switch cleanup: save summary, remove old messages, inject synthetic.
-// WHY:   Semantic task-switch detection runs in parallel with the LLM call; this method
-//
-//	applies the result after the turn completes.
-//
-// PARAMS: sess — the session to modify; userIndex — 0-based index of the first user message
-//
-//	of the new task (counts user messages only, not session messages);
-//	summary — summary text of old messages.
-//
-// RETURNS: error if summary persistence or session save fails.
-func (m *Manager) CompactByTaskSwitch(sess *session.Session, userIndex int, summary string) error {
-	if strings.TrimSpace(summary) == "" || userIndex <= 0 {
-		return nil
-	}
-
-	// Convert user-message index to session-message index.
-	// The detection model uses user indices (simpler for the model to count only
-	// user messages in the transcript), but we need the session array index for slicing.
-	sessionIndex := userIndexToSessionIndex(sess.Messages, userIndex)
-	if sessionIndex < 0 {
-		return nil
-	}
-
-	if sessionIndex >= len(sess.Messages) {
-		return nil
-	}
-
-	// Save the new summary chunk.
-	if err := m.saveSummary(sess.Folder, summary); err != nil {
-		return fmt.Errorf("cannot save task-switch summary: %w", err)
-	}
-
-	// Trim excess summary files.
-	if err := m.trimSummaries(sess.Folder); err != nil {
-		return fmt.Errorf("cannot trim summaries after task switch: %w", err)
-	}
-
-	// Remove messages before the switch point.
-	m.lastTaskSwitchPruned = sessionIndex
-	sess.Messages = sess.Messages[sessionIndex:]
-
-	// Prepend synthetic summary message.
-	synthetic := m.buildSyntheticMessage(sess.Folder)
-	sess.Messages = append([]session.Message{synthetic}, sess.Messages...)
-
-	return sess.Save()
-}
-
-// userIndexToSessionIndex converts a 0-based user-message index to the corresponding
-// session message array index. Returns -1 if the user index is out of range.
-//
-// WHAT:  Maps user message indices (as returned by the detection model) to session array indices.
-// WHY:   The detection transcript uses [user N] labels; the model returns user indices,
-//
-//	but session pruning needs the raw array position.
-//
-// PARAMS: messages — the session message array; userIndex — 0-based user message count.
-// RETURNS: int — session array index, or -1 if not found.
-func userIndexToSessionIndex(messages []session.Message, userIndex int) int {
-	count := 0
-	for i, msg := range messages {
-		if msg.Role == "user" {
-			if count == userIndex {
-				return i
-			}
-			count++
-		}
-	}
-	return -1
 }
 
 // StripReasoningFromPayload replaces older reasoning parts with empty text while

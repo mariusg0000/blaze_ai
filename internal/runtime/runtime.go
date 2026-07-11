@@ -50,7 +50,7 @@ type Handler interface {
 	OnReasoning(delta string)
 
 	// OnSystem is called when the runtime needs to display a system-level notification
-	// to the user, such as a detected task switch.
+	// to the user.
 	OnSystem(message string)
 	// OnMaintenanceCall starts a user-visible internal operation rendered like a tool.
 	OnMaintenanceCall(name string, args string)
@@ -180,11 +180,6 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 		WorkDir:     workDir,
 		OS:          os,
 	}
-	if agent.Compactor != nil {
-		if err := agent.Compactor.RemoveTaskSwitchState(sess.Folder); err != nil {
-			return nil, fmt.Errorf("cannot clear stale task-switch state: %w", err)
-		}
-	}
 
 	// Build resolver for skill tools: resolves names against current discovery.
 	skillResolver := func(name string) (string, error) {
@@ -287,24 +282,6 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 	}); err != nil {
 		return fmt.Errorf("cannot persist user message: %w", err)
 	}
-	taskSwitchAppliedThisTurn := false
-	if a.Compactor != nil {
-		consumed, err := a.Compactor.ConsumeTaskSwitchResult(a.Session)
-		if err != nil {
-			if a.Handler != nil {
-				a.Handler.OnMaintenanceCall("task_switch", "Topic change detected")
-				a.Handler.OnMaintenanceResult("task_switch", maintenanceErrorResult(err))
-			}
-			return fmt.Errorf("cannot consume task-switch result before new detection: %w", err)
-		}
-		if consumed != nil {
-			taskSwitchAppliedThisTurn = true
-			if a.Handler != nil {
-				a.Handler.OnMaintenanceCall("task_switch", "Topic change detected")
-				a.Handler.OnMaintenanceResult("task_switch", fmt.Sprintf("ok %d messages pruned and summarized", a.Compactor.LastTaskSwitchPruned()))
-			}
-		}
-	}
 
 	var lastUsage *provider.Usage
 	var turnCompletedNormally bool
@@ -312,23 +289,6 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 	for {
 		if err := a.sanitizeSession(); err != nil {
 			return err
-		}
-		if a.Compactor != nil {
-			consumed, err := a.Compactor.ConsumeTaskSwitchResult(a.Session)
-			if err != nil {
-				if a.Handler != nil {
-					a.Handler.OnMaintenanceCall("task_switch", "Topic change detected")
-					a.Handler.OnMaintenanceResult("task_switch", maintenanceErrorResult(err))
-				}
-				return fmt.Errorf("cannot consume task-switch result: %w", err)
-			}
-			if consumed != nil {
-				taskSwitchAppliedThisTurn = true
-				if a.Handler != nil {
-					a.Handler.OnMaintenanceCall("task_switch", "Topic change detected")
-					a.Handler.OnMaintenanceResult("task_switch", fmt.Sprintf("ok %d messages pruned and summarized", a.Compactor.LastTaskSwitchPruned()))
-				}
-			}
 		}
 
 		// Build full prompt from disk + session history.
@@ -402,11 +362,6 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		}
 
 		if errors.Is(err, provider.ErrAborted) {
-			if a.Compactor != nil {
-				if removeErr := a.Compactor.RemoveTaskSwitchState(a.Session.Folder); removeErr != nil {
-					return fmt.Errorf("cannot clear task-switch state after abort: %w", removeErr)
-				}
-			}
 			if err := a.appendAbortedToolResults(resp.ToolCalls, 0); err != nil {
 				return err
 			}
@@ -416,7 +371,7 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 			return ErrTurnAborted
 		}
 
-		// No tool calls — finish the LLM loop, defer compaction/detection to after the loop.
+		// No tool calls — finish the LLM loop, defer compaction to after the loop.
 		if len(resp.ToolCalls) == 0 {
 			lastUsage = resp.Usage
 			turnCompletedNormally = true
@@ -503,12 +458,9 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		// Loop back to LLM with tool results included in session history.
 	}
 
-	// Token compaction has priority over starting or continuing TaskSwitcher.
+	// Token compaction at turn end.
 	if turnCompletedNormally && a.Compactor != nil {
 		if a.Compactor.ShouldCompact(lastUsage) {
-			if err := a.Compactor.CancelTaskSwitch(a.Session.Folder); err != nil {
-				return fmt.Errorf("cannot cancel task-switch before compaction: %w", err)
-			}
 			if a.Handler != nil {
 				a.Handler.OnMaintenanceCall("compaction", "Compacting on max token limits")
 			}
@@ -527,20 +479,6 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 				a.Handler.OnMaintenanceResult("compaction", fmt.Sprintf("ok %d messages pruned and summarized", count))
 			}
 			return nil
-		}
-
-		if !taskSwitchAppliedThisTurn {
-			hasTaskSwitchState, err := a.Compactor.HasTaskSwitchState(a.Session.Folder)
-			if err != nil {
-				return fmt.Errorf("cannot inspect task-switch state before detection: %w", err)
-			}
-			if !hasTaskSwitchState && a.Compactor.SummarizationProvider != nil && a.Compactor.ShouldDetectTaskSwitch() {
-				snapshot := make([]session.Message, len(a.Session.Messages))
-				copy(snapshot, a.Session.Messages)
-				if err := a.Compactor.StartTaskSwitchJob(a.Session, snapshot, a.Compactor.LoadSummariesText(a.Session.Folder)); err != nil {
-					return fmt.Errorf("cannot start task-switch job: %w", err)
-				}
-			}
 		}
 	}
 
@@ -772,11 +710,6 @@ func (a *Agent) NextMode() (*config.Mode, error) {
 
 // CloseSession marks the session as cleanly closed.
 func (a *Agent) CloseSession() error {
-	if a.Compactor != nil {
-		if err := a.Compactor.RemoveTaskSwitchState(a.Session.Folder); err != nil {
-			return fmt.Errorf("cannot clear task-switch state: %w", err)
-		}
-	}
 	return a.Session.Close()
 }
 
@@ -789,9 +722,6 @@ func (a *Agent) ResetConversation() error {
 	if a.Compactor != nil {
 		if err := a.Compactor.ClearSummaries(a.Session.Folder); err != nil {
 			return fmt.Errorf("cannot clear summaries: %w", err)
-		}
-		if err := a.Compactor.RemoveTaskSwitchState(a.Session.Folder); err != nil {
-			return fmt.Errorf("cannot clear task-switch state: %w", err)
 		}
 	}
 	if err := os.Remove(filepath.Join(a.Session.Folder, "prompt.json")); err != nil && !os.IsNotExist(err) {
