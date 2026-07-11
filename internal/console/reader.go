@@ -217,6 +217,14 @@ func (r *Reader) ReadEvent() (string, string, error) {
 			if !pasteMode {
 				return string(buf), "reasoning_switch", nil
 			}
+		case 0x06: // Ctrl+F — add to favorites
+			if !pasteMode {
+				return string(buf), "fav_add", nil
+			}
+		case 0x12: // Ctrl+R — remove from favorites
+			if !pasteMode {
+				return string(buf), "fav_remove", nil
+			}
 		case 0x0a, 0x0d: // Enter
 			if pasteMode {
 				r.insertChar(&buf, &pos, '\n')

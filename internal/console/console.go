@@ -367,6 +367,30 @@ func (c *Console) showStartupSplash() {
 	}
 	fmt.Fprintln(c.Out)
 
+	// Keyboard shortcuts section.
+	c.sectionLabel("Shortcuts", colorBlue)
+	shortcuts := []struct {
+		key  string
+		desc string
+	}{
+		{"Tab", "cycle work mode"},
+		{"Ctrl+\\", "cycle favorite model"},
+		{"Ctrl+F", "add model to favorites"},
+		{"Ctrl+R", "remove model from favorites"},
+		{"Ctrl+T", "toggle reasoning display"},
+		{"Ctrl+D", "exit (empty line)"},
+	}
+	maxKey := 0
+	for _, s := range shortcuts {
+		if len(s.key) > maxKey {
+			maxKey = len(s.key)
+		}
+	}
+	for _, s := range shortcuts {
+		fmt.Fprintf(c.Out, "  %-*s  %s\n", maxKey, s.key, s.desc)
+	}
+	fmt.Fprintln(c.Out)
+
 	// Skills section.
 	c.sectionLabel("Skills", colorPurple)
 	all, err := skills.DiscoverAll(c.Agent.WorkDir)
@@ -1205,6 +1229,38 @@ func (c *Console) runTTY() error {
 					state = "enabled"
 				}
 				newStatus := "[reasoning: " + state + "]"
+				c.writeSwitchStatus(newStatus)
+			}
+			c.Reader.prefill = savedText
+			continue
+		}
+
+		// Handle add/remove favorites (Ctrl+F / Ctrl+R).
+		if event == "fav_add" {
+			savedText := line
+			if err := c.Agent.Config.AddFavorite(c.Agent.ModelID); err != nil {
+				fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("add favorite error: %v", err)))
+			} else if err := c.Agent.Config.Save(); err != nil {
+				fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("save config error: %v", err)))
+			} else {
+				newStatus := "[favorite: " + c.Agent.ModelID + " +]"
+				c.writeSwitchStatus(newStatus)
+			}
+			c.Reader.prefill = savedText
+			continue
+		}
+		if event == "fav_remove" {
+			savedText := line
+			removed, err := c.Agent.Config.RemoveFavorite(c.Agent.ModelID)
+			if err != nil {
+				fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("remove favorite error: %v", err)))
+			} else if !removed {
+				newStatus := "[not in favorites: " + c.Agent.ModelID + "]"
+				c.writeSwitchStatus(newStatus)
+			} else if err := c.Agent.Config.Save(); err != nil {
+				fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("save config error: %v", err)))
+			} else {
+				newStatus := "[favorite: " + c.Agent.ModelID + " -]"
 				c.writeSwitchStatus(newStatus)
 			}
 			c.Reader.prefill = savedText
