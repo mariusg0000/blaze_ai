@@ -280,37 +280,11 @@ func (r *Reader) ReadEvent() (string, string, error) {
 		case 0x7f, 0x08: // Backspace
 			if pos > 0 {
 				r.resetHistoryNavigation()
-				if pos == len(buf) {
-					// Cursor at end — local ANSI erase. Avoids
-					// redrawing the entire multiline buffer and
-					// the resulting visual flicker.
-					removed := buf[pos-1]
-					buf = buf[:pos-1]
-					pos--
-					if removed == '\n' {
-						// Erase trailing newline: move up,
-						// position at end of previous line,
-						// clear from there to end of screen.
-						lastNL := bytes.LastIndexByte(buf[:pos], '\n')
-						col := pos
-						if lastNL >= 0 {
-							col = pos - lastNL - 1
-						}
-						fmt.Fprint(os.Stdout, "\033[A")
-						fmt.Fprint(os.Stdout, "\r")
-						if col > 0 {
-							fmt.Fprintf(os.Stdout, "\033[%dC", col)
-						}
-						fmt.Fprint(os.Stdout, "\033[J")
-					} else {
-						fmt.Fprint(os.Stdout, "\b \b")
-					}
-				} else {
-					// Mid-buffer deletion — full redraw.
-					buf = append(buf[:pos-1], buf[pos:]...)
-					pos--
-					r.redrawLine(buf, pos)
-				}
+				buf, pos = deleteBeforeCursor(buf, pos)
+				// Always redraw after deletion. In particular, removing a
+				// newline changes the visual line and cannot be repaired
+				// reliably with a local erase sequence.
+				r.redrawLine(buf, pos)
 			}
 		default:
 			if ch >= 0x20 { // Printable
@@ -349,6 +323,24 @@ func (r *Reader) navigateHistory(buf *[]byte, pos *int, older bool) {
 	*buf = []byte(r.history[r.historyPos])
 	*pos = len(*buf)
 	r.redrawLine(*buf, *pos)
+}
+
+// deleteBeforeCursor removes the byte immediately before the cursor.
+//
+// WHAT:  Deletes one byte before pos and shifts the remaining suffix left.
+// WHY:   Centralizes backspace buffer mutation so newline deletion follows the
+//
+//	same state transition as every other character deletion.
+//
+// PARAMS: buf — input buffer; pos — cursor position within buf.
+// RETURNS: []byte — updated buffer; int — updated cursor position.
+func deleteBeforeCursor(buf []byte, pos int) ([]byte, int) {
+	if pos <= 0 || pos > len(buf) {
+		return buf, pos
+	}
+	copy(buf[pos-1:], buf[pos:])
+	buf = buf[:len(buf)-1]
+	return buf, pos - 1
 }
 
 // insertChar inserts a byte at the cursor position and updates the display.

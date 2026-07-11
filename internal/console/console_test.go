@@ -846,6 +846,31 @@ func TestReaderHistoryNavigationRestoresDraft(t *testing.T) {
 	}
 }
 
+// TestDeleteBeforeCursorAcrossNewline verifies backspace can continue into the previous line.
+func TestDeleteBeforeCursorAcrossNewline(t *testing.T) {
+	buf := []byte("first\nsecond")
+	pos := len(buf)
+
+	buf, pos = deleteBeforeCursor(buf, pos)
+	if string(buf) != "first\nsecon" || pos != len(buf) {
+		t.Fatalf("delete character = %q, pos=%d", buf, pos)
+	}
+	for i := 0; i < 5; i++ {
+		buf, pos = deleteBeforeCursor(buf, pos)
+	}
+	if string(buf) != "first\n" || pos != len(buf) {
+		t.Fatalf("delete second-line text = %q, pos=%d", buf, pos)
+	}
+	buf, pos = deleteBeforeCursor(buf, pos)
+	if string(buf) != "first" || pos != len(buf) {
+		t.Fatalf("delete newline = %q, pos=%d", buf, pos)
+	}
+	buf, pos = deleteBeforeCursor(buf, pos)
+	if string(buf) != "firs" || pos != len(buf) {
+		t.Fatalf("delete first-line character = %q, pos=%d", buf, pos)
+	}
+}
+
 // TestPromptLabelWithMode verifies prompt label shows [<mode> mode]> format.
 func TestPromptLabelWithMode(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
