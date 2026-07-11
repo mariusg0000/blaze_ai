@@ -283,9 +283,6 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		return fmt.Errorf("cannot persist user message: %w", err)
 	}
 
-	var lastUsage *provider.Usage
-	var turnCompletedNormally bool
-
 	for {
 		if err := a.sanitizeSession(); err != nil {
 			return err
@@ -371,11 +368,18 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 			return ErrTurnAborted
 		}
 
-		// No tool calls — finish the LLM loop, defer compaction to after the loop.
+		// Compact after every LLM response if context exceeds limit.
+		// This covers both tool-call and final responses — context can grow past
+		// MaxContextTokens during a multi-call turn, not just at turn end.
+		if resp.Usage != nil && a.Compactor != nil && a.Compactor.ShouldCompact(resp.Usage) {
+			if _, err := a.compact(resp.Usage); err != nil {
+				return err
+			}
+		}
+
+		// No tool calls — turn is complete.
 		if len(resp.ToolCalls) == 0 {
-			lastUsage = resp.Usage
-			turnCompletedNormally = true
-			break
+			return nil
 		}
 
 		// Execute tool calls and append results.
@@ -457,32 +461,29 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 
 		// Loop back to LLM with tool results included in session history.
 	}
+}
 
-	// Token compaction at turn end.
-	if turnCompletedNormally && a.Compactor != nil {
-		if a.Compactor.ShouldCompact(lastUsage) {
-			if a.Handler != nil {
-				a.Handler.OnMaintenanceCall("compaction", "Compacting on max token limits")
-			}
-			compacted, err := a.Compactor.Compact(a.Session, lastUsage)
-			if err != nil {
-				if a.Handler != nil {
-					a.Handler.OnMaintenanceResult("compaction", maintenanceErrorResult(err))
-				}
-				return fmt.Errorf("compaction failed: %w", err)
-			}
-			if a.Handler != nil {
-				count := a.Compactor.LastCompactionPruned()
-				if !compacted {
-					count = 0
-				}
-				a.Handler.OnMaintenanceResult("compaction", fmt.Sprintf("ok %d messages pruned and summarized", count))
-			}
-			return nil
-		}
+// compact runs token compaction on the current session using provider-reported usage.
+// Emits maintenance UI notifications and returns the success of the compaction.
+func (a *Agent) compact(usage *provider.Usage) (bool, error) {
+	if a.Handler != nil {
+		a.Handler.OnMaintenanceCall("compaction", "Compacting on max token limits")
 	}
-
-	return nil
+	compacted, err := a.Compactor.Compact(a.Session, usage)
+	if err != nil {
+		if a.Handler != nil {
+			a.Handler.OnMaintenanceResult("compaction", maintenanceErrorResult(err))
+		}
+		return false, fmt.Errorf("compaction failed: %w", err)
+	}
+	if a.Handler != nil {
+		count := a.Compactor.LastCompactionPruned()
+		if !compacted {
+			count = 0
+		}
+		a.Handler.OnMaintenanceResult("compaction", fmt.Sprintf("ok %d messages pruned and summarized", count))
+	}
+	return compacted, nil
 }
 
 // maintenanceErrorResult maps runtime errors to the tool-style UI status protocol.
