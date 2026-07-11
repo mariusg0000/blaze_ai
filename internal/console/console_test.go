@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -795,6 +796,53 @@ func TestReaderReadLineEOF(t *testing.T) {
 	_, err := r.ReadLine()
 	if err == nil {
 		t.Error("ReadLine() expected EOF, got nil")
+	}
+}
+
+// TestReaderHistoryDeduplicatesConsecutiveEntries verifies history storage rules.
+func TestReaderHistoryDeduplicatesConsecutiveEntries(t *testing.T) {
+	r := NewReader(strings.NewReader(""), false)
+	r.AddHistory("first")
+	r.AddHistory("first")
+	r.AddHistory("second")
+
+	got := r.History()
+	want := []string{"first", "second"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("History() = %#v, want %#v", got, want)
+	}
+	got[0] = "changed"
+	if r.History()[0] != "first" {
+		t.Fatal("History() exposed internal storage")
+	}
+}
+
+// TestReaderHistoryNavigationRestoresDraft verifies Up/Down navigation preserves the draft.
+func TestReaderHistoryNavigationRestoresDraft(t *testing.T) {
+	r := NewReader(strings.NewReader(""), false)
+	r.AddHistory("older")
+	r.AddHistory("newer")
+	buf := []byte("draft")
+	pos := len(buf)
+
+	r.navigateHistory(&buf, &pos, true)
+	if string(buf) != "newer" {
+		t.Fatalf("first Up = %q, want newer", buf)
+	}
+	r.navigateHistory(&buf, &pos, true)
+	if string(buf) != "older" {
+		t.Fatalf("second Up = %q, want older", buf)
+	}
+	r.navigateHistory(&buf, &pos, false)
+	if string(buf) != "newer" {
+		t.Fatalf("first Down = %q, want newer", buf)
+	}
+	r.navigateHistory(&buf, &pos, false)
+	if string(buf) != "draft" {
+		t.Fatalf("second Down = %q, want draft", buf)
+	}
+	if r.historyActive {
+		t.Fatal("history remains active after draft restoration")
 	}
 }
 

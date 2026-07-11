@@ -32,16 +32,26 @@ func isTerminal(f *os.File) bool {
 // Reader reads input from the terminal with raw-mode key detection.
 //
 // WHAT:  Reads user input with Tab (mode switch), Enter, Backspace, Ctrl-D,
-//        and cursor movement (arrows, home, end, delete) support.
+//
+//	and cursor movement (arrows, home, end, delete) support.
+//
 // WHY:   Tab key detection requires raw terminal mode per spec.
-//        Cursor movement requires CSI escape sequence parsing.
+//
+//	Cursor movement requires CSI escape sequence parsing.
+//
 // PARAMS: scanner — buffered line scanner for cooked-mode fallback;
-//         isTTY — whether raw-mode key detection is active.
+//
+//	isTTY — whether raw-mode key detection is active.
 type Reader struct {
 	scanner *bufio.Scanner
 	isTTY   bool
 	prompt  string
 	prefill string
+
+	history       []string
+	historyPos    int
+	historyDraft  string
+	historyActive bool
 }
 
 // NewReader creates a Reader from an io.Reader.
@@ -59,6 +69,31 @@ func NewReader(r io.Reader, isTTY bool) *Reader {
 // PARAMS: p — the prompt label printed before user input.
 func (r *Reader) SetPrompt(p string) {
 	r.prompt = p
+}
+
+// AddHistory stores a submitted non-empty input for Up/Down navigation.
+// Consecutive duplicates are ignored.
+func (r *Reader) AddHistory(input string) {
+	if input == "" {
+		return
+	}
+	if len(r.history) > 0 && r.history[len(r.history)-1] == input {
+		return
+	}
+	r.history = append(r.history, input)
+	r.historyPos = len(r.history)
+}
+
+// History returns a copy of the current in-memory input history.
+func (r *Reader) History() []string {
+	return append([]string(nil), r.history...)
+}
+
+// resetHistoryNavigation leaves history mode after an edit.
+func (r *Reader) resetHistoryNavigation() {
+	r.historyPos = len(r.history)
+	r.historyDraft = ""
+	r.historyActive = false
 }
 
 // ReadLine reads one line from the buffered scanner.
@@ -103,6 +138,9 @@ func (r *Reader) ReadEvent() (string, string, error) {
 
 	var buf []byte
 	pos := 0
+	r.historyPos = len(r.history)
+	r.historyDraft = ""
+	r.historyActive = false
 	if r.prefill != "" {
 		buf = []byte(r.prefill)
 		pos = len(buf)
@@ -146,6 +184,7 @@ func (r *Reader) ReadEvent() (string, string, error) {
 				switch params {
 				case "3": // Delete key
 					if pos < len(buf) {
+						r.resetHistoryNavigation()
 						buf = append(buf[:pos], buf[pos+1:]...)
 						r.redrawLine(buf, pos)
 					}
@@ -161,7 +200,9 @@ func (r *Reader) ReadEvent() (string, string, error) {
 				csiState = 0
 				switch ch {
 				case 'A': // Up arrow
+					r.navigateHistory(&buf, &pos, true)
 				case 'B': // Down arrow
+					r.navigateHistory(&buf, &pos, false)
 				case 'C': // Right arrow
 					if pos < len(buf) {
 						pos++
@@ -238,6 +279,7 @@ func (r *Reader) ReadEvent() (string, string, error) {
 			}
 		case 0x7f, 0x08: // Backspace
 			if pos > 0 {
+				r.resetHistoryNavigation()
 				if pos == len(buf) {
 					// Cursor at end — local ANSI erase. Avoids
 					// redrawing the entire multiline buffer and
@@ -278,12 +320,41 @@ func (r *Reader) ReadEvent() (string, string, error) {
 	}
 }
 
+// navigateHistory replaces the current buffer with a history entry and redraws it.
+// Up moves toward older entries; Down moves toward newer entries and eventually restores the draft.
+func (r *Reader) navigateHistory(buf *[]byte, pos *int, older bool) {
+	if len(r.history) == 0 {
+		return
+	}
+	if !r.historyActive {
+		r.historyDraft = string(*buf)
+		r.historyPos = len(r.history)
+		r.historyActive = true
+	}
+
+	if older {
+		if r.historyPos > 0 {
+			r.historyPos--
+		}
+	} else if r.historyPos < len(r.history)-1 {
+		r.historyPos++
+	} else {
+		*buf = []byte(r.historyDraft)
+		*pos = len(*buf)
+		r.resetHistoryNavigation()
+		r.redrawLine(*buf, *pos)
+		return
+	}
+
+	*buf = []byte(r.history[r.historyPos])
+	*pos = len(*buf)
+	r.redrawLine(*buf, *pos)
+}
+
 // insertChar inserts a byte at the cursor position and updates the display.
-//
-// WHAT:  Inserts ch into buf at pos, advances pos, and redraws if needed.
-// WHY:   Shared between printable chars, pasted tabs, and pasted newlines.
-// PARAMS: buf — pointer to the input buffer; pos — pointer to cursor position; ch — byte to insert.
+// It also exits history navigation because the user is editing the recalled entry.
 func (r *Reader) insertChar(buf *[]byte, pos *int, ch byte) {
+	r.resetHistoryNavigation()
 	if *pos < len(*buf) {
 		*buf = append(*buf, 0)
 		copy((*buf)[*pos+1:], (*buf)[*pos:])
@@ -304,14 +375,18 @@ func (r *Reader) insertChar(buf *[]byte, pos *int, ch byte) {
 // redrawLine reprints the input line from column 0 and positions the cursor.
 //
 // WHAT:  Redraws the complete input line and places the cursor at the correct
-//        editing position. Handles multiline buffers reliably by restoring the
-//        cursor to the saved position (right after the prompt), clearing to end
-//        of screen, then rewriting the buffer — this works regardless of terminal
-//        wrapping or Unicode character widths.
+//
+//	editing position. Handles multiline buffers reliably by restoring the
+//	cursor to the saved position (right after the prompt), clearing to end
+//	of screen, then rewriting the buffer — this works regardless of terminal
+//	wrapping or Unicode character widths.
+//
 // WHY:   Required after insert, delete, or any mutation in the middle of the
-//        buffer. The old approach of counting newlines for \033[<N>A breaks
-//        when terminal wrapping causes content to span more visual lines than
-//        the literal \n count.
+//
+//	buffer. The old approach of counting newlines for \033[<N>A breaks
+//	when terminal wrapping causes content to span more visual lines than
+//	the literal \n count.
+//
 // PARAMS: buf — the full input buffer; pos — desired cursor position (0..len(buf)).
 func (r *Reader) redrawLine(buf []byte, pos int) {
 	// Restore cursor to the saved position (right after the initial prompt).

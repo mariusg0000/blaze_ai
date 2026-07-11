@@ -1287,6 +1287,9 @@ func (c *Console) runTTY() error {
 			}
 		}
 
+		// Keep normal user messages in the in-memory input history.
+		c.Reader.AddHistory(input)
+
 		// Reset the sticky switch status line: the user is now sending
 		// a message, so the next switch will start with a fresh line.
 		c.switchLineActive = false
