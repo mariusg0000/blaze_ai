@@ -192,6 +192,17 @@ func (r *Reader) ReadEvent() (string, string, error) {
 					pasteMode = true
 				case "201": // Bracketed paste end
 					pasteMode = false
+					// Sanitize trailing newlines from clipboard pastes.
+					// A trailing \n in the buffer causes redrawLine to output
+					// an extra \r\n that desynchronizes the terminal cursor
+					// from the saved restore point, making backspace jump.
+					if trimmed := bytes.TrimRight(buf, "\n"); len(trimmed) < len(buf) {
+						buf = trimmed
+						if pos > len(buf) {
+							pos = len(buf)
+						}
+						r.redrawLine(buf, pos)
+					}
 				}
 				continue
 			}
