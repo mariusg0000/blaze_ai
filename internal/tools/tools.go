@@ -150,11 +150,24 @@ func AllToOpenAI(r *Registry) []OpenAITool {
 //
 //	uses a flat structure without JSON tags that doesn't match.
 //
-// PARAMS: ID — call identifier; Type — always "function"; Function — name and arguments.
+// PARAMS: ID — call identifier; Type — always "function"; Function — name and arguments;
+//
+//	ExtraContent — provider-specific extensions (e.g. Google Gemini thought_signature).
 type OpenAIToolCall struct {
-	ID       string         `json:"id"`
-	Type     string         `json:"type"`
-	Function OpenAIFunction `json:"function"`
+	ID           string         `json:"id"`
+	Type         string         `json:"type"`
+	Function     OpenAIFunction `json:"function"`
+	ExtraContent *ExtraContent  `json:"extra_content,omitempty"`
+}
+
+// ExtraContent holds provider-specific extensions in tool calls.
+type ExtraContent struct {
+	Google *GoogleExtra `json:"google,omitempty"`
+}
+
+// GoogleExtra holds Google-specific fields for the OpenAI-compatible API.
+type GoogleExtra struct {
+	ThoughtSignature string `json:"thought_signature,omitempty"`
 }
 
 // OpenAIFunction holds the function name and arguments in the OpenAI API format.
@@ -169,7 +182,7 @@ type OpenAIFunction struct {
 // PARAMS: tc — internal tool call.
 // RETURNS: OpenAIToolCall — API-compatible tool call.
 func ToOpenAIToolCall(tc ToolCall) OpenAIToolCall {
-	return OpenAIToolCall{
+	oc := OpenAIToolCall{
 		ID:   tc.ID,
 		Type: "function",
 		Function: OpenAIFunction{
@@ -177,16 +190,27 @@ func ToOpenAIToolCall(tc ToolCall) OpenAIToolCall {
 			Arguments: string(tc.Arguments),
 		},
 	}
+	if tc.ThoughtSignature != "" {
+		oc.ExtraContent = &ExtraContent{
+			Google: &GoogleExtra{
+				ThoughtSignature: tc.ThoughtSignature,
+			},
+		}
+	}
+	return oc
 }
 
 // ToolCall represents a tool call from the LLM response.
 //
 // WHAT:  Holds the parsed tool call from the assistant response.
-// PARAMS: ID — call identifier from the API; Name — tool name; Arguments — raw JSON arguments.
+// PARAMS: ID — call identifier from the API; Name — tool name; Arguments — raw JSON arguments;
+//
+//	ThoughtSignature — Google Gemini reasoning signature for tool calls.
 type ToolCall struct {
-	ID        string
-	Name      string
-	Arguments json.RawMessage
+	ID              string
+	Name            string
+	Arguments       json.RawMessage
+	ThoughtSignature string
 }
 
 // ParseToolCallArgs extracts typed arguments from raw JSON.

@@ -230,7 +230,9 @@ func (c *Client) ListModels() ([]string, error) {
 
 	ids := make([]string, 0, len(result.Data))
 	for _, m := range result.Data {
-		ids = append(ids, m.ID)
+		id := m.ID
+		id = strings.TrimPrefix(id, "models/")
+		ids = append(ids, id)
 	}
 	return ids, nil
 }
@@ -326,11 +328,23 @@ type streamDelta struct {
 // WHAT:  Tool call delta with index for assembling multi-chunk tool calls.
 // PARAMS: Index — position in the tool calls array; ID — call ID (first chunk only);
 //
-//	Function — function name and arguments deltas.
+//	Function — function name and arguments deltas;
+//	ExtraContent — provider-specific extensions (e.g. Google Gemini thought_signature).
 type streamToolCall struct {
-	Index    int            `json:"index"`
-	ID       string         `json:"id,omitempty"`
-	Function streamFunction `json:"function"`
+	Index        int            `json:"index"`
+	ID           string         `json:"id,omitempty"`
+	Function     streamFunction `json:"function"`
+	ExtraContent *extraContent  `json:"extra_content,omitempty"`
+}
+
+// extraContent holds provider-specific extensions in tool calls.
+type extraContent struct {
+	Google *googleExtra `json:"google,omitempty"`
+}
+
+// googleExtra holds Google-specific fields from the OpenAI-compatible response.
+type googleExtra struct {
+	ThoughtSignature string `json:"thought_signature,omitempty"`
 }
 
 // streamFunction holds the function name and arguments deltas.
@@ -567,24 +581,28 @@ func parseSSEStream(ctx context.Context, reader io.ReadCloser, onContent func(st
 					}
 				}
 
-				for _, tc := range delta.ToolCalls {
-					existing, ok := toolCallMap[tc.Index]
-					if !ok {
-						existing = &tools.ToolCall{
-							ID:   tc.ID,
-							Name: tc.Function.Name,
-						}
-						toolCallMap[tc.Index] = existing
-						toolCallOrder = append(toolCallOrder, tc.Index)
+			for _, tc := range delta.ToolCalls {
+				existing, ok := toolCallMap[tc.Index]
+				if !ok {
+					existing = &tools.ToolCall{
+						ID:   tc.ID,
+						Name: tc.Function.Name,
 					}
-					if tc.ID != "" && existing.ID == "" {
-						existing.ID = tc.ID
-					}
-					if tc.Function.Name != "" && existing.Name == "" {
-						existing.Name = tc.Function.Name
-					}
-					existing.Arguments = appendRawJSON(existing.Arguments, tc.Function.Arguments)
+					toolCallMap[tc.Index] = existing
+					toolCallOrder = append(toolCallOrder, tc.Index)
 				}
+				if tc.ID != "" && existing.ID == "" {
+					existing.ID = tc.ID
+				}
+				if tc.Function.Name != "" && existing.Name == "" {
+					existing.Name = tc.Function.Name
+				}
+				if tc.ExtraContent != nil && tc.ExtraContent.Google != nil &&
+					tc.ExtraContent.Google.ThoughtSignature != "" && existing.ThoughtSignature == "" {
+					existing.ThoughtSignature = tc.ExtraContent.Google.ThoughtSignature
+				}
+				existing.Arguments = appendRawJSON(existing.Arguments, tc.Function.Arguments)
+			}
 			}
 		}
 	}
