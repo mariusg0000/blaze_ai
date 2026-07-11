@@ -57,7 +57,7 @@ var slashCommands = []slashCmd{
 	{"/cd <path>", "change working folder"},
 	{"/clear", "clear current session"},
 	{"/new", "start a clean session"},
-	{"/show-reasoning", "toggle reasoning display"},
+	{"Ctrl+T", "toggle reasoning display"},
 	{"/exit", "close session cleanly"},
 }
 
@@ -1193,6 +1193,24 @@ func (c *Console) runTTY() error {
 			continue
 		}
 
+		// Handle reasoning display toggle (Ctrl+T).
+		if event == "reasoning_switch" {
+			savedText := line
+			c.Agent.Config.ShowReasoning = !c.Agent.Config.ShowReasoning
+			if err := c.Agent.Config.Save(); err != nil {
+				fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("reasoning toggle error: %v", err)))
+			} else {
+				state := "disabled"
+				if c.Agent.Config.ShowReasoning {
+					state = "enabled"
+				}
+				newStatus := "[reasoning: " + state + "]"
+				c.writeSwitchStatus(newStatus)
+			}
+			c.Reader.prefill = savedText
+			continue
+		}
+
 		input := strings.TrimSpace(line)
 		if input == "" {
 			continue
@@ -1410,23 +1428,11 @@ func (c *Console) handleCommand(input string) (bool, bool, error) {
 		}
 		fmt.Fprintln(c.Out, "Session cleared.")
 		return true, false, nil
-	case "/show-reasoning":
-		c.Agent.Config.ShowReasoning = !c.Agent.Config.ShowReasoning
-		if err := c.Agent.Config.Save(); err != nil {
-			return true, false, fmt.Errorf("cannot save config: %w", err)
-		}
-		state := "disabled"
-		if c.Agent.Config.ShowReasoning {
-			state = "enabled"
-		}
-		fmt.Fprintf(c.Out, "Reasoning display %s\n", state)
-		return true, false, nil
 	default:
 		// Unknown slash command — pass to agent as normal message.
 		return false, false, nil
 	}
 }
-
 // listModels prints the favorite models from config.
 //
 // WHAT:  Displays the configured favorite models.
@@ -1445,7 +1451,6 @@ func (c *Console) listModels() {
 		fmt.Fprintf(c.Out, "%s%s\n", marker, m)
 	}
 }
-
 // authenticateChatGPT connects the console to ChatGPT through browser OAuth.
 //
 // WHAT:  Performs OAuth, installs the provider, and persists the account's live models.
@@ -1484,7 +1489,6 @@ func (c *Console) authenticateChatGPT() error {
 	fmt.Fprintln(c.Out, "Use /model to select a ChatGPT model.")
 	return nil
 }
-
 // interactiveSelectModel runs the interactive provider→model selection flow.
 //
 // WHAT:  Prompts user to select a provider, fetches its models, then selects one.
@@ -1496,7 +1500,6 @@ func (c *Console) interactiveSelectModel() error {
 	if len(providers) == 0 {
 		return fmt.Errorf("no providers configured")
 	}
-
 	// Step 1: select provider.
 	var selectedProvider config.Provider
 	if len(providers) == 1 {
@@ -1510,14 +1513,12 @@ func (c *Console) interactiveSelectModel() error {
 			fmt.Fprintf(c.Out, "%s%2d. %s (%s)\n", marker, i+1, p.Name, p.Endpoint)
 		}
 		fmt.Fprint(c.Out, "> ")
-
 		num, err := c.readInteractiveNumber(1, len(providers))
 		if err != nil {
 			return err
 		}
 		selectedProvider = providers[num-1]
 	}
-
 	// Step 2: fetch models from the provider endpoint.
 	fmt.Fprintln(c.Out)
 	fmt.Fprintf(c.Out, "Fetching models from %s...\n", selectedProvider.Name)
@@ -1528,7 +1529,6 @@ func (c *Console) interactiveSelectModel() error {
 	if len(models) == 0 {
 		return fmt.Errorf("provider %s returned no models", selectedProvider.Name)
 	}
-
 	// Step 3: select model.
 	fmt.Fprintln(c.Out, c.bold("Select model:"))
 	padding := paddingWidth(len(models))
@@ -1540,13 +1540,11 @@ func (c *Console) interactiveSelectModel() error {
 		fmt.Fprintf(c.Out, "%s%*d. %s\n", marker, padding, i+1, m)
 	}
 	fmt.Fprint(c.Out, "> ")
-
 	num, err := c.readInteractiveNumber(1, len(models))
 	if err != nil {
 		return err
 	}
 	modelID := selectedProvider.Name + "/" + models[num-1]
-
 	// Step 4: set the model.
 	if err := c.Agent.SetModel(modelID); err != nil {
 		return err
@@ -1554,7 +1552,6 @@ func (c *Console) interactiveSelectModel() error {
 	fmt.Fprintf(c.Out, "Model set to: %s\n", modelID)
 	return nil
 }
-
 // readInteractiveNumber reads a line from stdin and parses it as a number in [min, max].
 //
 // WHAT:  Prompts for and validates a numeric input within a range.
@@ -1570,7 +1567,6 @@ func (c *Console) readInteractiveNumber(min, max int) (int, error) {
 	}
 	return num, nil
 }
-
 // readInteractiveLine reads a single trimmed line from stdin in cooked mode.
 //
 // WHAT:  Reads one line from os.Stdin (works between raw-mode ReadEvent calls).
@@ -1585,7 +1581,6 @@ func (c *Console) readInteractiveLine() (string, error) {
 	}
 	return strings.TrimSpace(scanner.Text()), nil
 }
-
 // paddingWidth returns the number of digits needed for the largest index.
 func paddingWidth(count int) int {
 	w := 1

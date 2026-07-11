@@ -213,6 +213,10 @@ func (r *Reader) ReadEvent() (string, string, error) {
 			if !pasteMode {
 				return string(buf), "model_switch", nil
 			}
+		case 0x14: // Ctrl+T
+			if !pasteMode {
+				return string(buf), "reasoning_switch", nil
+			}
 		case 0x0a, 0x0d: // Enter
 			if pasteMode {
 				r.insertChar(&buf, &pos, '\n')
