@@ -265,6 +265,11 @@ eventSource.addEventListener('status', function(e) {
   clearBtn.disabled = data.busy;
 });
 
+eventSource.addEventListener('clear', function() {
+  lastBlocks = [];
+  transcriptEl.innerHTML = '';
+});
+
 eventSource.addEventListener('config', function(e) {
   var cfg = JSON.parse(e.data);
   currentModel = cfg.model;

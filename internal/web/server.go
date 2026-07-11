@@ -313,6 +313,17 @@ func (s *Server) handleInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Handle recognized slash commands locally; never send them to the LLM.
+	if handled, err := s.handleSlashCommand(text); handled {
+		if err != nil {
+			s.sendBlock("system", `<span class="red">✖ `+escapeHTML(err.Error())+`</span>`)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
 	// Add user message as a block.
 	html := `<span class="user-text">` + escapeHTML(text) + `</span>`
 	s.sendBlock("user", html)
@@ -447,6 +458,12 @@ func (s *Server) handleToggleReasoning(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// broadcastClear tells browser clients to discard their local transcript.
+func (s *Server) broadcastClear() {
+	payload, _ := json.Marshal(map[string]interface{}{"_clear": true})
+	s.hub.broadcast(sseEvent{Event: "clear", Data: string(payload)})
+}
+
 // handleClear resets the current session.
 func (s *Server) handleClear(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -468,18 +485,8 @@ func (s *Server) handleClear(w http.ResponseWriter, r *http.Request) {
 	s.status = "Ready"
 	s.mu.Unlock()
 
-	// Signal the frontend to clear its transcript.
-	payload, _ := json.Marshal(map[string]interface{}{
-		"modes":     []string{},
-		"mode":      "",
-		"model":     "",
-		"favorites": []string{},
-		"workdir":   "",
-		"reasoning": false,
-		"_clear":    true,
-	})
-	s.hub.broadcast(sseEvent{Event: "config", Data: string(payload)})
-	// Then send real config without _clear flag.
+	// Signal the frontend to clear its transcript, then send current config.
+	s.broadcastClear()
 	s.broadcastConfig()
 	w.WriteHeader(http.StatusOK)
 }
