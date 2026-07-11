@@ -154,6 +154,7 @@ func (r *Reader) ReadEvent() (string, string, error) {
 	csiBuf := make([]byte, 0, 8)
 	csiState := 0 // 0=normal, 1=saw ESC, 2=in CSI
 	pasteMode := false
+	var pasteBuf []byte
 
 	for {
 		b := make([]byte, 1)
@@ -190,18 +191,18 @@ func (r *Reader) ReadEvent() (string, string, error) {
 					}
 				case "200": // Bracketed paste start
 					pasteMode = true
+					pasteBuf = pasteBuf[:0]
 				case "201": // Bracketed paste end
 					pasteMode = false
-					// Sanitize trailing newlines from clipboard pastes.
-					// A trailing \n in the buffer causes redrawLine to output
-					// an extra \r\n that desynchronizes the terminal cursor
-					// from the saved restore point, making backspace jump.
-					if trimmed := bytes.TrimRight(buf, "\n"); len(trimmed) < len(buf) {
-						buf = trimmed
-						if pos > len(buf) {
-							pos = len(buf)
+					// Insert the complete paste as one operation. This keeps
+					// multiline clipboard content separate from key editing and
+					// redraws only once before the user continues typing.
+					if len(pasteBuf) > 0 {
+						pasteBuf = normalizePaste(pasteBuf)
+						if len(pasteBuf) > 0 {
+							buf, pos = insertBytes(buf, pos, pasteBuf)
+							r.redrawLine(buf, pos)
 						}
-						r.redrawLine(buf, pos)
 					}
 				}
 				continue
@@ -250,6 +251,13 @@ func (r *Reader) ReadEvent() (string, string, error) {
 		// --- Start of ESC sequence ---
 		if ch == 0x1B {
 			csiState = 1
+			continue
+		}
+
+		// Bracketed paste payload is collected until CSI 201~.
+		// Do not run pasted bytes through key bindings or redraw per byte.
+		if pasteMode {
+			pasteBuf = append(pasteBuf, ch)
 			continue
 		}
 
@@ -334,6 +342,36 @@ func (r *Reader) navigateHistory(buf *[]byte, pos *int, older bool) {
 	*buf = []byte(r.history[r.historyPos])
 	*pos = len(*buf)
 	r.redrawLine(*buf, *pos)
+}
+
+// normalizePaste removes line endings added by clipboard tools around the pasted block.
+//
+// WHAT:  Removes trailing CR/LF characters while preserving internal newlines.
+// WHY:   Pressing Enter after a paste must submit the pasted content, not an accidental extra blank line.
+// PARAMS: pasted — raw bracketed paste payload.
+// RETURNS: normalized paste bytes.
+func normalizePaste(pasted []byte) []byte {
+	return bytes.TrimRight(pasted, "\r\n")
+}
+
+// insertBytes inserts a complete paste at the cursor and returns the new cursor position.
+//
+// WHAT:  Inserts a byte slice without interpreting its contents as key events.
+// WHY:   Multiline clipboard text must be inserted atomically before the user continues typing.
+// PARAMS: buf — input buffer; pos — cursor position; pasted — clipboard bytes.
+// RETURNS: updated buffer and cursor position.
+func insertBytes(buf []byte, pos int, pasted []byte) ([]byte, int) {
+	if pos < 0 {
+		pos = 0
+	}
+	if pos > len(buf) {
+		pos = len(buf)
+	}
+	out := make([]byte, 0, len(buf)+len(pasted))
+	out = append(out, buf[:pos]...)
+	out = append(out, pasted...)
+	out = append(out, buf[pos:]...)
+	return out, pos + len(pasted)
 }
 
 // deleteBeforeCursor removes the byte immediately before the cursor.
