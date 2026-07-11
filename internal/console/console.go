@@ -24,6 +24,8 @@ import (
 	"blazeai/internal/provider"
 	"blazeai/internal/runtime"
 	"blazeai/internal/skills"
+
+	"github.com/reeflective/readline"
 )
 
 // ANSI color codes for TTY output.
@@ -69,7 +71,7 @@ var spinnerFrames = []string{"|", "/", "-", "\\"}
 //
 // WHAT:  The terminal REPL transport that renders LLM output and handles user input.
 // WHY:   Console is the first and complete transport per spec.
-// HOW:   Always uses raw-mode input for Tab mode cycling and ANSI colors for output.
+// HOW:   Uses reeflective/readline for terminal editing, bracketed paste, and ANSI output.
 type Console struct {
 	Out    io.Writer
 	In     io.Reader
@@ -1168,19 +1170,27 @@ func (c *Console) Run() error {
 	return c.runTTY()
 }
 
-// runTTY runs the REPL loop with raw-mode input for Tab detection.
 // No background goroutine — input is read directly at the prompt.
 // During streaming, abort is via SIGINT only (no queued input).
 //
-// WHAT:  REPL with raw-mode Tab detection.
-// WHY:   Tab key requires raw terminal mode to detect.
+// WHAT:  Reads and submits the complete readline buffer.
+// WHY:   Readline owns cursor movement, redraw, history, bracketed paste, and multiline display.
+// HOW:   Enter accepts the buffer; pasted newlines remain inside it.
 func (c *Console) runTTY() error {
+	rl := readline.NewShell()
+	if err := rl.Config.Set("enable-bracketed-paste", true); err != nil {
+		return fmt.Errorf("cannot enable bracketed paste: %w", err)
+	}
+	rl.AcceptMultiline = func(line []rune) bool { return true }
+	rl.Prompt.Primary(func() string { return c.promptLabel() })
+
 	for {
-		prompt := c.promptLabel()
-		fmt.Fprint(c.Out, prompt)
-		c.Reader.SetPrompt(prompt)
-		line, event, err := c.Reader.ReadEvent()
-		if err == io.EOF {
+		line, err := rl.Readline()
+		if errors.Is(err, readline.ErrInterrupt) {
+			fmt.Fprintln(c.Out)
+			continue
+		}
+		if errors.Is(err, io.EOF) {
 			fmt.Fprintln(c.Out)
 			return nil
 		}
@@ -1188,91 +1198,11 @@ func (c *Console) runTTY() error {
 			return fmt.Errorf("input error: %w", err)
 		}
 
-		// Handle mode switch event. Save partial input so the next
-		// ReadEvent call can restore it via the prefill mechanism.
-		// First switch: overwrites old prompt line with spaces then status.
-		// Consecutive: goes up one line, overwrites previous status.
-		if event == "mode_switch" {
-			savedText := line
-			if _, switchErr := c.Agent.NextMode(); switchErr != nil {
-				fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("mode switch error: %v", switchErr)))
-			} else {
-				newStatus := fmt.Sprintf("[mode: %s | %s]", c.Agent.CurrentMode.Name, c.Agent.ModelID)
-				c.writeSwitchStatus(newStatus)
-			}
-			c.Reader.prefill = savedText
-			continue
-		}
-
-		// Handle model switch event (Ctrl+\). Same overwrite behavior.
-		if event == "model_switch" {
-			savedText := line
-			if switchErr := c.Agent.NextFavoriteModel(); switchErr != nil {
-				fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("model switch error: %v", switchErr)))
-			} else {
-				newStatus := fmt.Sprintf("[mode: %s | %s]", c.Agent.CurrentMode.Name, c.Agent.ModelID)
-				c.writeSwitchStatus(newStatus)
-			}
-			c.Reader.prefill = savedText
-			continue
-		}
-
-		// Handle reasoning display toggle (Ctrl+T).
-		if event == "reasoning_switch" {
-			savedText := line
-			c.Agent.Config.ShowReasoning = !c.Agent.Config.ShowReasoning
-			if err := c.Agent.Config.Save(); err != nil {
-				fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("reasoning toggle error: %v", err)))
-			} else {
-				state := "disabled"
-				if c.Agent.Config.ShowReasoning {
-					state = "enabled"
-				}
-				newStatus := "[reasoning: " + state + "]"
-				c.writeSwitchStatus(newStatus)
-			}
-			c.Reader.prefill = savedText
-			continue
-		}
-
-		// Handle add/remove favorites (Ctrl+F / Ctrl+R).
-		if event == "fav_add" {
-			savedText := line
-			if err := c.Agent.Config.AddFavorite(c.Agent.ModelID); err != nil {
-				fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("add favorite error: %v", err)))
-			} else if err := c.Agent.Config.Save(); err != nil {
-				fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("save config error: %v", err)))
-			} else {
-				newStatus := "[" + c.Agent.ModelID + "] added to favorites"
-				c.writeSwitchStatus(newStatus)
-			}
-			c.Reader.prefill = savedText
-			continue
-		}
-		if event == "fav_remove" {
-			savedText := line
-			removed, err := c.Agent.Config.RemoveFavorite(c.Agent.ModelID)
-			if err != nil {
-				fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("remove favorite error: %v", err)))
-			} else if !removed {
-				newStatus := "[not in favorites: " + c.Agent.ModelID + "]"
-				c.writeSwitchStatus(newStatus)
-			} else if err := c.Agent.Config.Save(); err != nil {
-				fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("save config error: %v", err)))
-			} else {
-				newStatus := "[" + c.Agent.ModelID + "] removed from favorites"
-				c.writeSwitchStatus(newStatus)
-			}
-			c.Reader.prefill = savedText
-			continue
-		}
-
 		input := strings.TrimSpace(line)
 		if input == "" {
 			continue
 		}
 
-		// Handle slash commands.
 		if strings.HasPrefix(input, "/") {
 			handled, exit, cmdErr := c.handleCommand(input)
 			if cmdErr != nil {
@@ -1287,27 +1217,19 @@ func (c *Console) runTTY() error {
 			}
 		}
 
-		// Keep normal user messages in the in-memory input history.
-		c.Reader.AddHistory(input)
-
-		// Reset the sticky switch status line: the user is now sending
-		// a message, so the next switch will start with a fresh line.
 		c.switchLineActive = false
 		c.switchLineWidth = 0
-
 		fmt.Fprintln(c.Out)
-
 		c.resetTurnState()
 
 		interrupts := make(chan os.Signal, 1)
 		signal.Notify(interrupts, os.Interrupt)
-
 		turnErr := c.runAgentTurn(input, interrupts)
+		signal.Stop(interrupts)
 		if turnErr != nil && !errors.Is(turnErr, runtime.ErrTurnAborted) {
 			fmt.Fprintln(c.Out, c.color(colorRed, formatTurnError(turnErr)))
 			c.lineOpen = false
 		}
-		signal.Stop(interrupts)
 		c.flushPendingContent()
 		fmt.Fprintln(c.Out)
 		c.lineOpen = false

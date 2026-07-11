@@ -1,28 +1,21 @@
-// reader_test.go — focused tests for atomic bracketed-paste buffer handling.
-// Verifies that pasted newlines are preserved internally and trailing clipboard line endings are removed.
-// Layer: console transport tests. Dependencies: internal/console reader helpers.
+// reader_test.go — tests for auxiliary console Reader behavior.
+// Verifies cooked line input remains available after moving the main REPL to readline.
+// Layer: console transport tests. Dependencies: internal/console Reader.
 package console
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-// TestNormalizePastePreservesInternalNewlines verifies paste cleanup keeps log/list structure.
-func TestNormalizePastePreservesInternalNewlines(t *testing.T) {
-	got := string(normalizePaste([]byte("before\nlog line\nitem\r\n")))
-	want := "before\nlog line\nitem"
-	if got != want {
-		t.Fatalf("normalizePaste() = %q, want %q", got, want)
+// TestReaderReadLine verifies auxiliary prompts still read a complete cooked line.
+func TestAuxReaderReadLine(t *testing.T) {
+	reader := NewReader(strings.NewReader("yes\n"), false)
+	got, err := reader.ReadLine()
+	if err != nil {
+		t.Fatalf("ReadLine() error = %v", err)
 	}
-}
-
-// TestInsertBytesAppendsAfterPastedText verifies completion text can follow a multiline paste.
-func TestInsertBytesAppendsAfterPastedText(t *testing.T) {
-	got, pos := insertBytes([]byte("prefix: "), len("prefix: "), []byte("a\nb\n"))
-	got, pos = insertBytes(got, pos, []byte(" completed"))
-	want := "prefix: a\nb\n completed"
-	if string(got) != want {
-		t.Fatalf("insertBytes() = %q, want %q", got, want)
-	}
-	if pos != len(got) {
-		t.Fatalf("cursor position = %d, want %d", pos, len(got))
+	if got != "yes" {
+		t.Fatalf("ReadLine() = %q, want %q", got, "yes")
 	}
 }
