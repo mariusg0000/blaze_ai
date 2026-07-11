@@ -1,7 +1,6 @@
 # Tasks
 
-- [x] Add maintenance callbacks to the runtime Handler contract
-- [x] Render compaction and TaskSwitcher progress/results inline like tool activity
-- [x] Report pruned message counts and summarization errors/timeouts
-- [x] Add or update focused tests for maintenance UI callbacks and runtime flow
+- [x] Detach TaskSwitcher worker lifecycle from the completed turn context
+- [x] Preserve cancellation through explicit TaskSwitcher cancellation and timeout
+- [x] Add regression coverage for a canceled parent turn context
 - [x] Run formatting, tests, build, and inspect final diff

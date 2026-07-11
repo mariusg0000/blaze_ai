@@ -309,6 +309,29 @@ func TestOnToolResultSuccess(t *testing.T) {
 	}
 }
 
+// TestOnMaintenanceResultOmitsContextAndKeepsDetailInline verifies maintenance status formatting.
+func TestOnMaintenanceResultOmitsContextAndKeepsDetailInline(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.lastPromptTokens = 106000
+	c.OnMaintenanceCall("compaction", "Compacting on max token limits")
+	c.OnMaintenanceResult("compaction", "ok 20 messages pruned and summarized")
+	plain := stripANSICodes(out.String())
+	if !strings.Contains(plain, "🗜️ Compacting on max token limits … ✔️  20 messages pruned and summarized") {
+		t.Errorf("maintenance output missing inline completion: %q", plain)
+	}
+	if strings.Contains(plain, "CTX:") {
+		t.Errorf("maintenance output should not contain context usage: %q", plain)
+	}
+
+	out.Reset()
+	c.OnMaintenanceCall("compaction", "Compacting on max token limits")
+	c.OnMaintenanceResult("compaction", "error: summarization failed")
+	plain = stripANSICodes(out.String())
+	if !strings.Contains(plain, " … ✖️ summarization failed") {
+		t.Errorf("maintenance output missing inline error: %q", plain)
+	}
+}
+
 // TestOnToolResultSuccessTTY verifies the status is appended to the tool line.
 func TestOnToolResultSuccessTTY(t *testing.T) {
 	c, out := newConsole(mockAgent(t))

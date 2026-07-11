@@ -479,7 +479,7 @@ func (c *Console) OnMaintenanceCall(name string, args string) {
 
 // OnMaintenanceResult renders the final internal operation status on the open tool line.
 func (c *Console) OnMaintenanceResult(name string, result string) {
-	c.OnToolResult(name, result)
+	c.renderToolResult(name, result, false, true)
 }
 
 // OnStreamPhase updates the waiting spinner label for transports that can show provider phases.
@@ -669,6 +669,10 @@ func toolEmoji(name string) string {
 // WHAT:  Displays tool result inline with the deferred tool call line.
 // PARAMS: name — tool name; result — the raw tool output.
 func (c *Console) OnToolResult(name string, result string) {
+	c.renderToolResult(name, result, true, false)
+}
+
+func (c *Console) renderToolResult(name string, result string, showContext bool, showDetail bool) {
 	if c.turnAborting.Load() {
 		c.lastToolArgs = ""
 		return
@@ -676,6 +680,9 @@ func (c *Console) OnToolResult(name string, result string) {
 	c.lockOutput()
 	defer c.unlockOutput()
 	badge, content, colorCode := parseToolResult(result)
+	if showDetail && badge == "DONE" && strings.HasPrefix(strings.TrimSpace(result), "ok") {
+		content = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(result), "ok"))
+	}
 	icon := c.color(colorGreen, toolEmoji(name))
 	args := c.lastToolArgs
 	c.lastToolArgs = ""
@@ -683,15 +690,20 @@ func (c *Console) OnToolResult(name string, result string) {
 	switch badge {
 	case "DONE":
 		ctx := ""
-		if c.lastPromptTokens > 0 {
+		if showContext && c.lastPromptTokens > 0 {
 			ctx = "  " + c.color(colorCtx, "CTX: "+formatCompactInt(c.lastPromptTokens))
 		}
+		detail := ""
+		if showDetail && content != "" {
+			detail = "  " + c.color(colorBrightGreen, content)
+		}
 		if args != "" {
-			fmt.Fprintf(c.Out, " %s%s\n", c.color(colorBrightGreen, "✔️"), ctx)
+			fmt.Fprintf(c.Out, " %s%s%s\n", c.color(colorBrightGreen, "✔️"), detail, ctx)
 		} else {
-			fmt.Fprintf(c.Out, "%s %s%s\n",
+			fmt.Fprintf(c.Out, "%s %s%s%s\n",
 				icon,
 				c.color(colorBrightGreen, "✔️"),
+				detail,
 				ctx,
 			)
 		}
@@ -702,7 +714,9 @@ func (c *Console) OnToolResult(name string, result string) {
 				content = content[:197] + "..."
 			}
 		}
-		if args != "" {
+		if args != "" && showDetail {
+			fmt.Fprintf(c.Out, " %s %s\n", c.color(colorCode, "✖️"), c.color(colorCode, content))
+		} else if args != "" {
 			fmt.Fprintf(c.Out, " %s\n", c.color(colorCode, "✖️"))
 			if content != "" {
 				fmt.Fprintf(c.Out, "  %s\n", c.color(colorCode, content))
@@ -718,7 +732,9 @@ func (c *Console) OnToolResult(name string, result string) {
 		if content != "" {
 			content = strings.ReplaceAll(content, "\n", " ")
 		}
-		if args != "" {
+		if args != "" && showDetail {
+			fmt.Fprintf(c.Out, " %s %s\n", c.color(colorCode, "⏱"), c.color(colorCode, content))
+		} else if args != "" {
 			fmt.Fprintf(c.Out, " %s\n", c.color(colorCode, "⏱"))
 			if content != "" {
 				fmt.Fprintf(c.Out, "  %s\n", c.color(colorCode, content))

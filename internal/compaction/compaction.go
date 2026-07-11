@@ -442,6 +442,14 @@ Record events in their actual order. Preserve, when present:
 IMPLEMENTATION PLANS:
 Keep plans and task lists nearly complete. Compress wording and duplication, but preserve order, technical identifiers, paths, functions, config keys, commands, dependencies, risks, validation, and explicit status. Do not present planned work as completed unless the span explicitly says so.
 
+ANALYSIS OUTCOMES — MANDATORY:
+If the span contains a completed analysis, diagnosis, finding, conclusion, verdict, recommendation, or answer to an investigated problem, preserve it as an Analysis result item. Keep the result as faithfully as possible in telegraphic wording, even when the investigation loaded many files or tool results.
+- Preserve confirmed, rejected, and unresolved status; scope, conditions, exceptions, and important uncertainty.
+- Preserve relevant files, paths, symbols, commands, or evidence supporting the result.
+- Preserve the practical consequence, recommendation, or next action when stated.
+- Record the final result, not just the investigation process.
+- Never promote a hypothesis, proposal, or open question into a confirmed conclusion.
+
 Do not:
 - reproduce source code, diffs, prompt templates, tool arguments, or long quoted passages
 - copy prompt contents when the discussion is about a prompt; record its purpose, decision, change, or observed behavior instead
@@ -451,7 +459,7 @@ Do not:
 Reasoning may support an action, decision, failure, validation, or open item, but never quote it.
 
 STYLE:
-Use telegraphic chronological bullets. Prefer Requirement:, Plan:, Tasks:, Decision:, Implemented:, Validation:, and Status: labels when useful. Preserve exact identifiers, short protocol literals, paths, commands, hashes, and errors only when needed for continuation. Optimize for low tokens and high recall.
+Use telegraphic chronological bullets. Prefer Requirement:, Plan:, Tasks:, Decision:, Analysis result:, Implemented:, Validation:, and Status: labels when useful. Preserve exact identifiers, short protocol literals, paths, commands, hashes, and errors only when needed for continuation. Optimize for low tokens and high recall.
 
 LENGTH:
 Keep under approximately `)

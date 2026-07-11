@@ -537,7 +537,7 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 			if !hasTaskSwitchState && a.Compactor.SummarizationProvider != nil && a.Compactor.ShouldDetectTaskSwitch() {
 				snapshot := make([]session.Message, len(a.Session.Messages))
 				copy(snapshot, a.Session.Messages)
-				if err := a.Compactor.StartTaskSwitchJob(ctx, a.Session, snapshot, a.Compactor.LoadSummariesText(a.Session.Folder)); err != nil {
+				if err := a.Compactor.StartTaskSwitchJob(a.Session, snapshot, a.Compactor.LoadSummariesText(a.Session.Folder)); err != nil {
 					return fmt.Errorf("cannot start task-switch job: %w", err)
 				}
 			}

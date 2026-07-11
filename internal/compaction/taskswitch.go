@@ -137,12 +137,10 @@ func (m *Manager) RemoveTaskSwitchState(sessionFolder string) error {
 }
 
 // StartTaskSwitchJob creates the task-switch marker file and starts the async detector.
-func (m *Manager) StartTaskSwitchJob(parentCtx context.Context, sess *session.Session, snapshot []session.Message, existingSummaries string) error {
+// The worker is session-scoped: it must outlive the request context that generated it.
+func (m *Manager) StartTaskSwitchJob(sess *session.Session, snapshot []session.Message, existingSummaries string) error {
 	if m == nil || m.SummarizationProvider == nil || sess == nil {
 		return nil
-	}
-	if parentCtx == nil {
-		parentCtx = context.Background()
 	}
 	markerPath := filepath.Join(sess.Folder, taskSwitchFile)
 	marker, err := os.OpenFile(markerPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
@@ -156,7 +154,7 @@ func (m *Manager) StartTaskSwitchJob(parentCtx context.Context, sess *session.Se
 		return fmt.Errorf("cannot close %s: %w", taskSwitchFile, err)
 	}
 
-	ctx, cancel := context.WithCancel(parentCtx)
+	ctx, cancel := context.WithCancel(context.Background())
 	m.taskSwitchMu.Lock()
 	m.taskSwitchGeneration++
 	generation := m.taskSwitchGeneration

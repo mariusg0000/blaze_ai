@@ -1109,8 +1109,10 @@ func TestRunTurnTaskSwitchLeavesPendingResultUntilNextBoundary(t *testing.T) {
 	}
 	originalLen := len(agent.Session.Messages)
 
+	turnCtx, cancelTurn := context.WithCancel(context.Background())
 	start := time.Now()
-	err := agent.RunTurn(context.Background(), "now add analytics endpoint")
+	err := agent.RunTurn(turnCtx, "now add analytics endpoint")
+	cancelTurn()
 	if err != nil {
 		t.Fatalf("RunTurn() error: %v", err)
 	}
@@ -1148,6 +1150,19 @@ func TestRunTurnTaskSwitchLeavesPendingResultUntilNextBoundary(t *testing.T) {
 			t.Fatalf("expected task-switch result file to appear")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	data, readErr := os.ReadFile(resultPath)
+	if readErr != nil {
+		t.Fatalf("cannot read task-switch result: %v", readErr)
+	}
+	var result struct {
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatalf("cannot decode task-switch result: %v", err)
+	}
+	if result.Summary != "User debugged auth flow and fixed token refresh bug." {
+		t.Fatalf("task-switch result = %s, want valid summary after turn context cancellation", data)
 	}
 }
 
