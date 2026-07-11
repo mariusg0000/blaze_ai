@@ -10,7 +10,7 @@
 
 ### Purpose
 - BlazeAI is a cross-platform AI terminal agent for experienced users.
-- The current implementation is a Go shell-native runtime with console, Telegram, and desktop embedded-window transports.
+- The current implementation is a Go shell-native runtime with console, Telegram, and web transports.
 - The system favors fast interaction, low overhead, and explicit failure over silent degradation.
 
 ### Technology Stack
@@ -20,7 +20,7 @@
 
 ### Active Scope
 - Greenfield rebuild driven by the spec fragments in `specs/`.
-- Console is the primary transport; Telegram transport is implemented; the old WebView desktop transport is archived under `internal/desktop_old/`; web transport is deferred.
+- Console is the primary transport; Telegram transport is implemented; web transport is a minimal HTTP server with SSE streaming that mirrors the console output in a browser.
 - User-facing behavior should stop on missing configuration or model selection errors rather than degrade silently.
 
 ### Architecture And Runtime
@@ -34,7 +34,7 @@
 - `internal/tools/` implements shell execution, skill tools, ask_a_friend, analyze_image, replace_block, and task tools.
 - `internal/console/` is a terminal-only REPL transport with raw input, slash commands, Markdown rendering, and streaming output.
 - `internal/telegram/` is a long-polling bridge that enforces one chat, accepts text and images, and adapts runtime streaming into Telegram messages.
-- `internal/desktop_old/` keeps the removed WebView desktop transport as reference only and is not part of the active build.
+- `internal/web/` is a minimal HTTP server with SSE streaming that renders the transcript as terminal-like HTML rows.
 - `internal/llmcall/` provides one-shot secondary model calls for role-based delegation.
 - `internal/memory/` reads persistent memory text into prompt builds without automatic writes.
 
@@ -67,14 +67,14 @@
 - `go.mod` pins `GOTOOLCHAIN=auto`, so a Go 1.21+ host can download the pinned toolchain on demand.
 
 ### Project Map
-- `main.go` - CLI entrypoint. Parses `-c`, `-r`, `--console`, and `-telegram`, bootstraps app home, loads config or first-run setup, opens a session, and starts the selected transport over the agent core. Keywords: entrypoint, flags, bootstrap, session, console, telegram
+- `main.go` - CLI entrypoint. Parses `-c`, `-r`, `--console`, `-telegram`, and `-web`, bootstraps app home, loads config or first-run setup, opens a session, and starts the selected transport over the agent core. Keywords: entrypoint, flags, bootstrap, session, console, telegram, web
 - `embed.go` - Embeds `prompts/` and `skills/` into the binary with `go:embed`. Keywords: embed, assets, prompts, skills, binary, startup
 - `firstrun.go` - Interactive first-run provider, API key, model, and role setup. Keywords: first-run, config, providers, API keys, models, roles
 - `go.mod` - Module root and Go toolchain declaration. Keywords: module, toolchain, dependencies, build, Go
 - `internal/runtime/` - Agent core orchestration loop and transport handler contract. Builds prompts, calls providers, handles tool calls, persists session messages, and triggers compaction. Keywords: runtime, loop, provider, tools, compaction, handler
 - `internal/console/` - Terminal REPL transport implementing `OnContent`, `OnToolCall`, and `OnToolResult`. Handles raw input, slash commands, and Markdown rendering. Keywords: console, REPL, ANSI, raw mode, streaming, slash-commands
 - `internal/telegram/` - Telegram bridge transport with long polling, single-chat enforcement, text/image handling, and streaming output adaptation. Keywords: telegram, bridge, polling, images, handler, transport
-- `internal/desktop_old/` - Archived Go WebView desktop transport kept only as migration reference for UI, state, and transport behavior. Keywords: desktop, archived, webview, reference, electron-migration
+- `internal/web/` - Minimal HTTP server with SSE streaming that mirrors the console output in a browser with terminal-like rendering. Keywords: web, SSE, streaming, terminal, browser, HTML
 - `internal/prompt/` - Rebuilds the runtime prompt from disk sources on every LLM call and injects variables. Keywords: prompt, sysprompt, variables, skills, AGENTS, specs
 - `internal/config/` - Loads and validates runtime config and work modes, including providers, roles, compaction settings, and first-run conditions. Keywords: config, validation, modes, roles, providers, compaction, first-run
 - `internal/session/` - File-based session persistence under project-scoped session folders. Keywords: sessions, JSON, persistence, resume, clean-close

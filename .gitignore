@@ -12,6 +12,7 @@ Thumbs.db
 # Go build output
 /bin/
 /blazeai
+/blazeai-desktop-backend
 *.exe
 *.dll
 *.so
@@ -34,9 +35,6 @@ go.work.sum
 *.log
 tmp/
 temp/
-
-# Electron local dependencies
-desktop_electron/node_modules/
 
 # Local runtime data
 app_home/
