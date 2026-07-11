@@ -108,8 +108,17 @@ func TestStreamChatGPTParsesTextToolCallAndUsage(t *testing.T) {
 	if requested.Header.Get("Authorization") != "Bearer access-token" {
 		t.Errorf("Authorization = %q", requested.Header.Get("Authorization"))
 	}
+	if requested.Header.Get("User-Agent") != chatGPTCodexUserAgent() {
+		t.Errorf("User-Agent = %q, want %q", requested.Header.Get("User-Agent"), chatGPTCodexUserAgent())
+	}
 	if requested.Header.Get("ChatGPT-Account-Id") != "acct_1" {
 		t.Errorf("ChatGPT-Account-Id = %q", requested.Header.Get("ChatGPT-Account-Id"))
+	}
+	if requested.Header.Get("version") != "" {
+		t.Errorf("version = %q, want empty for non-lite model", requested.Header.Get("version"))
+	}
+	if requested.Header.Get(chatGPTCodexLiteHeader) != "" {
+		t.Errorf("%s = %q, want empty for non-lite model", chatGPTCodexLiteHeader, requested.Header.Get(chatGPTCodexLiteHeader))
 	}
 	if resp.Content != "done" {
 		t.Errorf("Content = %q, want done", resp.Content)
@@ -122,5 +131,82 @@ func TestStreamChatGPTParsesTextToolCallAndUsage(t *testing.T) {
 	}
 	if resp.Usage == nil || resp.Usage.PromptTokens != 12 || resp.Usage.CompletionTokens != 4 {
 		t.Errorf("Usage = %#v", resp.Usage)
+	}
+}
+
+func TestStreamChatGPTAddsResponsesLiteHeaderForGPT56(t *testing.T) {
+	var requested *http.Request
+	client := &Client{
+		Model:    "gpt-5.6-luna",
+		AuthType: config.OAuthAuthType,
+		OAuth: &config.OAuthCredential{
+			AccessToken:  "access-token",
+			RefreshToken: "refresh-token",
+			ExpiresAt:    time.Now().Add(time.Hour).UnixMilli(),
+			AccountID:    "acct_1",
+		},
+		HTTP: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			requested = request
+			body := strings.Join([]string{
+				`data: {"type":"response.output_text.delta","delta":"done"}`,
+				"",
+				`data: {"type":"response.completed","response":{"usage":{"input_tokens":12,"output_tokens":4,"total_tokens":16}}}`,
+				"",
+			}, "\n")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+			}, nil
+		})},
+	}
+
+	_, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "hi"}}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Stream() error: %v", err)
+	}
+	if requested == nil {
+		t.Fatal("request was not sent")
+	}
+	if requested.Header.Get(chatGPTCodexLiteHeader) != "true" {
+		t.Errorf("%s = %q, want true", chatGPTCodexLiteHeader, requested.Header.Get(chatGPTCodexLiteHeader))
+	}
+	if requested.Header.Get("version") != chatGPTCodexClientVersion {
+		t.Errorf("version = %q, want %q", requested.Header.Get("version"), chatGPTCodexClientVersion)
+	}
+}
+
+func TestBuildChatGPTLiteRequestAddsAllTurnsReasoningAndStripsImageDetail(t *testing.T) {
+	request, err := buildChatGPTRequest("gpt-5.6-luna", []session.Message{{
+		Role: "user",
+		Content: []interface{}{
+			map[string]interface{}{"type": "text", "text": "describe"},
+			map[string]interface{}{"type": "image_url", "image_url": map[string]interface{}{"url": "data:image/png;base64,abc", "detail": "high"}},
+		},
+	}}, []tools.OpenAITool{{
+		Type:     "function",
+		Function: tools.FunctionDef{Name: "shell", Description: "Run a command", Parameters: json.RawMessage(`{"type":"object"}`)},
+	}})
+	if err != nil {
+		 t.Fatalf("buildChatGPTRequest() error: %v", err)
+	}
+	if request.Reasoning.Context != "all_turns" {
+		t.Fatalf("Reasoning.Context = %q, want all_turns", request.Reasoning.Context)
+	}
+	if len(request.Input) < 2 {
+		t.Fatalf("Input length = %d, want at least 2", len(request.Input))
+	}
+	encoded := string(request.Input[0]) + string(request.Input[1])
+	if !strings.Contains(encoded, `"type":"additional_tools"`) {
+		t.Fatalf("lite input missing additional_tools: %s", encoded)
+	}
+	if !strings.Contains(encoded, `"type":"input_image"`) {
+		t.Fatalf("lite input missing input_image: %s", encoded)
+	}
+	if strings.Contains(encoded, `"detail"`) {
+		t.Fatalf("lite input should strip image detail: %s", encoded)
+	}
+	if !strings.Contains(encoded, `"text":"describe"`) {
+		t.Fatalf("lite input missing text part: %s", encoded)
 	}
 }

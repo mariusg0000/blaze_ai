@@ -50,6 +50,7 @@ type chatGPTResponsesTool struct {
 type chatGPTReasoning struct {
 	Effort  string `json:"effort,omitempty"`
 	Summary string `json:"summary,omitempty"`
+	Context string `json:"context,omitempty"`
 }
 
 type chatGPTText struct {
@@ -125,7 +126,11 @@ func (c *Client) streamChatGPT(ctx context.Context, messages []session.Message, 
 	request.Header.Set("Accept", "text/event-stream")
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Originator", "codex_cli_rs")
-	request.Header.Set("User-Agent", "BlazeAI")
+	request.Header.Set("User-Agent", chatGPTCodexUserAgent())
+	if isResponsesLiteModel(c.Model) {
+		request.Header.Set(chatGPTCodexLiteHeader, "true")
+		request.Header.Set("version", chatGPTCodexClientVersion)
+	}
 	if c.OAuth != nil && c.OAuth.AccountID != "" {
 		request.Header.Set("ChatGPT-Account-Id", c.OAuth.AccountID)
 	}
@@ -184,7 +189,7 @@ func buildChatGPTLiteRequest(model string, messages []session.Message, toolDefs 
 		Store:             false,
 		Stream:            true,
 		Include:           []string{"reasoning.encrypted_content"},
-		Reasoning:         chatGPTReasoning{Effort: "medium", Summary: "auto"},
+		Reasoning:         chatGPTReasoning{Effort: "medium", Summary: "auto", Context: "all_turns"},
 		Text:              chatGPTText{Verbosity: "low"},
 	}, nil
 }
@@ -201,7 +206,7 @@ func buildChatGPTLiteInput(messages []session.Message, toolDefs []tools.OpenAITo
 		case "user":
 			input = append(input, mustJSON(map[string]interface{}{
 				"role":    "user",
-				"content": []interface{}{map[string]string{"type": "input_text", "text": messageContentText(message.Content)}},
+				"content": buildChatGPTMessageContent(message.Content, "input_text"),
 			}))
 		case "assistant":
 			if message.ReasoningEncrypted != "" {
@@ -229,14 +234,14 @@ func buildChatGPTLiteInput(messages []session.Message, toolDefs []tools.OpenAITo
 			if text := messageContentText(message.Content); text != "" {
 				input = append(input, mustJSON(map[string]interface{}{
 					"role":    "assistant",
-					"content": []interface{}{map[string]string{"type": "output_text", "text": text}},
+					"content": buildChatGPTMessageContent(message.Content, "output_text"),
 				}))
 			}
 		case "tool":
 			input = append(input, mustJSON(map[string]interface{}{
 				"type":    "function_call_output",
 				"call_id": message.ToolCallID,
-				"output":  messageContentText(message.Content),
+				"output":  buildChatGPTFunctionOutput(message.Content),
 			}))
 		}
 	}
@@ -368,6 +373,63 @@ func messageContentText(content interface{}) string {
 	default:
 		return fmt.Sprint(value)
 	}
+}
+
+func buildChatGPTMessageContent(content interface{}, textType string) []interface{} {
+	if parts := convertChatGPTContentParts(content, textType); len(parts) > 0 {
+		return parts
+	}
+	text := messageContentText(content)
+	if text == "" {
+		return []interface{}{}
+	}
+	return []interface{}{map[string]string{"type": textType, "text": text}}
+}
+
+func buildChatGPTFunctionOutput(content interface{}) interface{} {
+	if parts := convertChatGPTContentParts(content, "input_text"); len(parts) > 0 {
+		return parts
+	}
+	return messageContentText(content)
+}
+
+func convertChatGPTContentParts(content interface{}, textType string) []interface{} {
+	value, ok := content.([]interface{})
+	if !ok {
+		return nil
+	}
+	parts := make([]interface{}, 0, len(value))
+	for _, item := range value {
+		object, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		switch object["type"] {
+		case "text":
+			text, _ := object["text"].(string)
+			if text != "" {
+				parts = append(parts, map[string]string{"type": textType, "text": text})
+			}
+		case "input_text", "output_text":
+			text, _ := object["text"].(string)
+			if text != "" {
+				parts = append(parts, map[string]string{"type": textType, "text": text})
+			}
+		case "image_url":
+			if imageURL, ok := object["image_url"].(map[string]interface{}); ok {
+				url, _ := imageURL["url"].(string)
+				if url != "" {
+					parts = append(parts, map[string]string{"type": "input_image", "image_url": url})
+				}
+			}
+		case "input_image":
+			url, _ := object["image_url"].(string)
+			if url != "" {
+				parts = append(parts, map[string]string{"type": "input_image", "image_url": url})
+			}
+		}
+	}
+	return parts
 }
 
 func mustJSON(value interface{}) json.RawMessage {

@@ -30,6 +30,7 @@ const (
 	chatGPTCodexBaseEndpoint  = "https://chatgpt.com/backend-api/codex"
 	chatGPTCodexEndpoint      = chatGPTCodexBaseEndpoint + "/responses"
 	chatGPTCodexClientVersion = "0.144.0"
+	chatGPTCodexLiteHeader    = "x-openai-internal-codex-responses-lite"
 	chatGPTOAuthClientID      = "app_EMoamEEZ73f0CkXaXp7hrann"
 	chatGPTOAuthPort          = 1455
 	chatGPTOAuthTimeout       = 5 * time.Minute
@@ -43,6 +44,10 @@ func chatGPTCodexBaseURL(endpoint string) string {
 		return chatGPTCodexBaseEndpoint
 	}
 	return strings.TrimSuffix(base, "/responses")
+}
+
+func chatGPTCodexUserAgent() string {
+	return fmt.Sprintf("codex_cli_rs/%s", chatGPTCodexClientVersion)
 }
 
 // ChatGPTProvider returns the config entry used by the console OAuth flow.

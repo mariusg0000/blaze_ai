@@ -262,7 +262,7 @@ func (c *Client) listChatGPTModels() ([]string, error) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Originator", "codex_cli_rs")
-	req.Header.Set("User-Agent", "BlazeAI")
+	req.Header.Set("User-Agent", chatGPTCodexUserAgent())
 	if c.OAuth != nil && c.OAuth.AccountID != "" {
 		req.Header.Set("ChatGPT-Account-ID", c.OAuth.AccountID)
 	}

@@ -60,6 +60,9 @@ func TestListChatGPTModelsUsesLiveAccountCatalog(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer access-token" {
 			t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
 		}
+		if r.Header.Get("User-Agent") != chatGPTCodexUserAgent() {
+			t.Errorf("User-Agent = %q, want %q", r.Header.Get("User-Agent"), chatGPTCodexUserAgent())
+		}
 		if r.Header.Get("ChatGPT-Account-ID") != "acct_1" {
 			t.Errorf("ChatGPT-Account-ID = %q", r.Header.Get("ChatGPT-Account-ID"))
 		}
