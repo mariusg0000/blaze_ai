@@ -1,8 +1,8 @@
 // main.go — BlazeAI application entry point.
 // Parses CLI flags, bootstraps app home, loads config or runs first-run setup,
-// and starts the console transport by default. Telegram remains opt-in via CLI.
+// and starts the console transport by default. Telegram and web are opt-in via CLI.
 // Layer: application entry. Direct dependencies: internal/console,
-// internal/runtime, internal/config, internal/session, internal/platform.
+// internal/web, internal/runtime, internal/config, internal/session, internal/platform.
 package main
 
 import (
@@ -21,6 +21,7 @@ import (
 	"blazeai/internal/session"
 	"blazeai/internal/skills"
 	"blazeai/internal/telegram"
+	"blazeai/internal/web"
 )
 
 type resumeOptions struct {
@@ -54,6 +55,7 @@ func run() error {
 	resumeFlag := flag.Bool("r", false, "resume most recent session, interrupted or clean (console only)")
 	consoleFlag := flag.Bool("console", false, "run terminal REPL transport (default)")
 	telegramFlag := flag.String("telegram", "", "run Telegram bridge instance")
+	webFlag := flag.String("web", "", "run web transport server (addr, e.g. 127.0.0.1:8080)")
 	flag.Parse()
 
 	// Detect OS.
@@ -80,6 +82,9 @@ func run() error {
 
 	if *telegramFlag != "" {
 		return telegram.Run(context.Background(), cfg, osType, promptsFS, *telegramFlag)
+	}
+	if *webFlag != "" {
+		return runWeb(cfg, osType, promptsFS, *webFlag)
 	}
 	_ = consoleFlag
 	workDir, err := os.Getwd()
@@ -185,4 +190,22 @@ func runConsole(cfg *config.Config, sess *session.Session, osType platform.OS, p
 		return fmt.Errorf("console error: %w", err)
 	}
 	return nil
+}
+
+// runWeb starts the web transport server on the given listen address.
+func runWeb(cfg *config.Config, osType platform.OS, promptsFS fs.FS, addr string) error {
+	workDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("cannot get working directory: %w", err)
+	}
+	sess, err := session.Create(workDir)
+	if err != nil {
+		return fmt.Errorf("cannot create session: %w", err)
+	}
+	agent, err := runtime.NewAgent(cfg, sess, osType, promptsFS, workDir, nil, "web")
+	if err != nil {
+		return fmt.Errorf("cannot create agent: %w", err)
+	}
+	server := web.NewServer(agent, addr)
+	return server.Start()
 }

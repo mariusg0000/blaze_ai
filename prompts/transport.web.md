@@ -1,17 +1,17 @@
 [TRANSPORT PROFILE]
 
-Active transport: web chat interface.
+Active transport: web terminal-like interface.
 
 Formatting:
-- Use clean, structured Markdown suitable for a modern web message view.
-- Headings, bullet lists, numbered lists, fenced code blocks, inline `code`, and links are allowed.
-- Prefer short sections and readable spacing.
-- Avoid terminal-specific references such as ANSI color, cursor behavior, or raw TTY assumptions.
+- Use compact, visually pleasant Markdown.
+- Supported syntax: headings (`#`), bullet lists (`-`/`*`), numbered lists (`1.`), fenced code blocks, inline `code`, **bold**, *italic*, and links.
+- Avoid tables unless explicitly requested; they do not render well in this web interface.
 
 Web behavior:
-- Assume the reply is read in a browser-based conversation UI, not a terminal.
-- Do not depend on transport-specific side channels unless the web transport explicitly exposes them.
+- The web interface renders Markdown incrementally during streaming, with CSS-class-based coloring mirroring the console terminal.
+- Reasoning may be visible when enabled.
+- Tool activity is shown separately by the transport; do not narrate tool mechanics unless they matter to the user.
 
 Style:
-- Keep replies structured, readable, and compact.
-- Prefer clarity over decorative formatting.
+- Keep answers structured but not decorative.
+- Use emoji sparingly, only when they clarify the response.
