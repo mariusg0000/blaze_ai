@@ -25,8 +25,9 @@ type sseEvent struct {
 
 // blockPayload is the JSON payload for a transcript block event.
 type blockPayload struct {
-	Type string `json:"type"`
-	HTML string `json:"html"`
+	Type      string `json:"type"`
+	HTML      string `json:"html"`
+	Streaming bool   `json:"streaming,omitempty"`
 }
 
 // configPayload carries the full UI state for initial sync and after changes.
@@ -137,20 +138,15 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // sendBlock appends or replaces a block in the transcript and broadcasts it.
-// streaming=false creates a new block; streaming=true replaces the last block of the same type.
+// streaming=false creates a new block; streaming=true replaces the last block in the list.
 func (s *Server) sendBlock(blockType, html string, streaming bool) {
 	s.mu.Lock()
 	if streaming {
-		// Find and replace the last block of matching type.
-		replaced := false
-		for i := len(s.blocks) - 1; i >= 0; i-- {
-			if s.blocks[i].Type == blockType {
-				s.blocks[i].HTML = html
-				replaced = true
-				break
-			}
-		}
-		if !replaced {
+		// Find and replace the last block in the list (regardless of type).
+		if len(s.blocks) > 0 {
+			s.blocks[len(s.blocks)-1].Type = blockType
+			s.blocks[len(s.blocks)-1].HTML = html
+		} else {
 			s.blocks = append(s.blocks, transcriptBlock{Type: blockType, HTML: html})
 		}
 	} else {
@@ -158,7 +154,7 @@ func (s *Server) sendBlock(blockType, html string, streaming bool) {
 	}
 	s.mu.Unlock()
 
-	payload, _ := json.Marshal(blockPayload{Type: blockType, HTML: html})
+	payload, _ := json.Marshal(blockPayload{Type: blockType, HTML: html, Streaming: streaming})
 	s.hub.broadcast(sseEvent{Event: "block", Data: string(payload)})
 }
 

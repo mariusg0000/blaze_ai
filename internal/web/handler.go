@@ -16,13 +16,16 @@ import (
 type Handler struct {
 	server *Server
 
-	mu               sync.Mutex
-	assistantStarted bool
-	reasoningStarted bool
-	contentBuffer    string
-	lastPromptTokens int
-	lastToolArgs     string
-	turnErr          error
+	mu                  sync.Mutex
+	assistantStarted    bool
+	assistantBlockDirty bool // true once we've created the initial assistant block for this turn
+	reasoningStarted    bool
+	reasoningBlockDirty bool
+	contentBuffer       string
+	reasoningBuffer     string
+	lastPromptTokens    int
+	lastToolArgs        string
+	turnErr             error
 }
 
 // NewHandler creates a web transport runtime handler bound to a Server.
@@ -34,8 +37,11 @@ func NewHandler(server *Server) *Handler {
 func (h *Handler) BeginTurn() {
 	h.mu.Lock()
 	h.assistantStarted = false
+	h.assistantBlockDirty = false
 	h.reasoningStarted = false
+	h.reasoningBlockDirty = false
 	h.contentBuffer = ""
+	h.reasoningBuffer = ""
 	h.lastPromptTokens = 0
 	h.lastToolArgs = ""
 	h.turnErr = nil
@@ -87,29 +93,23 @@ func (h *Handler) FinishTurn(err error) {
 // OnContent appends one streamed assistant text delta.
 func (h *Handler) OnContent(delta string) {
 	h.mu.Lock()
-	reasoningActive := h.reasoningStarted
 	if !h.assistantStarted {
 		h.assistantStarted = true
+		h.assistantBlockDirty = false
 		h.contentBuffer = ""
 	}
 	h.contentBuffer += delta
 	html := assistantContentHTML(h.contentBuffer)
-	assistantStarted := h.assistantStarted
+	streaming := h.assistantBlockDirty
+	h.assistantBlockDirty = true
 	h.mu.Unlock()
 
 	if h.server == nil {
 		return
 	}
-	if reasoningActive {
-		// No explicit close — reasoning block is finished implicitly.
-	}
-
-	if !assistantStarted {
-		return
-	}
 
 	prefix := `<span class="orange bold">[BLAZE]</span><br>`
-	h.server.sendBlock("assistant", prefix+html, false)
+	h.server.sendBlock("assistant", prefix+html, streaming)
 }
 
 // OnToolCall emits a pending tool activity block.
@@ -157,21 +157,25 @@ func (h *Handler) OnUsage(promptTokens int) {
 	h.mu.Unlock()
 }
 
-// OnReasoning appends one streamed reasoning chunk as its own block.
+// OnReasoning accumulates and streams reasoning text as a single block.
 func (h *Handler) OnReasoning(delta string) {
 	h.mu.Lock()
 	if !h.reasoningStarted {
 		h.reasoningStarted = true
-		h.assistantStarted = false
+		h.reasoningBlockDirty = false
+		h.reasoningBuffer = ""
 	}
+	h.reasoningBuffer += delta
+	html := `<span class="reasoning">🧠 ` + escapeHTML(h.reasoningBuffer) + `</span>`
+	streaming := h.reasoningBlockDirty
+	h.reasoningBlockDirty = true
 	h.mu.Unlock()
 
 	if h.server == nil {
 		return
 	}
 
-	emoji := `<span class="reasoning">🧠 ` + escapeHTML(delta) + `</span>`
-	h.server.sendBlock("reasoning", emoji, false)
+	h.server.sendBlock("reasoning", html, streaming)
 }
 
 // OnSystem appends a system notification block.

@@ -129,7 +129,7 @@ const webPageHTML = `<!doctype html>
   .row-user { color: var(--user-text); }
   .row-system { color: var(--orange); border-bottom: 1px dashed var(--border); }
   .row-separator { border-bottom: none; padding: 2px 14px; }
-  .row-reasoning { color: var(--reasoning); max-height: 100px; overflow-y: auto; }
+  .row-reasoning { color: var(--reasoning); }
   .row-tool { color: var(--bright-green); }
 
   /* Inline styles */
@@ -246,15 +246,15 @@ var lastBlocks = []; // [{type, html}] for diff-based re-render.
 
 eventSource.addEventListener('block', function(e) {
   var data = JSON.parse(e.data);
-  var replaced = false;
-  for (var i = lastBlocks.length - 1; i >= 0; i--) {
-    if (lastBlocks[i].type === data.type) {
-      lastBlocks[i].html = data.html;
-      replaced = true;
-      break;
+  if (data.streaming) {
+    // Replace the last block (streaming delta — same block, new content).
+    if (lastBlocks.length > 0) {
+      lastBlocks[lastBlocks.length - 1] = {type: data.type, html: data.html};
+    } else {
+      lastBlocks.push({type: data.type, html: data.html});
     }
-  }
-  if (!replaced) {
+  } else {
+    // New block — append.
     lastBlocks.push({type: data.type, html: data.html});
   }
   renderBlocks();
