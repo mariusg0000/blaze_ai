@@ -1,12 +1,11 @@
 // handler.go — runtime.Handler implementation for the web transport.
 // Converts streaming LLM callbacks into block events pushed to the SSE hub.
-// Mirrors the console handler but produces HTML blocks instead of ANSI lines.
+// Tracks block indices explicitly so streaming replacements never hit the wrong block.
 // Layer: transport output. Dependencies: internal/runtime, internal/provider.
 package web
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 
 	"blazeai/internal/provider"
@@ -16,30 +15,34 @@ import (
 type Handler struct {
 	server *Server
 
-	mu                  sync.Mutex
-	assistantStarted    bool
-	assistantBlockDirty bool // true once we've created the initial assistant block for this turn
-	reasoningStarted    bool
-	reasoningBlockDirty bool
-	contentBuffer       string
-	reasoningBuffer     string
-	lastPromptTokens    int
-	lastToolArgs        string
-	turnErr             error
+	mu                sync.Mutex
+	assistantBlockIdx int // index in server's blocks; -1 means not created yet
+	assistantStarted  bool
+	reasoningBlockIdx int
+	reasoningStarted  bool
+	contentBuffer     string
+	reasoningBuffer   string
+	lastPromptTokens  int
+	lastToolArgs      string
+	turnErr           error
 }
 
 // NewHandler creates a web transport runtime handler bound to a Server.
 func NewHandler(server *Server) *Handler {
-	return &Handler{server: server}
+	return &Handler{
+		server:            server,
+		assistantBlockIdx: -1,
+		reasoningBlockIdx: -1,
+	}
 }
 
 // BeginTurn resets per-turn state and marks the UI busy.
 func (h *Handler) BeginTurn() {
 	h.mu.Lock()
 	h.assistantStarted = false
-	h.assistantBlockDirty = false
+	h.assistantBlockIdx = -1
 	h.reasoningStarted = false
-	h.reasoningBlockDirty = false
+	h.reasoningBlockIdx = -1
 	h.contentBuffer = ""
 	h.reasoningBuffer = ""
 	h.lastPromptTokens = 0
@@ -75,11 +78,10 @@ func (h *Handler) FinishTurn(err error) {
 		return
 	}
 
-	// Emit separator block.
 	if tokens > 0 && model != "" && workDir != "" {
 		sep := separatorHTML(tokens, model, workDir)
 		if sep != "" {
-			h.server.sendBlock("separator", sep, false)
+			h.server.sendBlock("separator", sep)
 		}
 	}
 
@@ -95,13 +97,12 @@ func (h *Handler) OnContent(delta string) {
 	h.mu.Lock()
 	if !h.assistantStarted {
 		h.assistantStarted = true
-		h.assistantBlockDirty = false
+		h.assistantBlockIdx = -1
 		h.contentBuffer = ""
 	}
 	h.contentBuffer += delta
 	html := assistantContentHTML(h.contentBuffer)
-	streaming := h.assistantBlockDirty
-	h.assistantBlockDirty = true
+	idx := h.assistantBlockIdx
 	h.mu.Unlock()
 
 	if h.server == nil {
@@ -109,22 +110,35 @@ func (h *Handler) OnContent(delta string) {
 	}
 
 	prefix := `<span class="orange bold">[BLAZE]</span><br>`
-	h.server.sendBlock("assistant", prefix+html, streaming)
+	fullHTML := prefix + html
+
+	if idx < 0 {
+		// First chunk — append a new block.
+		newIdx := h.server.appendBlock("assistant", fullHTML)
+		h.mu.Lock()
+		h.assistantBlockIdx = newIdx
+		h.mu.Unlock()
+	} else {
+		// Second+ chunk — replace the block at the tracked index.
+		h.server.replaceBlock(idx, "assistant", fullHTML)
+	}
 }
 
 // OnToolCall emits a pending tool activity block.
 func (h *Handler) OnToolCall(name string, args string) {
 	h.mu.Lock()
-	h.assistantStarted = false // next content starts fresh after tools
+	h.assistantStarted = false
+	h.assistantBlockIdx = -1
 	h.lastToolArgs = args
 	h.mu.Unlock()
 
 	if h.server != nil {
-		h.server.sendBlock("tool", toolLineHTML(name, args, ""), false)
+		h.server.sendBlock("tool", toolLineHTML(name, args, ""))
 	}
 }
 
-// OnToolResult replaces the pending tool block with a completed summary.
+// OnToolResult replaces the last pending tool block with the completed summary.
+// Uses replace on the most recently appended block (which should be the tool call).
 func (h *Handler) OnToolResult(name string, result string) {
 	h.mu.Lock()
 	args := h.lastToolArgs
@@ -147,7 +161,17 @@ func (h *Handler) OnToolResult(name string, result string) {
 		badgeSymbol = "⏱"
 	}
 
-	h.server.sendBlock("tool", toolLineHTML(name, args, badgeSymbol), true)
+	// Replace the most recently appended block — this is always the tool call block.
+	// Note: if no block exists (clear was pressed mid-turn), append instead.
+	h.server.mu.Lock()
+	idx := len(h.server.blocks) - 1
+	h.server.mu.Unlock()
+
+	if idx >= 0 {
+		h.server.replaceBlock(idx, "tool", toolLineHTML(name, args, badgeSymbol))
+	} else {
+		h.server.sendBlock("tool", toolLineHTML(name, args, badgeSymbol))
+	}
 }
 
 // OnUsage stores prompt token usage for the separator display.
@@ -162,27 +186,33 @@ func (h *Handler) OnReasoning(delta string) {
 	h.mu.Lock()
 	if !h.reasoningStarted {
 		h.reasoningStarted = true
-		h.reasoningBlockDirty = false
+		h.reasoningBlockIdx = -1
 		h.reasoningBuffer = ""
 	}
 	h.reasoningBuffer += delta
 	html := `<span class="reasoning">🧠 ` + escapeHTML(h.reasoningBuffer) + `</span>`
-	streaming := h.reasoningBlockDirty
-	h.reasoningBlockDirty = true
+	idx := h.reasoningBlockIdx
 	h.mu.Unlock()
 
 	if h.server == nil {
 		return
 	}
 
-	h.server.sendBlock("reasoning", html, streaming)
+	if idx < 0 {
+		newIdx := h.server.appendBlock("reasoning", html)
+		h.mu.Lock()
+		h.reasoningBlockIdx = newIdx
+		h.mu.Unlock()
+	} else {
+		h.server.replaceBlock(idx, "reasoning", html)
+	}
 }
 
 // OnSystem appends a system notification block.
 func (h *Handler) OnSystem(message string) {
 	if h.server != nil {
 		html := `<span class="orange">⚡ System: ` + escapeHTML(message) + `</span>`
-		h.server.sendBlock("system", html, false)
+		h.server.sendBlock("system", html)
 	}
 }
 
@@ -191,7 +221,7 @@ func (h *Handler) OnMaintenanceCall(name string, args string) {
 	h.OnToolCall(name, args)
 }
 
-// OnMaintenanceResult renders the final internal operation status.
+// OnMaintenanceResult replaces the maintenance call block with its result.
 func (h *Handler) OnMaintenanceResult(name string, result string) {
 	h.OnToolResult(name, result)
 }
@@ -218,13 +248,7 @@ func (h *Handler) RequestSudoApproval(command string) (bool, string) {
 	_ = command
 	if h.server != nil {
 		html := `<span class="orange">⚡ Sudo is not supported in the web transport.</span>`
-		h.server.sendBlock("system", html, false)
+		h.server.sendBlock("system", html)
 	}
 	return false, ""
-}
-
-// trimReasoningPrefix removes the 🧠 emoji prefix from streaming reasoning chunks
-// so the handler can accumulate clean content without repeated prefixes.
-func trimReasoningPrefix(s string) string {
-	return strings.TrimPrefix(strings.TrimPrefix(s, "🧠"), " ")
 }

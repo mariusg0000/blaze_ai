@@ -246,15 +246,11 @@ var lastBlocks = []; // [{type, html}] for diff-based re-render.
 
 eventSource.addEventListener('block', function(e) {
   var data = JSON.parse(e.data);
-  if (data.streaming) {
-    // Replace the last block (streaming delta — same block, new content).
-    if (lastBlocks.length > 0) {
-      lastBlocks[lastBlocks.length - 1] = {type: data.type, html: data.html};
-    } else {
-      lastBlocks.push({type: data.type, html: data.html});
-    }
+  if (data.streaming && data.index >= 0 && data.index < lastBlocks.length) {
+    // Replace the exact server-side block index.
+    lastBlocks[data.index] = {type: data.type, html: data.html};
   } else {
-    // New block — append.
+    // New block — append at the server's index. Reconnects normally replay in order.
     lastBlocks.push({type: data.type, html: data.html});
   }
   renderBlocks();

@@ -28,6 +28,7 @@ type blockPayload struct {
 	Type      string `json:"type"`
 	HTML      string `json:"html"`
 	Streaming bool   `json:"streaming,omitempty"`
+	Index     int    `json:"index,omitempty"`
 }
 
 // configPayload carries the full UI state for initial sync and after changes.
@@ -137,25 +138,34 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.server.Shutdown(ctx)
 }
 
-// sendBlock appends or replaces a block in the transcript and broadcasts it.
-// streaming=false creates a new block; streaming=true replaces the last block in the list.
-func (s *Server) sendBlock(blockType, html string, streaming bool) {
+// appendBlock adds a new transcript block and broadcasts it. Returns the block's index.
+func (s *Server) appendBlock(blockType, html string) int {
 	s.mu.Lock()
-	if streaming {
-		// Find and replace the last block in the list (regardless of type).
-		if len(s.blocks) > 0 {
-			s.blocks[len(s.blocks)-1].Type = blockType
-			s.blocks[len(s.blocks)-1].HTML = html
-		} else {
-			s.blocks = append(s.blocks, transcriptBlock{Type: blockType, HTML: html})
-		}
-	} else {
-		s.blocks = append(s.blocks, transcriptBlock{Type: blockType, HTML: html})
+	idx := len(s.blocks)
+	s.blocks = append(s.blocks, transcriptBlock{Type: blockType, HTML: html})
+	s.mu.Unlock()
+
+	payload, _ := json.Marshal(blockPayload{Type: blockType, HTML: html, Streaming: false, Index: idx})
+	s.hub.broadcast(sseEvent{Event: "block", Data: string(payload)})
+	return idx
+}
+
+// replaceBlock replaces one block at the given index with new HTML and broadcasts the update.
+func (s *Server) replaceBlock(index int, blockType, html string) {
+	s.mu.Lock()
+	if index >= 0 && index < len(s.blocks) {
+		s.blocks[index].Type = blockType
+		s.blocks[index].HTML = html
 	}
 	s.mu.Unlock()
 
-	payload, _ := json.Marshal(blockPayload{Type: blockType, HTML: html, Streaming: streaming})
+	payload, _ := json.Marshal(blockPayload{Type: blockType, HTML: html, Streaming: true, Index: index})
 	s.hub.broadcast(sseEvent{Event: "block", Data: string(payload)})
+}
+
+// sendBlock appends a block. Kept for callers that don't track indices (control actions, system).
+func (s *Server) sendBlock(blockType, html string) {
+	s.appendBlock(blockType, html)
 }
 
 // SetBusy toggles whether the transport accepts another turn.
@@ -231,8 +241,8 @@ func (s *Server) replayTranscript(ch chan sseEvent) {
 	blocks := make([]transcriptBlock, len(s.blocks))
 	copy(blocks, s.blocks)
 	s.mu.Unlock()
-	for _, b := range blocks {
-		payload, _ := json.Marshal(blockPayload{Type: b.Type, HTML: b.HTML})
+	for idx, b := range blocks {
+		payload, _ := json.Marshal(blockPayload{Type: b.Type, HTML: b.HTML, Index: idx})
 		ch <- sseEvent{Event: "block", Data: string(payload)}
 	}
 }
@@ -305,7 +315,7 @@ func (s *Server) handleInput(w http.ResponseWriter, r *http.Request) {
 
 	// Add user message as a block.
 	html := `<span class="user-text">` + escapeHTML(text) + `</span>`
-	s.sendBlock("user", html, false)
+	s.sendBlock("user", html)
 
 	// Run agent turn asynchronously. The Handler (set via NewServer)
 	// receives all streaming callbacks and produces SSE events.
@@ -351,7 +361,7 @@ func (s *Server) handleMode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	html := `<span class="orange">⚡ Mode: ` + escapeHTML(name) + `</span>`
-	s.sendBlock("system", html, false)
+	s.sendBlock("system", html)
 	s.broadcastConfig()
 	w.WriteHeader(http.StatusOK)
 }
@@ -379,7 +389,7 @@ func (s *Server) handleModel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	html := `<span class="orange">⚡ Model: ` + escapeHTML(modelID) + `</span>`
-	s.sendBlock("system", html, false)
+	s.sendBlock("system", html)
 	s.broadcastConfig()
 	w.WriteHeader(http.StatusOK)
 }
