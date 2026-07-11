@@ -1243,7 +1243,7 @@ func (c *Console) runTTY() error {
 			} else if err := c.Agent.Config.Save(); err != nil {
 				fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("save config error: %v", err)))
 			} else {
-				newStatus := "[favorite: " + c.Agent.ModelID + " +]"
+				newStatus := "[" + c.Agent.ModelID + "] added to favorites"
 				c.writeSwitchStatus(newStatus)
 			}
 			c.Reader.prefill = savedText
@@ -1260,7 +1260,7 @@ func (c *Console) runTTY() error {
 			} else if err := c.Agent.Config.Save(); err != nil {
 				fmt.Fprintln(c.Out, c.color(colorRed, fmt.Sprintf("save config error: %v", err)))
 			} else {
-				newStatus := "[favorite: " + c.Agent.ModelID + " -]"
+				newStatus := "[" + c.Agent.ModelID + "] removed from favorites"
 				c.writeSwitchStatus(newStatus)
 			}
 			c.Reader.prefill = savedText
@@ -1489,6 +1489,7 @@ func (c *Console) handleCommand(input string) (bool, bool, error) {
 		return false, false, nil
 	}
 }
+
 // listModels prints the favorite models from config.
 //
 // WHAT:  Displays the configured favorite models.
@@ -1507,6 +1508,7 @@ func (c *Console) listModels() {
 		fmt.Fprintf(c.Out, "%s%s\n", marker, m)
 	}
 }
+
 // authenticateChatGPT connects the console to ChatGPT through browser OAuth.
 //
 // WHAT:  Performs OAuth, installs the provider, and persists the account's live models.
@@ -1545,6 +1547,7 @@ func (c *Console) authenticateChatGPT() error {
 	fmt.Fprintln(c.Out, "Use /model to select a ChatGPT model.")
 	return nil
 }
+
 // interactiveSelectModel runs the interactive provider→model selection flow.
 //
 // WHAT:  Prompts user to select a provider, fetches its models, then selects one.
@@ -1608,6 +1611,7 @@ func (c *Console) interactiveSelectModel() error {
 	fmt.Fprintf(c.Out, "Model set to: %s\n", modelID)
 	return nil
 }
+
 // readInteractiveNumber reads a line from stdin and parses it as a number in [min, max].
 //
 // WHAT:  Prompts for and validates a numeric input within a range.
@@ -1623,6 +1627,7 @@ func (c *Console) readInteractiveNumber(min, max int) (int, error) {
 	}
 	return num, nil
 }
+
 // readInteractiveLine reads a single trimmed line from stdin in cooked mode.
 //
 // WHAT:  Reads one line from os.Stdin (works between raw-mode ReadEvent calls).
@@ -1637,6 +1642,7 @@ func (c *Console) readInteractiveLine() (string, error) {
 	}
 	return strings.TrimSpace(scanner.Text()), nil
 }
+
 // paddingWidth returns the number of digits needed for the largest index.
 func paddingWidth(count int) int {
 	w := 1
