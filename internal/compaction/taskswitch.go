@@ -53,16 +53,16 @@ const (
 // DetectTaskSwitch sends a compact transcript to the summarization LLM and parses the response.
 //
 // WHAT:  Calls the summarization model to detect if the user changed task.
-// WHY:   The runtime starts this in parallel with the main LLM call and applies the result
+// WHY:   The runtime starts this after token compaction priority is decided and applies the result
 //
-//	after the turn completes.
+//	at the next turn boundary.
 //
 // HOW:   Builds a compact transcript from session messages, sends to summarization provider,
 //
 //	parses response as either "null" or JSON {"index": N, "summary": "..."}.
 //	Writes debug files (transcript, response, result) to the session folder.
 //
-// PARAMS: sess — the current session snapshot (snapshot taken before the main LLM call);
+// PARAMS: sess — the current session snapshot after the completed main LLM turn;
 //
 //	existingSummaries — previously saved summary text from disk.
 //
@@ -119,9 +119,10 @@ func (m *Manager) HasTaskSwitchState(sessionFolder string) (bool, error) {
 
 // RemoveTaskSwitchState deletes task-switch protocol and debug files for the current session.
 func (m *Manager) RemoveTaskSwitchState(sessionFolder string) error {
+	if err := m.CancelTaskSwitch(sessionFolder); err != nil {
+		return err
+	}
 	for _, name := range []string{
-		taskSwitchFile,
-		taskSwitchTempFile,
 		taskSwitchPromptFile,
 		taskSwitchReplyFile,
 		"taskswitch.pending.json",
@@ -153,9 +154,17 @@ func (m *Manager) StartTaskSwitchJob(parentCtx context.Context, sess *session.Se
 	if err := marker.Close(); err != nil {
 		return fmt.Errorf("cannot close %s: %w", taskSwitchFile, err)
 	}
+
+	ctx, cancel := context.WithCancel(parentCtx)
+	m.taskSwitchMu.Lock()
+	m.taskSwitchGeneration++
+	generation := m.taskSwitchGeneration
+	m.taskSwitchCancel = cancel
+	m.taskSwitchMu.Unlock()
+
 	snapshotCopy := make([]session.Message, len(snapshot))
 	copy(snapshotCopy, snapshot)
-	go m.runTaskSwitchJob(parentCtx, sess.Folder, snapshotCopy, existingSummaries)
+	go m.runTaskSwitchJob(ctx, sess.Folder, snapshotCopy, existingSummaries, generation)
 	return nil
 }
 
@@ -209,6 +218,10 @@ func (m *Manager) ConsumeTaskSwitchResult(sess *session.Session) (*TaskSwitchFil
 
 // RemoveTaskSwitchProtocolFile removes only the protocol file(s), not debug artifacts.
 func (m *Manager) RemoveTaskSwitchProtocolFile(sessionFolder string) error {
+	return removeTaskSwitchProtocolFile(sessionFolder)
+}
+
+func removeTaskSwitchProtocolFile(sessionFolder string) error {
 	for _, name := range []string{taskSwitchFile, taskSwitchTempFile} {
 		if err := os.Remove(filepath.Join(sessionFolder, name)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("cannot remove %s: %w", name, err)
@@ -217,21 +230,45 @@ func (m *Manager) RemoveTaskSwitchProtocolFile(sessionFolder string) error {
 	return nil
 }
 
-func (m *Manager) runTaskSwitchJob(parentCtx context.Context, sessionFolder string, snapshot []session.Message, existingSummaries string) {
+// CancelTaskSwitch invalidates the active detector and removes its protocol files.
+// The generation check in the worker prevents a canceled job from publishing later.
+func (m *Manager) CancelTaskSwitch(sessionFolder string) error {
+	if m == nil {
+		return nil
+	}
+	m.taskSwitchMu.Lock()
+	defer m.taskSwitchMu.Unlock()
+	m.taskSwitchGeneration++
+	if m.taskSwitchCancel != nil {
+		m.taskSwitchCancel()
+		m.taskSwitchCancel = nil
+	}
+	return removeTaskSwitchProtocolFile(sessionFolder)
+}
+
+func (m *Manager) clearTaskSwitchCancel(generation uint64) {
+	m.taskSwitchMu.Lock()
+	defer m.taskSwitchMu.Unlock()
+	if generation == m.taskSwitchGeneration {
+		m.taskSwitchCancel = nil
+	}
+}
+
+func (m *Manager) runTaskSwitchJob(parentCtx context.Context, sessionFolder string, snapshot []session.Message, existingSummaries string, generation uint64) {
 	ctx, cancel := context.WithTimeout(parentCtx, taskSwitchTimeout)
 	defer cancel()
 	snapSess := &session.Session{Messages: snapshot, Folder: sessionFolder}
 	detect, err := m.DetectTaskSwitch(ctx, snapSess, existingSummaries)
-	if err != nil {
+	if err != nil || ctx.Err() != nil || !detect.Changed {
 		_ = m.RemoveTaskSwitchProtocolFile(sessionFolder)
+		m.clearTaskSwitchCancel(generation)
 		return
 	}
-	if ctx.Err() == context.Canceled {
-		_ = m.RemoveTaskSwitchProtocolFile(sessionFolder)
-		return
-	}
-	if !detect.Changed {
-		_ = m.RemoveTaskSwitchProtocolFile(sessionFolder)
+
+	m.taskSwitchMu.Lock()
+	defer m.taskSwitchMu.Unlock()
+	if generation != m.taskSwitchGeneration || ctx.Err() != nil {
+		_ = removeTaskSwitchProtocolFile(sessionFolder)
 		return
 	}
 	if _, err := os.Stat(filepath.Join(sessionFolder, taskSwitchFile)); err != nil {
@@ -239,6 +276,7 @@ func (m *Manager) runTaskSwitchJob(parentCtx context.Context, sessionFolder stri
 	}
 	result := TaskSwitchFile{UserIndex: detect.Index, Summary: detect.Summary}
 	_ = writeTaskSwitchJSONAtomic(filepath.Join(sessionFolder, taskSwitchFile), result)
+	m.taskSwitchCancel = nil
 }
 
 func writeTaskSwitchJSONAtomic(path string, value any) error {

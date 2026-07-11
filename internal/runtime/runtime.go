@@ -283,25 +283,17 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 	}); err != nil {
 		return fmt.Errorf("cannot persist user message: %w", err)
 	}
+	taskSwitchAppliedThisTurn := false
 	if a.Compactor != nil {
 		consumed, err := a.Compactor.ConsumeTaskSwitchResult(a.Session)
 		if err != nil {
 			return fmt.Errorf("cannot consume task-switch result before new detection: %w", err)
 		}
-		if consumed != nil && a.Handler != nil {
-			a.Handler.OnSystem("Task switch detected: " + consumed.Summary)
-		}
-	}
-
-	// Snapshot the session for task-switch detection before the LLM loop adds messages.
-	// The detector runs in parallel with the main LLM call.
-	snapshot := make([]session.Message, len(a.Session.Messages))
-	copy(snapshot, a.Session.Messages)
-
-	detectionStarted := a.Compactor != nil && a.Compactor.SummarizationProvider != nil && a.Compactor.ShouldDetectTaskSwitch()
-	if detectionStarted {
-		if err := a.Compactor.StartTaskSwitchJob(ctx, a.Session, snapshot, a.Compactor.LoadSummariesText(a.Session.Folder)); err != nil {
-			return fmt.Errorf("cannot start task-switch job: %w", err)
+		if consumed != nil {
+			taskSwitchAppliedThisTurn = true
+			if a.Handler != nil {
+				a.Handler.OnSystem("Task switch detected: " + consumed.Summary)
+			}
 		}
 	}
 
@@ -317,8 +309,11 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 			if err != nil {
 				return fmt.Errorf("cannot consume task-switch result: %w", err)
 			}
-			if consumed != nil && a.Handler != nil {
-				a.Handler.OnSystem("Task switch detected: " + consumed.Summary)
+			if consumed != nil {
+				taskSwitchAppliedThisTurn = true
+				if a.Handler != nil {
+					a.Handler.OnSystem("Task switch detected: " + consumed.Summary)
+				}
 			}
 		}
 
@@ -494,18 +489,30 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		// Loop back to LLM with tool results included in session history.
 	}
 
-	// Turn completed normally. Wait for task-switch detection and apply it if needed.
-	// No task switch result consumed during the loop — run normal token-based compaction.
+	// Token compaction has priority over starting or continuing TaskSwitcher.
 	if turnCompletedNormally && a.Compactor != nil {
-		hasTaskSwitchState, err := a.Compactor.HasTaskSwitchState(a.Session.Folder)
-		if err != nil {
-			return fmt.Errorf("cannot inspect task-switch state before compaction: %w", err)
-		}
-		if hasTaskSwitchState {
+		if a.Compactor.ShouldCompact(lastUsage) {
+			if err := a.Compactor.CancelTaskSwitch(a.Session.Folder); err != nil {
+				return fmt.Errorf("cannot cancel task-switch before compaction: %w", err)
+			}
+			if _, err := a.Compactor.Compact(a.Session, lastUsage); err != nil {
+				return fmt.Errorf("compaction failed: %w", err)
+			}
 			return nil
 		}
-		if _, err := a.Compactor.Compact(a.Session, lastUsage); err != nil {
-			return fmt.Errorf("compaction failed: %w", err)
+
+		if !taskSwitchAppliedThisTurn {
+			hasTaskSwitchState, err := a.Compactor.HasTaskSwitchState(a.Session.Folder)
+			if err != nil {
+				return fmt.Errorf("cannot inspect task-switch state before detection: %w", err)
+			}
+			if !hasTaskSwitchState && a.Compactor.SummarizationProvider != nil && a.Compactor.ShouldDetectTaskSwitch() {
+				snapshot := make([]session.Message, len(a.Session.Messages))
+				copy(snapshot, a.Session.Messages)
+				if err := a.Compactor.StartTaskSwitchJob(ctx, a.Session, snapshot, a.Compactor.LoadSummariesText(a.Session.Folder)); err != nil {
+					return fmt.Errorf("cannot start task-switch job: %w", err)
+				}
+			}
 		}
 	}
 

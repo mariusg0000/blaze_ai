@@ -1080,7 +1080,7 @@ func TestRunTurnTaskSwitchLeavesPendingResultUntilNextBoundary(t *testing.T) {
 	)
 	defer defServer.Close()
 	defer sumServer.Close()
-	agent.Config.Compaction.MaxContextTokens = 1
+	agent.Config.Compaction.MaxContextTokens = 1000
 
 	// Verify SummarizationProvider is wired.
 	if agent.Compactor == nil || agent.Compactor.SummarizationProvider == nil {
@@ -1216,8 +1216,8 @@ func TestRunTurnNoTaskSwitchKeepsMessages(t *testing.T) {
 	}
 }
 
-// TestRunTurnTaskSwitchAppliesCleanupDuringToolLoop verifies that a finished task-switch result
-// is consumed before the follow-up LLM prompt in the same turn after tool execution.
+// TestRunTurnTaskSwitchAppliesCleanupOnNextTurn verifies that a finished task-switch result
+// is consumed before the next turn after asynchronous detection completes.
 func TestRunTurnTaskSwitchAppliesCleanupDuringToolLoop(t *testing.T) {
 	callCount := 0
 	agent, h, defServer, sumServer := setupAgentWithSummarization(t,
@@ -1269,12 +1269,35 @@ func TestRunTurnTaskSwitchAppliesCleanupDuringToolLoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunTurn() error: %v", err)
 	}
+	if len(h.systemMsgs) != 0 {
+		t.Fatalf("OnSystem message = %v, want no same-turn task-switch application", h.systemMsgs)
+	}
+
+	resultPath := filepath.Join(agent.Session.Folder, "taskswitch.json")
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for {
+		data, readErr := os.ReadFile(resultPath)
+		if readErr == nil && strings.TrimSpace(string(data)) != "" {
+			break
+		}
+		if !os.IsNotExist(readErr) && readErr != nil {
+			t.Fatalf("cannot read task-switch result file: %v", readErr)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected task-switch result file to appear")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if err := agent.RunTurn(context.Background(), "continue analytics work"); err != nil {
+		t.Fatalf("second RunTurn() error: %v", err)
+	}
 	if len(h.systemMsgs) == 0 || !strings.Contains(h.systemMsgs[0], "User debugged auth flow") {
 		t.Fatalf("OnSystem message = %v, want task-switch summary", h.systemMsgs)
 	}
 	firstContent, ok := agent.Session.Messages[0].Content.(string)
 	if !ok || !strings.Contains(firstContent, syntheticPrefix) {
-		t.Fatal("first message is not a synthetic summary after in-turn task switch")
+		t.Fatal("first message is not a synthetic summary after task-switch application")
 	}
 }
 

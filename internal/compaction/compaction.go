@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"blazeai/internal/config"
 	"blazeai/internal/provider"
@@ -33,6 +34,10 @@ type Manager struct {
 	Provider              *provider.Client
 	SummarizationProvider *provider.Client
 	taskSwitchTurnCounter int
+
+	taskSwitchMu         sync.Mutex
+	taskSwitchCancel     context.CancelFunc
+	taskSwitchGeneration uint64
 }
 
 // NewManager creates a compaction Manager from config and provider clients.

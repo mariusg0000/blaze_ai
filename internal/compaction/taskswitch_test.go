@@ -250,6 +250,26 @@ func TestConsumeTaskSwitchResultPending(t *testing.T) {
 	}
 }
 
+// TestCancelTaskSwitchRemovesPendingProtocol verifies cancellation clears pending protocol files.
+func TestCancelTaskSwitchRemovesPendingProtocol(t *testing.T) {
+	m := NewManager(DefaultCompactionConfig(), nil, nil)
+	dir := t.TempDir()
+	for _, name := range []string{taskSwitchFile, taskSwitchTempFile} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("pending"), 0644); err != nil {
+			t.Fatalf("WriteFile(%s) error: %v", name, err)
+		}
+	}
+
+	if err := m.CancelTaskSwitch(dir); err != nil {
+		t.Fatalf("CancelTaskSwitch() error: %v", err)
+	}
+	for _, name := range []string{taskSwitchFile, taskSwitchTempFile} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("pending file %s still exists, err=%v", name, err)
+		}
+	}
+}
+
 // TestConsumeTaskSwitchResultInvalidRemovesFile verifies invalid JSON is deleted with an explicit error.
 func TestConsumeTaskSwitchResultInvalidRemovesFile(t *testing.T) {
 	m := NewManager(DefaultCompactionConfig(), nil, nil)
