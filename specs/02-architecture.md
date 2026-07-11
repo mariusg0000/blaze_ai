@@ -20,7 +20,7 @@
 | `internal/helpers/` | `helpers.go` | Host helper detection (rg, fd, jq, git, etc.) |
 | `internal/provider/` | (provider package) | LLM provider client creation from config |
 | `prompts/` | `sysprompt.md`, `sysprompt.linux.md`, `sysprompt.darwin.md`, `sysprompt.windows.md` | System prompt templates (embedded in binary) |
-| `skills/` | `skill-manager.md`, `config-manager.md`, `audit-manager.md`, `specs-manager.md` | Builtin skill templates (embedded, seeded to app_home) |
+| `skills/` | `skill-manager.md`, `config-manager.md`, `audit-manager.md` | Builtin skill templates (embedded, seeded to app_home) |
 
 ## Module Dependency Graph
 

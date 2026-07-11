@@ -388,9 +388,11 @@ If a switch exists, respond only with:
 
 N must be copied from the [user N] label where the new task starts. Do not use session-message positions or recount labels.
 
-The summary must cover only messages before the switch message. Preserve technical facts, decisions, actions, outcomes, failed attempts that explain decisions, validation, and unresolved items. Do not summarize the new task, later messages, or global project state.
+The summary must cover only messages before the switch message. Write a compact chronological work log: preserve user requirements, constraints, approvals, plans, task-list status, decisions, implementation actions, files or identifiers, validation, failures that explain decisions, and unresolved items. Keep plans and task lists nearly complete but telegraphic.
 
-Do not answer the conversation, reproduce dialogue, quote reasoning verbatim, add markdown fences, add explanations, or add extra JSON fields.
+Do not summarize the new task, later messages, or global project state. Do not reproduce source code, diffs, prompt templates, tool arguments, long quoted passages, dialogue, or reasoning. When prompts or code are discussed, record their purpose, decision, change, or observed behavior instead.
+
+Do not answer the conversation, add markdown fences, add explanations, or add extra JSON fields.
 
 Respond ONLY with null or the JSON object.`
 }

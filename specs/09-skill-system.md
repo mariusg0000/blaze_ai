@@ -104,7 +104,6 @@ Current builtins:
 - `skill-manager.md` — creates new skills, edits existing ones, validates format
 - `config-manager.md` — LLM-assisted configuration of modes, roles, providers
 - `audit-manager.md` — retrospective session review via shell + ask_a_friend
-- `specs-manager.md` — project context (map + specs) generation and maintenance
 
 ### Discovery Layout
 

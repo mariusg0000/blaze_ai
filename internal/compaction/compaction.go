@@ -405,66 +405,39 @@ func (m *Manager) buildTranscript(pruned []session.Message) string {
 func buildSummaryPrompt(transcript, existing string, maxTokens int) string {
 	var sb strings.Builder
 	sb.WriteString(`TASK:
-Write the next append-only technical memory chunk replacing exactly the NEW PRUNED MESSAGES in a long-running coding/session context.
+Write the next append-only technical memory chunk for exactly NEW PRUNED MESSAGES.
+Output only the new chunk, not a conversation reply.
 
-This is a memory compression task, not a conversation reply. Output only the new summary chunk text.
+The chunk is a compact chronological work log. It is inserted after EXISTING HISTORICAL SUMMARIES and before retained messages.
 
-The chunk will be inserted after EXISTING HISTORICAL SUMMARIES and before later retained normal messages. Therefore it must describe only the pruned span it replaces, not the global project or session state.
+SCOPE:
+- Summarize only NEW PRUNED MESSAGES.
+- EXISTING HISTORICAL SUMMARIES are read-only context for continuity, references, and deduplication.
+- Do not rewrite old summaries, summarize retained messages, or infer global project or session state.
 
-INPUTS:
-
-EXISTING HISTORICAL SUMMARIES:
-Older immutable summary chunks, in chronological order. Use only as read-only context.
-
-NEW PRUNED MESSAGES:
-The exact conversation span being replaced by this new summary chunk. Summarize only this span.
-
-CORE RULES:
-
-Summarize only NEW PRUNED MESSAGES.
-
-Use EXISTING HISTORICAL SUMMARIES only to:
-- resolve references, names, continuity, and prior decisions
-- avoid duplicating old facts
-- understand whether NEW PRUNED MESSAGES changed, completed, contradicted, clarified, or depended on earlier context
-
-Do not:
-- rewrite, merge, correct, restate, or reformat old summaries
-- summarize later retained messages
-- infer or declare global current project or session state
-- answer the conversation
-- continue the conversation as an assistant
-- reproduce transcript dialogue
-
-Preserve chronological order when it affects causality, decisions, dependencies, or continuation.
-Prefer delta facts: what changed, what was decided, what was verified, what failed, and what remains unresolved from this span.
-Repeat an older fact only if NEW PRUNED MESSAGES changed, completed, contradicted, clarified, or explicitly depended on it.
+CHRONOLOGICAL CONTENT:
+Record events in their actual order. Preserve, when present:
+- Requirement: user request, constraint, approval, rejection, or scope change.
+- Plan: goal, ordered steps, files, dependencies, risks, and validation.
+- Tasks: preserve meaningful checklist items and their status: done, pending, blocked, or replaced.
+- Decision: chosen approach and reason.
+- Implemented: file or identifier changed, behavior, and why.
+- Validation: command, test, error, warning, result, commit, or push.
+- Status: unresolved item created or still open at the end of this span.
 
 IMPLEMENTATION PLANS:
+Keep plans and task lists nearly complete. Compress wording and duplication, but preserve order, technical identifiers, paths, functions, config keys, commands, dependencies, risks, validation, and explicit status. Do not present planned work as completed unless the span explicitly says so.
 
-If NEW PRUNED MESSAGES contain an implementation plan, preserve it as a first-class memory item. Keep its goal, ordered steps, subtasks, files, paths, modules, functions, types, configuration keys, constraints, assumptions, dependencies, validation plan, risks, open questions, and explicit approval or rejection. Compress wording and remove duplication, but do not collapse the plan into a vague summary. Do not reinterpret a plan as completed work unless that is explicit in NEW PRUNED MESSAGES.
+Do not:
+- reproduce source code, diffs, prompt templates, tool arguments, or long quoted passages
+- copy prompt contents when the discussion is about a prompt; record its purpose, decision, change, or observed behavior instead
+- reproduce transcript dialogue, reasoning, tool noise, assistant meta-talk, filler, or emoji
+- repeat older facts unless this span changed, completed, contradicted, clarified, or depended on them
 
-REASONING:
-
-Reasoning may be used as evidence for intent, decisions, failed attempts, course corrections, validation, and unresolved items. Do not quote or reproduce reasoning verbatim. Preserve it only when it affected a technical action or decision.
-
-KEEP:
-- requirements and constraints introduced in the pruned span
-- technical identifiers, files, paths, modules, functions, types, and config keys
-- commands, tests, results, errors, warnings, logs, and verification
-- implementation, configuration, documentation, dependency, migration, or schema changes
-- technical decisions, formulas, mappings, protocols, and workflows
-- failed attempts when they prevent repeating a mistake or explain a decision
-- open items created or unresolved at the end of the span
-
-DROP:
-- chit-chat, politeness, filler, repeated dialogue, and tool noise
-- assistant meta-talk and decorative framing
-- unsupported conclusions about work outside NEW PRUNED MESSAGES
-- emoji
+Reasoning may support an action, decision, failure, validation, or open item, but never quote it.
 
 STYLE:
-Output only the new summary chunk text. Use compact technical bullets or dense short paragraphs. Optimize for low token usage and high recall. Preserve exact identifiers, paths, commands, hashes, errors, and short critical strings when needed.
+Use telegraphic chronological bullets. Prefer Requirement:, Plan:, Tasks:, Decision:, Implemented:, Validation:, and Status: labels when useful. Preserve exact identifiers, short protocol literals, paths, commands, hashes, and errors only when needed for continuation. Optimize for low tokens and high recall.
 
 LENGTH:
 Keep under approximately `)
