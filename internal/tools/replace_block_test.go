@@ -96,20 +96,66 @@ func TestReplaceBlockMultiline(t *testing.T) {
 	}
 }
 
-// TestReplaceBlockOnlyFirstOccurrence verifies only the first match is replaced.
-func TestReplaceBlockOnlyFirstOccurrence(t *testing.T) {
+// TestReplaceBlockDuplicateMatch verifies duplicate exact matches are rejected.
+func TestReplaceBlockDuplicateMatch(t *testing.T) {
 	path := writeTestFile(t, "target\ntarget\ntarget")
 	tool := NewReplaceBlockTool(func() string { return filepath.Dir(path) })
 	args := json.RawMessage(`{"file_path":"` + path + `","old_block":"target","new_block":"replaced"}`)
 	result := tool.Execute(context.Background(), args)
-	if !strings.Contains(result, "block replaced") {
-		t.Errorf("Execute() = %q, want 'block replaced'", result)
+	if !strings.Contains(result, "ambiguous") {
+		t.Errorf("Execute() = %q, want ambiguous-match error", result)
 	}
 	data, _ := os.ReadFile(path)
-	content := string(data)
-	count := strings.Count(content, "target")
-	if count != 2 {
-		t.Errorf("file has %d 'target' remaining, want 2 (only first replaced)", count)
+	if string(data) != "target\ntarget\ntarget" {
+		t.Errorf("file content changed after ambiguous match: %q", string(data))
+	}
+}
+
+// TestReplaceBlockMultiplePartialSuccess verifies successful blocks persist while failed blocks are reported.
+func TestReplaceBlockMultiplePartialSuccess(t *testing.T) {
+	path := writeTestFile(t, "first old\nsecond old\nfooter")
+	tool := NewReplaceBlockTool(func() string { return filepath.Dir(path) })
+	args, err := json.Marshal(map[string]any{
+		"file_path": path,
+		"blocks": []map[string]string{
+			{"old_block": "first old", "new_block": "first new"},
+			{"old_block": "missing old", "new_block": "missing new"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := tool.Execute(context.Background(), args)
+	if !strings.Contains(result, "1 block(s) failed") || !strings.Contains(result, "first new") || !strings.Contains(result, "missing old") {
+		t.Errorf("Execute() = %q, want partial result with failed block and live file", result)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "first new\nsecond old\nfooter" {
+		t.Errorf("file content = %q, want successful replacement only", string(data))
+	}
+}
+
+// TestReplaceBlockMultipleSuccess verifies all uniquely matching blocks are applied.
+func TestReplaceBlockMultipleSuccess(t *testing.T) {
+	path := writeTestFile(t, "first old\nsecond old")
+	tool := NewReplaceBlockTool(func() string { return filepath.Dir(path) })
+	args, err := json.Marshal(map[string]any{
+		"file_path": path,
+		"blocks": []map[string]string{
+			{"old_block": "first old", "new_block": "first new"},
+			{"old_block": "second old", "new_block": "second new"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := tool.Execute(context.Background(), args)
+	if !strings.Contains(result, "replaced 2 block(s)") {
+		t.Errorf("Execute() = %q, want two replacements", result)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "first new\nsecond new" {
+		t.Errorf("file content = %q, want both replacements", string(data))
 	}
 }
 
