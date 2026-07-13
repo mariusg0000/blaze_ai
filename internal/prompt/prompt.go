@@ -41,7 +41,7 @@ var variablePattern = regexp.MustCompile(`\{([A-Z_][A-Z0-9_]*)\}`)
 //
 // WHAT:  Holds configuration for prompt building and assembles prompts on every LLM call.
 // WHY:   The prompt is rebuilt fresh from disk every time per spec — nothing is reused.
-// PARAMS: PromptsFS — filesystem containing sysprompt.md and sysprompt.<os>.md;
+// PARAMS: PromptsFS — live filesystem containing editable sysprompt and transport templates;
 //
 //	WorkDir — current work folder for specs.md, AGENTS.md, and project skill discovery;
 //	OS — the detected operating system for selecting the OS-specific prompt;
@@ -342,10 +342,6 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 	if err != nil {
 		return "", err
 	}
-	osPrompt, err = b.injectVariables(osPrompt)
-	if err != nil {
-		return "", err
-	}
 
 	// 3. Transport-specific prompt (required for the active transport).
 	transportName := strings.TrimSpace(b.TransportName)
@@ -354,10 +350,6 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 	}
 	transportPromptName := fmt.Sprintf("transport.%s.md", transportName)
 	transportPrompt, err := readFileRequiredFS(b.PromptsFS, transportPromptName, ErrTransportPromptMissing)
-	if err != nil {
-		return "", err
-	}
-	transportPrompt, err = b.injectVariables(transportPrompt)
 	if err != nil {
 		return "", err
 	}
@@ -402,9 +394,7 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 		agents = fmt.Sprintf("---\nAGENTS.md:\n\n%s\n---", agents)
 	}
 
-	rendered, err := b.injectTemplateVariables(universal, map[string]string{
-		"OS_PROMPT":               strings.TrimSpace(osPrompt),
-		"TRANSPORT_PROMPT":        strings.TrimSpace(transportPrompt),
+	templateValues := map[string]string{
 		"HOST_HELPERS_ADVISORY":   strings.TrimSpace(helperAdvisory),
 		"HOST_HELPERS_AVAILABLE":  strings.TrimSpace(helperAvailable),
 		"HOST_HELPERS_OPTIONAL":   strings.TrimSpace(helperOptional),
@@ -413,7 +403,19 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 		"SKILLS_ACTIVE":           strings.TrimSpace(skillsActive),
 		"PROJECT_CONTENT":         strings.TrimSpace(projectContext),
 		"AGENTS_CONTENT":          strings.TrimSpace(agents),
-	}, "")
+	}
+	osPrompt, err = b.injectTemplateVariables(osPrompt, templateValues, "")
+	if err != nil {
+		return "", err
+	}
+	templateValues["OS_PROMPT"] = strings.TrimSpace(osPrompt)
+	transportPrompt, err = b.injectTemplateVariables(transportPrompt, templateValues, "")
+	if err != nil {
+		return "", err
+	}
+	templateValues["TRANSPORT_PROMPT"] = strings.TrimSpace(transportPrompt)
+
+	rendered, err := b.injectTemplateVariables(universal, templateValues, "")
 	if err != nil {
 		return "", err
 	}

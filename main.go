@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"blazeai/internal/config"
@@ -148,9 +149,13 @@ func openSession(workDir string, resume resumeOptions) (*session.Session, error)
 	}
 }
 
-// prepareBuiltinAssets resolves prompt templates and seeds builtin skill files into app home.
+// prepareBuiltinAssets seeds missing editable assets and returns the live prompt filesystem.
+//
+// WHAT: Materializes every embedded prompt template under app_home/prompts and returns os.DirFS there.
+// WHY: Users must be able to edit all prompt templates, while startup still provides complete defaults.
+// HOW: Existing prompt files are preserved; BuildRuntimePart rereads the returned disk filesystem every call.
 func prepareBuiltinAssets() (fs.FS, error) {
-	promptsFS, err := fs.Sub(embeddedPrompts, "prompts")
+	embeddedPromptFS, err := fs.Sub(embeddedPrompts, "prompts")
 	if err != nil {
 		return nil, fmt.Errorf("cannot resolve embedded prompts: %w", err)
 	}
@@ -162,10 +167,44 @@ func prepareBuiltinAssets() (fs.FS, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot resolve app home: %w", err)
 	}
-	if err := skills.SeedBuiltins(templatesFS, home+"/skills"); err != nil {
+	promptsDir := filepath.Join(home, "prompts")
+	if err := seedMissingPromptFiles(embeddedPromptFS, promptsDir); err != nil {
+		return nil, err
+	}
+	if err := skills.SeedBuiltins(templatesFS, filepath.Join(home, "skills")); err != nil {
 		return nil, fmt.Errorf("cannot seed builtin skills: %w", err)
 	}
-	return promptsFS, nil
+	return os.DirFS(promptsDir), nil
+}
+
+// seedMissingPromptFiles copies embedded prompt templates without overwriting user edits.
+func seedMissingPromptFiles(source fs.FS, targetDir string) error {
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return fmt.Errorf("cannot create prompts directory %s: %w", targetDir, err)
+	}
+	entries, err := fs.ReadDir(source, ".")
+	if err != nil {
+		return fmt.Errorf("cannot list embedded prompts: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" || entry.Name() == "readme.md" {
+			continue
+		}
+		target := filepath.Join(targetDir, entry.Name())
+		if _, err := os.Stat(target); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("cannot inspect prompt file %s: %w", target, err)
+		}
+		data, err := fs.ReadFile(source, entry.Name())
+		if err != nil {
+			return fmt.Errorf("cannot read embedded prompt %s: %w", entry.Name(), err)
+		}
+		if err := os.WriteFile(target, data, 0644); err != nil {
+			return fmt.Errorf("cannot create prompt file %s: %w", target, err)
+		}
+	}
+	return nil
 }
 
 // runConsole starts the console transport over a newly created runtime agent.
