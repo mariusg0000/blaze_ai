@@ -78,6 +78,20 @@ func (r *Reader) ReadLine() (string, error) {
 	return r.scanner.Text(), nil
 }
 
+// ReadApproval reads a visible one-line confirmation from the controlling terminal.
+//
+// WHAT: Opens /dev/tty and reads Y/N input byte by byte in raw mode.
+// WHY: stdin belongs to the readline lifecycle and may not be the controlling terminal.
+// RETURNS: submitted line, or an explicit terminal/input error.
+func (r *Reader) ReadApproval() (string, error) {
+	tty, err := openApprovalTTY()
+	if err != nil {
+		return "", err
+	}
+	defer tty.Close()
+	return readTerminalLine(tty, true)
+}
+
 // ReadEvent is no longer used by the main REPL, which is managed by readline.
 // It fails explicitly instead of silently reactivating the removed raw parser.
 func (r *Reader) ReadEvent() (string, string, error) {
@@ -127,7 +141,26 @@ func deleteBeforeCursor(buf []byte, pos int) ([]byte, int) {
 // RETURNS: password, or cancellation/input error.
 func (r *Reader) ReadHiddenInput(prompt string) (string, error) {
 	fmt.Fprint(os.Stdout, prompt)
-	fd := int(os.Stdin.Fd())
+	tty, err := openApprovalTTY()
+	if err != nil {
+		return "", err
+	}
+	defer tty.Close()
+	return readTerminalLine(tty, false)
+}
+
+// openApprovalTTY opens the controlling terminal independently of stdin/readline.
+func openApprovalTTY() (*os.File, error) {
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open controlling terminal /dev/tty: %w", err)
+	}
+	return tty, nil
+}
+
+// readTerminalLine reads one raw terminal line and optionally echoes printable input.
+func readTerminalLine(tty *os.File, echo bool) (string, error) {
+	fd := int(tty.Fd())
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
 		return "", fmt.Errorf("cannot enter raw terminal mode: %w", err)
@@ -137,12 +170,8 @@ func (r *Reader) ReadHiddenInput(prompt string) (string, error) {
 	var buf []byte
 	for {
 		var one [1]byte
-		n, readErr := os.Stdin.Read(one[:])
-		if readErr != nil {
-			return "", readErr
-		}
-		if n == 0 {
-			continue
+		if _, err := tty.Read(one[:]); err != nil {
+			return "", err
 		}
 		switch one[0] {
 		case 0x03:
@@ -158,10 +187,16 @@ func (r *Reader) ReadHiddenInput(prompt string) (string, error) {
 		case 0x7f, 0x08:
 			if len(buf) > 0 {
 				buf = buf[:len(buf)-1]
+				if echo {
+					fmt.Fprint(os.Stdout, "\b \b")
+				}
 			}
 		default:
 			if one[0] >= 0x20 {
 				buf = append(buf, one[0])
+				if echo {
+					fmt.Fprintf(os.Stdout, "%c", one[0])
+				}
 			}
 		}
 	}

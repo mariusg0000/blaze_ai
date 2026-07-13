@@ -804,7 +804,10 @@ func (c *Console) RequestSudoApproval(command string) (approved bool, password s
 	fmt.Fprintf(c.Out, "\n%s: %s\n", label, command)
 	fmt.Fprintf(c.Out, "%s [y/N] ", c.color(colorBrightGreen, "Execute with sudo?"))
 
-	line, err := c.Reader.ReadLine()
+	// Use a dedicated raw reader after the main readline call has returned.
+	// Starting a second readline shell here causes duplicate prompts and cursor
+	// capability errors in terminal emulators.
+	line, err := c.Reader.ReadApproval()
 	if err != nil {
 		return false, ""
 	}
