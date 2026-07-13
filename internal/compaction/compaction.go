@@ -405,7 +405,6 @@ Record events in their actual order. Preserve, when present:
 - Tasks: preserve meaningful checklist items and their status: done, pending, blocked, or replaced.
 - Decision: chosen approach and reason.
 - Implemented: file or identifier changed, behavior, and why.
-- Validation: command, test, error, warning, result, commit, or push.
 - Status: unresolved item created or still open at the end of this span.
 
 IMPLEMENTATION PLANS:

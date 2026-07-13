@@ -44,10 +44,7 @@ Use:
 
 ```text
 WHAT:    [functionality]
-WHY:     [reason]
 HOW:     [approach]
-PARAMS:  [parameters or none]
-RETURNS: [return value or none]
 ```
 
 Inline comments must explain why a decision exists. Do not narrate code.
@@ -60,15 +57,19 @@ When unsure, document it.
 
 ## Commit Workflow
 
-Run git status --short.
+**MANDATORY: Commit only when the user explicitly requests a commit in the current turn.**
 
-Infer known changes from the conversation. Do not perform unnecessary reads.
+Completing an implementation, fixing tests, or finishing a task is never permission to run `git add`, create a decision summary, or commit.
 
-For modified files not explained by the conversation, run git diff only on those files and infer their purpose.
+When a commit is requested:
 
-Add secrets, generated files, generated executables, dependencies, virtual environments, caches, build outputs, logs, local databases, and other repository-irrelevant files or directories to .gitignore.
-
-Stage and commit everything else.
+1. Run `git status --short`.
+2. Infer known changes from the conversation. Do not perform unnecessary reads.
+3. For files not explained by the conversation, run `git diff` only on those files and infer their purpose.
+4. Add secrets, generated files, executables, dependencies, virtual environments, caches, build outputs, logs, local databases, and other repository-irrelevant files or directories to `.gitignore`.
+5. Stage and commit every other repository change, including pre-existing or unrelated changes. Do not leave relevant changes uncommitted.
+6. Mention all included pre-existing or unrelated changes in the commit message.
+7. Run `git status --short` after the commit and verify that no relevant changes remain.
 
 Create `decisions/` when required and missing.
 
@@ -77,8 +78,10 @@ Create `decisions/` when required and missing.
 Use:
 
 ```text
-decisions/YYYY-MM-DD-HHMM-short-topic.md
+decisions/YYYY-MM-DD-HHMM-short-topic-keyword1-keyword2-keyword3-keyword4-keyword5.md
 ```
+
+Use exactly five concise, lowercase keywords describing the main decisions.
 
 Include major pre-existing changes committed with the work. Mention minor included changes briefly.
 
@@ -115,7 +118,8 @@ The body must state:
 * how it was implemented
 * validation performed
 * decision summary path, when created
-* included pre-existing or unrelated files
+* all included pre-existing or unrelated changes
+
 
 ## Push
 

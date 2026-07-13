@@ -1,25 +1,24 @@
-# Session Decision Summary: Compaction, TaskSwitcher, and maintenance UI
+# Session Decision Summary: Compaction Task Switch Maintenance
 
 Date: 2026-07-11 13:45
 
 ## Context
 
-The compaction summary needed to preserve final analysis outcomes, while TaskSwitcher was failing immediately after each qualifying turn because its async provider call inherited the completed turn context. The maintenance UI also displayed the generic tool context token count instead of the requested pruning result.
+Compaction summaries were losing analysis conclusions (findings, verdicts, uncertainty, evidence). Async TaskSwitcher failed immediately when the completed turn context was canceled. Console maintenance results showed a generic `CTX` token suffix instead of pruned-message details.
 
 ## Changes Made
 
-- Added mandatory analysis-outcome instructions to the token-compaction prompt, preserving verdict status, uncertainty, scope, evidence, relevant files, and practical consequences.
-- Detached TaskSwitcher jobs from the per-turn context; jobs now use a session-scoped context with the existing timeout and explicit manager cancellation.
-- Added a regression test proving a TaskSwitcher result survives cancellation of the completed turn context.
-- Updated console maintenance rendering to show pruning details and errors inline without the generic `CTX` suffix.
-- Added console coverage for maintenance success and error formatting.
+- Extended the compaction prompt and prompt contract test
+- Made TaskSwitcher worker context session-scoped with explicit manager cancellation
+- Added runtime regression coverage for canceled turn contexts
+- Added a dedicated console maintenance result renderer and formatting tests
 
 ## Decisions And Rationale
 
-Analysis conclusions are treated as high-priority summary content, but hypotheses and open questions must not be promoted to confirmed findings. TaskSwitcher must outlive `RunTurn` because it intentionally runs after the main response; explicit manager cancellation remains the correct lifecycle control. Maintenance uses a dedicated renderer configuration rather than changing normal tool output, so compaction/task-switch status can show their own details without altering existing tool CTX behavior.
+Preserve analysis conclusions during token compaction — summaries retain final findings, verdicts, uncertainty, evidence, and relevant file references. Async TaskSwitcher detection stays alive after a turn by using a session-scoped worker context with explicit manager cancellation instead of the turn context. Console compaction/task-switch results show pruned-message details instead of the generic `CTX` token suffix. Maintenance errors and timeouts remain inline with their start message.
 
 ## Validation
 
-- `go test ./...`
-- `go build ./...`
-- `git diff --check`
+- `go test ./...` — passed
+- `go build ./...` — passed
+- `git diff --check` — passed

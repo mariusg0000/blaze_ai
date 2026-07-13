@@ -1,21 +1,26 @@
-# Session Decision Summary: Task compaction coordination
+# Session Decision Summary: Task Compaction Coordination
 
 Date: 2026-07-11 11:44
 
 ## Context
 
-The runtime previously started TaskSwitcher before the main LLM call and skipped token compaction whenever the TaskSwitcher protocol marker existed. A slow detector could therefore keep the marker pending across turns and starve token compaction indefinitely.
+Token-limit compaction was skipped whenever `taskswitch.json` existed, so a slow or pending TaskSwitcher detector could prevent context compaction indefinitely.
 
 ## Changes Made
 
-`internal/runtime` now decides token compaction first after a completed LLM turn and starts TaskSwitcher only when the token threshold was not reached. `internal/compaction` tracks an active cancel function and generation, cancels pending detection during token compaction, removes protocol files, and rejects stale workers before they publish results. Tests were updated for next-turn TaskSwitcher application and pending protocol cancellation.
+- `internal/compaction/compaction.go`: stores cancellation, mutex, and generation state for asynchronous TaskSwitcher jobs
+- `internal/compaction/taskswitch.go`: adds cancellation, generation validation, protocol cleanup, and updated timing documentation
+- `internal/compaction/taskswitch_test.go`: tests pending TaskSwitcher protocol cancellation
+- `internal/runtime/runtime.go`: gives token compaction priority and starts TaskSwitcher after the token decision
+- `internal/runtime/runtime_test.go`: verifies the new asynchronous next-turn TaskSwitcher behavior
+- `tasks.md`: records completed implementation and validation tasks
 
 ## Decisions And Rationale
 
-Token compaction is the hard safety mechanism and must not be gated by an asynchronous semantic detector. TaskSwitcher remains asynchronous so normal turns do not wait for summarization, but its result is consumed at the next turn boundary. Cancellation alone is not sufficient because a worker could finish after file removal, so generation validation is used before writing a result.
+Token-limit compaction now has priority over asynchronous TaskSwitcher detection. TaskSwitcher starts only after the completed turn is confirmed below the token threshold. Token compaction cancels active detection, invalidates its generation, removes pending protocol files, and then compacts synchronously. Active TaskSwitcher jobs can be canceled and stale results are blocked from recreating protocol state.
 
 ## Validation
 
-- `go test ./...`
-- `go build ./...`
-- `git diff --check`
+- `go test ./...` — passed
+- `go build ./...` — passed
+- `git diff --check` — passed

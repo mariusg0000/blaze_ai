@@ -871,9 +871,9 @@ func TestDeleteBeforeCursorAcrossNewline(t *testing.T) {
 	}
 }
 
-// TestPromptLabelWithMode verifies prompt label shows [<mode> mode]> format.
+// TestPromptLabelWithMode verifies prompt label shows [mode] format without a mode suffix.
 func TestPromptLabelWithMode(t *testing.T) {
-	c, out := newConsole(mockAgent(t))
+	c, _ := newConsole(mockAgent(t))
 	c.Agent.Modes = &config.ModesConfig{
 		Modes: []config.Mode{
 			{Name: "default", Model: "test/test-model"},
@@ -882,21 +882,38 @@ func TestPromptLabelWithMode(t *testing.T) {
 	}
 	c.Agent.CurrentMode = &c.Agent.Modes.Modes[1]
 	label := c.promptLabel()
-	if !strings.Contains(out.String(), "") {
-		// promptLabel returns a string, doesn't write to out
+	if !strings.Contains(label, "[planning]") {
+		t.Errorf("promptLabel() = %q, want [planning]>", label)
 	}
-	if !strings.Contains(label, "[planning mode]") {
-		t.Errorf("promptLabel() = %q, want [planning mode]>", label)
+	if strings.Contains(label, "mode") {
+		t.Errorf("promptLabel() = %q, should not contain mode suffix", label)
 	}
 }
 
-// TestPromptLabelWithoutMode verifies prompt label defaults to [default mode]> when no mode.
+// TestPromptLabelWithModel verifies the model status follows the mode in yellow bold output.
+func TestPromptLabelWithModel(t *testing.T) {
+	c, _ := newConsole(mockAgent(t))
+	c.shortcutStatus = "[openai/gpt-5.6]"
+	c.Agent.CurrentMode = &config.Mode{Name: "Quick", Model: "openai/gpt-5.6"}
+	label := stripANSICodes(c.promptLabel())
+	if label != "[Quick][openai/gpt-5.6]> " {
+		t.Errorf("promptLabel() = %q, want [Quick][openai/gpt-5.6]> ", label)
+	}
+	if !strings.Contains(c.promptLabel(), colorOrange) || !strings.Contains(c.promptLabel(), colorBold) {
+		t.Errorf("promptLabel() = %q, model status should be yellow bold", c.promptLabel())
+	}
+}
+
+// TestPromptLabelWithoutMode verifies prompt label defaults to [default]> when no mode.
 func TestPromptLabelWithoutMode(t *testing.T) {
 	c, _ := newConsole(mockAgent(t))
 	c.Agent.CurrentMode = nil
 	label := c.promptLabel()
-	if !strings.Contains(label, "[default mode]") {
-		t.Errorf("promptLabel() = %q, want [default mode]>", label)
+	if !strings.Contains(label, "[default]") {
+		t.Errorf("promptLabel() = %q, want [default]>", label)
+	}
+	if strings.Contains(label, "mode") {
+		t.Errorf("promptLabel() = %q, should not contain mode suffix", label)
 	}
 	if strings.Contains(label, "USER") {
 		t.Errorf("promptLabel() = %q, should not contain USER", label)

@@ -26,6 +26,7 @@ import (
 	"blazeai/internal/skills"
 
 	"github.com/reeflective/readline"
+	"github.com/reeflective/readline/inputrc"
 )
 
 // ANSI color codes for TTY output.
@@ -98,8 +99,9 @@ type Console struct {
 	spinnerStop      chan struct{}
 	spinnerDone      chan struct{}
 
-	switchLineActive bool // true when a mode/model status line is present and can be overwritten
-	switchLineWidth  int  // visible width of the current status line for reliable space-padding
+	switchLineActive bool   // true when a mode/model status line is present and can be overwritten
+	switchLineWidth  int    // visible width of the current status line for reliable space-padding
+	shortcutStatus   string // status rendered as the readline prompt's overwriteable upper line
 }
 
 // NewConsole creates a Console for terminal interaction.
@@ -1151,16 +1153,31 @@ func splitTableRow(line string) []string {
 	return cells
 }
 
-// promptLabel returns the colored input prompt label.
+// promptLabel returns the colored input prompt label and active model status.
 //
-// WHAT:  Builds the [<mode> mode]> label.
-// RETURNS: string — the formatted prompt label.
+// WHAT:  Builds the [mode][model]> label used by the readline prompt.
+// WHY:   Model changes must be visible after the mode without adding output lines.
+// HOW:   Mode uses blue bold text; the active model status uses yellow bold text.
+// RETURNS: string — the formatted input prompt label.
 func (c *Console) promptLabel() string {
+	return c.promptLabelWithStatus(true)
+}
+
+// promptLabelWithStatus builds the prompt with optional one-shot shortcut status.
+//
+// WHAT:  Formats the mode and optionally the model-change bracket.
+// WHY:   The model status must disappear before submitted user text is accepted.
+// PARAMS: includeStatus — whether the active shortcut status should be shown.
+func (c *Console) promptLabelWithStatus(includeStatus bool) string {
+	modeName := "default"
 	if c.Agent.CurrentMode != nil {
-		label := fmt.Sprintf("[%s mode]> ", c.Agent.CurrentMode.Name)
-		return c.color(colorBlue, c.bold(label))
+		modeName = c.Agent.CurrentMode.Name
 	}
-	return c.color(colorBlue, c.bold("[default mode]> "))
+	label := c.color(colorBlue, c.bold("["+modeName+"]"))
+	if includeStatus && c.shortcutStatus != "" {
+		label += c.color(colorOrange, c.bold(c.shortcutStatus))
+	}
+	return label + "> "
 }
 
 // Run starts the REPL loop. Reads input, handles slash commands, and runs agent turns.
@@ -1187,62 +1204,72 @@ func (c *Console) runTTY() error {
 		return fmt.Errorf("cannot enable bracketed paste: %w", err)
 	}
 	rl.AcceptMultiline = func(line []rune) bool { return true }
-	rl.Prompt.Primary(func() string { return c.promptLabel() })
+	rl.Prompt.Primary(func() string {
+		// Keep shortcut feedback only while the input buffer is empty; once the
+		// user types, the accepted line and the next prompt show the mode alone.
+		return c.promptLabelWithStatus(rl.Line().Len() == 0)
+	})
+
+	// setShortcutStatus updates the single redrawable primary prompt line.
+	setShortcutStatus := func(format string, args ...any) {
+		c.shortcutStatus = fmt.Sprintf(format, args...)
+		rl.Display.Refresh()
+	}
 
 	// Register BlazeAI shortcuts before binding them over readline defaults.
 	rl.Keymap.Register(map[string]func(){
 		"blazeai-mode-next": func() {
 			if _, err := c.Agent.NextMode(); err != nil {
-				rl.PrintTransientf("Mode switch error: %v", err)
+				setShortcutStatus("Mode switch error: %v", err)
 				return
 			}
-			rl.PrintTransientf("Mode: %s", c.Agent.CurrentMode.Name)
+			setShortcutStatus("[%s]", c.Agent.ModelID)
 		},
 		"blazeai-model-next": func() {
 			if err := c.Agent.NextFavoriteModel(); err != nil {
-				rl.PrintTransientf("Model switch error: %v", err)
+				setShortcutStatus("Model switch error: %v", err)
 				return
 			}
-			rl.PrintTransientf("Model: %s", c.Agent.ModelID)
+			setShortcutStatus("[%s]", c.Agent.ModelID)
 		},
 		"blazeai-favorite-add": func() {
 			if err := c.Agent.Config.AddFavorite(c.Agent.ModelID); err != nil {
-				rl.PrintTransientf("Add favorite error: %v", err)
+				setShortcutStatus("Add favorite error: %v", err)
 				return
 			}
 			if err := c.Agent.Config.Save(); err != nil {
-				rl.PrintTransientf("Save config error: %v", err)
+				setShortcutStatus("Save config error: %v", err)
 				return
 			}
-			rl.PrintTransientf("Added favorite: %s", c.Agent.ModelID)
+			setShortcutStatus("Added favorite: %s", c.Agent.ModelID)
 		},
 		"blazeai-favorite-remove": func() {
 			removed, err := c.Agent.Config.RemoveFavorite(c.Agent.ModelID)
 			if err != nil {
-				rl.PrintTransientf("Remove favorite error: %v", err)
+				setShortcutStatus("Remove favorite error: %v", err)
 				return
 			}
 			if !removed {
-				rl.PrintTransientf("Not a favorite: %s", c.Agent.ModelID)
+				setShortcutStatus("Not a favorite: %s", c.Agent.ModelID)
 				return
 			}
 			if err := c.Agent.Config.Save(); err != nil {
-				rl.PrintTransientf("Save config error: %v", err)
+				setShortcutStatus("Save config error: %v", err)
 				return
 			}
-			rl.PrintTransientf("Removed favorite: %s", c.Agent.ModelID)
+			setShortcutStatus("Removed favorite: %s", c.Agent.ModelID)
 		},
 		"blazeai-reasoning-toggle": func() {
 			c.Agent.Config.ShowReasoning = !c.Agent.Config.ShowReasoning
 			if err := c.Agent.Config.Save(); err != nil {
-				rl.PrintTransientf("Reasoning toggle error: %v", err)
+				setShortcutStatus("Reasoning toggle error: %v", err)
 				return
 			}
 			state := "disabled"
 			if c.Agent.Config.ShowReasoning {
 				state = "enabled"
 			}
-			rl.PrintTransientf("Reasoning: %s", state)
+			setShortcutStatus("Reasoning: %s", state)
 		},
 	})
 	for sequence, action := range map[string]string{
@@ -1252,8 +1279,10 @@ func (c *Console) runTTY() error {
 		`\C-r`: "blazeai-favorite-remove",  // Ctrl+R
 		`\C-t`: "blazeai-reasoning-toggle", // Ctrl+T
 	} {
-		if err := rl.Config.Bind("emacs", sequence, action, false); err != nil {
-			return fmt.Errorf("cannot bind %s: %w", sequence, err)
+		// Config.Bind stores raw bytes; decode inputrc notation before binding.
+		key := inputrc.Unescape(sequence)
+		if err := rl.Config.Bind("emacs", key, action, false); err != nil {
+			return fmt.Errorf("cannot bind %q: %w", sequence, err)
 		}
 	}
 
@@ -1271,6 +1300,8 @@ func (c *Console) runTTY() error {
 			return fmt.Errorf("input error: %w", err)
 		}
 
+		// The shortcut status belongs to the active editing prompt only.
+		c.shortcutStatus = ""
 		input := strings.TrimSpace(line)
 		if input == "" {
 			continue

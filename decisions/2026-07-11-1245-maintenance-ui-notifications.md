@@ -1,21 +1,25 @@
-# Session Decision Summary: Maintenance UI notifications
+# Session Decision Summary: Maintenance UI Notifications / Compaction Task Switch
 
 Date: 2026-07-11 12:45
 
 ## Context
 
-Compaction and TaskSwitcher ran silently or exposed only a separate system notification. Users needed visible progress and completion status to understand context maintenance and choose a different summarization model when it failed.
+Compaction and TaskSwitcher ran silently with no user-facing progress indication. Users could not tell when background maintenance was running, had completed, or had failed.
 
 ## Changes Made
 
-The runtime Handler contract now supports maintenance start/result callbacks. Compaction displays an inline tool-style activity with a compaction emoji, pruned-message count, and success/error/timeout status. A confirmed TaskSwitcher displays the same style with a topic-change emoji and pruned-message count. Console, desktop, and Telegram handlers render these callbacks through their existing tool activity paths, keeping the final status on the same line. Async TaskSwitcher errors are persisted through the protocol file so they can reach the next runtime boundary and UI.
+- Added maintenance callbacks to `runtime.Handler`
+- Reused console, desktop, and Telegram tool activity rendering so final status stays on the same line
+- Added compaction/task-switch pruned counters
+- Persisted asynchronous TaskSwitcher errors for runtime consumption and display
+- Updated runtime integration tests and Handler mocks
 
 ## Decisions And Rationale
 
-A dedicated maintenance callback was chosen instead of pretending internal operations are real tool calls in the runtime contract. Transport implementations reuse tool-style rendering to preserve the requested one-line start/result interaction. No notification is emitted for a TaskSwitcher `null` result or while detection is still pending, avoiding false topic-change messages. Counts come from the actual pruned session prefix. Timeout and deadline errors use the existing tool status protocol so they render with the timeout badge.
+Show compaction and TaskSwitcher progress in the UI using the existing inline tool-activity style. Compaction starts with a compaction emoji and "Compacting on max token limits". Completion shows a checkmark and the number of pruned and summarized messages. Errors show an error badge; timeouts/deadlines show the timeout badge. Confirmed task switches start with a topic-change notification and finish with a checkmark and pruned-message count. No task-switch notification is shown for `null` or pending detection.
 
 ## Validation
 
-- `go test ./...`
-- `go build ./...`
-- `git diff --check`
+- `go test ./...` — passed
+- `go build ./...` — passed
+- `git diff --check` — passed
