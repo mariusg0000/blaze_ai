@@ -1189,21 +1189,73 @@ func (c *Console) runTTY() error {
 	rl.AcceptMultiline = func(line []rune) bool { return true }
 	rl.Prompt.Primary(func() string { return c.promptLabel() })
 
-	// Override Ctrl+T (default transpose-chars) to toggle reasoning display.
-	rl.Config.Bind("emacs", `\C-t`, "blazeai-reasoning-toggle", false)
+	// Register BlazeAI shortcuts before binding them over readline defaults.
 	rl.Keymap.Register(map[string]func(){
+		"blazeai-mode-next": func() {
+			if _, err := c.Agent.NextMode(); err != nil {
+				rl.PrintTransientf("Mode switch error: %v", err)
+				return
+			}
+			rl.PrintTransientf("Mode: %s", c.Agent.CurrentMode.Name)
+		},
+		"blazeai-model-next": func() {
+			if err := c.Agent.NextFavoriteModel(); err != nil {
+				rl.PrintTransientf("Model switch error: %v", err)
+				return
+			}
+			rl.PrintTransientf("Model: %s", c.Agent.ModelID)
+		},
+		"blazeai-favorite-add": func() {
+			if err := c.Agent.Config.AddFavorite(c.Agent.ModelID); err != nil {
+				rl.PrintTransientf("Add favorite error: %v", err)
+				return
+			}
+			if err := c.Agent.Config.Save(); err != nil {
+				rl.PrintTransientf("Save config error: %v", err)
+				return
+			}
+			rl.PrintTransientf("Added favorite: %s", c.Agent.ModelID)
+		},
+		"blazeai-favorite-remove": func() {
+			removed, err := c.Agent.Config.RemoveFavorite(c.Agent.ModelID)
+			if err != nil {
+				rl.PrintTransientf("Remove favorite error: %v", err)
+				return
+			}
+			if !removed {
+				rl.PrintTransientf("Not a favorite: %s", c.Agent.ModelID)
+				return
+			}
+			if err := c.Agent.Config.Save(); err != nil {
+				rl.PrintTransientf("Save config error: %v", err)
+				return
+			}
+			rl.PrintTransientf("Removed favorite: %s", c.Agent.ModelID)
+		},
 		"blazeai-reasoning-toggle": func() {
 			c.Agent.Config.ShowReasoning = !c.Agent.Config.ShowReasoning
 			if err := c.Agent.Config.Save(); err != nil {
+				rl.PrintTransientf("Reasoning toggle error: %v", err)
 				return
 			}
 			state := "disabled"
 			if c.Agent.Config.ShowReasoning {
 				state = "enabled"
 			}
-			rl.PrintTransientf("Reasoning: " + state)
+			rl.PrintTransientf("Reasoning: %s", state)
 		},
 	})
+	for sequence, action := range map[string]string{
+		`\C-i`: "blazeai-mode-next",        // Tab
+		`\C-\`: "blazeai-model-next",       // Ctrl+\\
+		`\C-f`: "blazeai-favorite-add",     // Ctrl+F
+		`\C-r`: "blazeai-favorite-remove",  // Ctrl+R
+		`\C-t`: "blazeai-reasoning-toggle", // Ctrl+T
+	} {
+		if err := rl.Config.Bind("emacs", sequence, action, false); err != nil {
+			return fmt.Errorf("cannot bind %s: %w", sequence, err)
+		}
+	}
 
 	for {
 		line, err := rl.Readline()
