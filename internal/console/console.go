@@ -386,6 +386,7 @@ func (c *Console) showStartupSplash() {
 		{"Ctrl+F", "add model to favorites"},
 		{"Ctrl+R", "remove model from favorites"},
 		{"Ctrl+T", "toggle reasoning display"},
+		{"ESC", "cancel active turn"},
 		{"Ctrl+D", "exit (empty line)"},
 	}
 	maxKey := 0
@@ -1199,7 +1200,7 @@ func (c *Console) Run() error {
 }
 
 // No background goroutine — input is read directly at the prompt.
-// During streaming, abort is via SIGINT only (no queued input).
+// During streaming, Ctrl+C and ESC both cancel the active turn.
 //
 // WHAT:  Reads and submits the complete readline buffer.
 // WHY:   Readline owns cursor movement, redraw, history, bracketed paste, and multiline display.
@@ -1392,13 +1393,21 @@ func (c *Console) resetTurnState() {
 	c.reasoningLines = 0
 }
 
-// runAgentTurn executes one agent turn with SIGINT-only abort.
+// runAgentTurn executes one agent turn with Ctrl+C and ESC abort support.
 //
-// WHAT:  Simplified turn execution for TTY mode.
-// WHY:   TTY mode reads input directly at the prompt; no goroutine for queued input.
+// WHAT: Runs one agent turn and waits for completion or an abort key.
+// WHY: Both terminal interrupts must cancel the same runtime context immediately.
+// HOW: Keeps SIGINT for compatibility and adds a platform-specific raw input watcher for ESC.
 func (c *Console) runAgentTurn(input string, interrupts <-chan os.Signal) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	escWatcher, err := newTurnAbortWatcher(os.Stdin)
+	if err != nil {
+		return err
+	}
+	defer escWatcher.stop()
+
 	c.startSpinner("Connecting")
 	defer c.stopSpinner()
 
@@ -1413,6 +1422,9 @@ func (c *Console) runAgentTurn(input string, interrupts <-chan os.Signal) error 
 			c.turnAborting.Store(false)
 			return err
 		case <-interrupts:
+			c.turnAborting.Store(true)
+			cancel()
+		case <-escWatcher.aborted:
 			c.turnAborting.Store(true)
 			cancel()
 		}
