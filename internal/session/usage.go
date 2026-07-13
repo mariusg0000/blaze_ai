@@ -83,7 +83,7 @@ func RecordUsage(folder, modelID string, usage UsageData) error {
 	snapshot.ReasoningTokens += usage.ReasoningTokens
 	switch usage.CacheStatus {
 	case "hit", "miss":
-		snapshot.UncachedInputTokens += usage.PromptTokens - usage.CachedTokens
+		snapshot.UncachedInputTokens += usage.UncachedInputTokens
 		if usage.CacheStatus == "hit" {
 			snapshot.CacheHits++
 		} else {
@@ -117,13 +117,14 @@ func RecordUsage(folder, modelID string, usage UsageData) error {
 // WHAT: Transfers token and cache counters without coupling session storage to a provider package.
 // HOW:  CacheStatus is hit, miss, or unknown when the provider does not report cache details.
 type UsageData struct {
-	PromptTokens     int
-	CompletionTokens int
-	TotalTokens      int
-	CachedTokens     int
-	CacheWriteTokens int
-	ReasoningTokens  int
-	CacheStatus      string
+	PromptTokens        int
+	CompletionTokens    int
+	TotalTokens         int
+	CachedTokens        int
+	CacheWriteTokens    int
+	ReasoningTokens     int
+	UncachedInputTokens int
+	CacheStatus         string
 }
 
 // CacheKeyForSession returns a stable, non-sensitive cache key for a session folder.

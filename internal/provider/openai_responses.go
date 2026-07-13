@@ -16,6 +16,7 @@ import (
 
 	"blazeai/internal/session"
 	"blazeai/internal/tools"
+	usagepkg "blazeai/internal/usage"
 )
 
 type chatGPTResponsesRequest struct {
@@ -76,13 +77,13 @@ type chatGPTText struct {
 }
 
 type chatGPTStreamEvent struct {
-	Type      string                   `json:"type"`
-	Delta     string                   `json:"delta,omitempty"`
-	ItemID    string                   `json:"item_id,omitempty"`
-	Arguments string                   `json:"arguments,omitempty"`
-	Item      chatGPTOutputItem        `json:"item"`
-	Response  chatGPTCompletedResponse `json:"response"`
-	Error     *chatGPTResponseError    `json:"error,omitempty"`
+	Type      string                `json:"type"`
+	Delta     string                `json:"delta,omitempty"`
+	ItemID    string                `json:"item_id,omitempty"`
+	Arguments string                `json:"arguments,omitempty"`
+	Item      chatGPTOutputItem     `json:"item"`
+	Response  json.RawMessage       `json:"response"`
+	Error     *chatGPTResponseError `json:"error,omitempty"`
 }
 
 type chatGPTOutputItem struct {
@@ -92,29 +93,6 @@ type chatGPTOutputItem struct {
 	Name             string `json:"name"`
 	Arguments        string `json:"arguments"`
 	EncryptedContent string `json:"encrypted_content"`
-}
-
-type chatGPTCompletedResponse struct {
-	Usage *chatGPTUsage `json:"usage"`
-}
-
-type chatGPTUsage struct {
-	InputTokens         int                       `json:"input_tokens"`
-	OutputTokens        int                       `json:"output_tokens"`
-	TotalTokens         int                       `json:"total_tokens"`
-	InputTokensDetails  *chatGPTInputTokenDetail  `json:"input_tokens_details,omitempty"`
-	OutputTokensDetails *chatGPTOutputTokenDetail `json:"output_tokens_details,omitempty"`
-}
-
-// chatGPTOutputTokenDetail contains Responses reasoning-token accounting.
-type chatGPTOutputTokenDetail struct {
-	ReasoningTokens int `json:"reasoning_tokens"`
-}
-
-// chatGPTInputTokenDetail contains Responses API prompt-cache accounting.
-type chatGPTInputTokenDetail struct {
-	CachedTokens     int `json:"cached_tokens"`
-	CacheWriteTokens int `json:"cache_write_tokens"`
 }
 
 type chatGPTResponseError struct {
@@ -592,17 +570,8 @@ func parseChatGPTSSE(ctx context.Context, reader io.ReadCloser, onContent func(s
 				call.Arguments = json.RawMessage(event.Arguments)
 			}
 		case "response.completed":
-			if event.Response.Usage != nil {
-				usage := event.Response.Usage
-				result.Usage = &Usage{
-					PromptTokens:     usage.InputTokens,
-					CompletionTokens: usage.OutputTokens,
-					TotalTokens:      usage.TotalTokens,
-					CachedTokens:     cachedTokens(usage),
-					CacheWriteTokens: cacheWriteTokens(usage),
-					ReasoningTokens:  reasoningTokens(usage),
-					CacheStatus:      cacheStatus(usage),
-				}
+			if normalized, ok := usagepkg.Extract([]byte(data)); ok {
+				result.Usage = normalized
 			}
 			finalizeChatGPTToolCalls(result, toolCalls, toolOrder)
 			return result, nil
@@ -614,39 +583,6 @@ func parseChatGPTSSE(ctx context.Context, reader io.ReadCloser, onContent func(s
 			return nil, fmt.Errorf("%s", message)
 		}
 	}
-}
-
-// cachedTokens extracts explicit cache accounting from a completed Responses usage block.
-func cachedTokens(usage *chatGPTUsage) int {
-	if usage == nil || usage.InputTokensDetails == nil {
-		return 0
-	}
-	return usage.InputTokensDetails.CachedTokens
-}
-
-// cacheStatus distinguishes explicit cache hits and misses from providers that omit the field.
-func cacheWriteTokens(usage *chatGPTUsage) int {
-	if usage == nil || usage.InputTokensDetails == nil {
-		return 0
-	}
-	return usage.InputTokensDetails.CacheWriteTokens
-}
-
-func reasoningTokens(usage *chatGPTUsage) int {
-	if usage == nil || usage.OutputTokensDetails == nil {
-		return 0
-	}
-	return usage.OutputTokensDetails.ReasoningTokens
-}
-
-func cacheStatus(usage *chatGPTUsage) string {
-	if usage == nil || usage.InputTokensDetails == nil {
-		return "unknown"
-	}
-	if usage.InputTokensDetails.CachedTokens > 0 {
-		return "hit"
-	}
-	return "miss"
 }
 
 func finalizeChatGPTToolCalls(result *Response, calls map[string]*tools.ToolCall, order []string) {

@@ -99,7 +99,7 @@ func (h *Handler) FinishTurn() error {
 }
 
 // OnUsage records prompt token usage from the last provider response.
-func (h *Handler) OnUsage(promptTokens int) {
+func (h *Handler) OnUsage(promptTokens, cachedTokens, uncachedTokens int) {
 	h.mu.Lock()
 	h.lastTokens = promptTokens
 	h.mu.Unlock()

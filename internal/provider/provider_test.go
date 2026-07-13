@@ -16,6 +16,7 @@ import (
 
 	"blazeai/internal/config"
 	"blazeai/internal/session"
+	usagepkg "blazeai/internal/usage"
 )
 
 // mockProvider returns a config with a provider matching the test server.
@@ -520,15 +521,9 @@ func TestStreamEmpty(t *testing.T) {
 
 // TestNormalizeGenericUsage verifies provider-specific usage fields become shared counters.
 func TestNormalizeGenericUsage(t *testing.T) {
-	usage := normalizeGenericUsage(&genericUsage{
-		PromptTokens:           3934,
-		CompletionTokens:       42,
-		TotalTokens:            3976,
-		PromptTokensDetails:    &tokenUsageDetails{CachedTokens: 3072},
-		CompletionTokenDetails: &completionTokenDetails{ReasoningTokens: 26},
-	})
-	if usage.PromptTokens != 3934 || usage.CachedTokens != 3072 || usage.ReasoningTokens != 26 || usage.CacheStatus != "hit" {
-		t.Fatalf("normalized usage = %#v", usage)
+	normalized, ok := usagepkg.Extract([]byte(`{"usage":{"prompt_tokens":3934,"completion_tokens":42,"total_tokens":3976,"prompt_tokens_details":{"cached_tokens":3072},"completion_tokens_details":{"reasoning_tokens":26}}}`))
+	if !ok || normalized.PromptTokens != 3934 || normalized.CachedTokens != 3072 || normalized.ReasoningTokens != 26 || normalized.CacheStatus != "hit" {
+		t.Fatalf("normalized usage = %#v, ok=%v", normalized, ok)
 	}
 }
 

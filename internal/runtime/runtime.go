@@ -45,7 +45,7 @@ type Handler interface {
 	// OnToolResult is called after a tool has finished.
 	OnToolResult(name string, result string)
 	// OnUsage is called after each provider response with prompt token count.
-	OnUsage(promptTokens int)
+	OnUsage(promptTokens, cachedTokens, uncachedTokens int)
 	// OnReasoning is called for each streaming reasoning/thinking chunk from the LLM.
 	OnReasoning(delta string)
 
@@ -338,18 +338,19 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		// Report prompt token usage to the transport.
 		if resp.Usage != nil {
 			if err := session.RecordUsage(a.Session.Folder, a.ModelID, session.UsageData{
-				PromptTokens:     resp.Usage.PromptTokens,
-				CompletionTokens: resp.Usage.CompletionTokens,
-				TotalTokens:      resp.Usage.TotalTokens,
-				CachedTokens:     resp.Usage.CachedTokens,
-				CacheWriteTokens: resp.Usage.CacheWriteTokens,
-				ReasoningTokens:  resp.Usage.ReasoningTokens,
-				CacheStatus:      resp.Usage.CacheStatus,
+				PromptTokens:        resp.Usage.PromptTokens,
+				CompletionTokens:    resp.Usage.CompletionTokens,
+				TotalTokens:         resp.Usage.TotalTokens,
+				CachedTokens:        resp.Usage.CachedTokens,
+				UncachedInputTokens: resp.Usage.UncachedInputTokens,
+				CacheWriteTokens:    resp.Usage.CacheWriteTokens,
+				ReasoningTokens:     resp.Usage.ReasoningTokens,
+				CacheStatus:         resp.Usage.CacheStatus,
 			}); err != nil {
 				return fmt.Errorf("cannot persist token usage report: %w", err)
 			}
 			if a.Handler != nil {
-				a.Handler.OnUsage(resp.Usage.PromptTokens)
+				a.Handler.OnUsage(resp.Usage.PromptTokens, resp.Usage.CachedTokens, resp.Usage.UncachedInputTokens)
 			}
 		}
 

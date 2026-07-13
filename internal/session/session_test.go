@@ -682,13 +682,13 @@ func TestRecordUsageAggregatesByModel(t *testing.T) {
 	dir := t.TempDir()
 	if err := RecordUsage(dir, "openai/gpt-5.4", UsageData{
 		PromptTokens: 100, CompletionTokens: 20, TotalTokens: 120,
-		CachedTokens: 80, CacheStatus: "hit",
+		CachedTokens: 80, UncachedInputTokens: 20, CacheStatus: "hit",
 	}); err != nil {
 		t.Fatalf("RecordUsage() error: %v", err)
 	}
 	if err := RecordUsage(dir, "openai/gpt-5.4", UsageData{
 		PromptTokens: 50, CompletionTokens: 10, TotalTokens: 60,
-		CacheStatus: "miss",
+		UncachedInputTokens: 50, CacheStatus: "miss",
 	}); err != nil {
 		t.Fatalf("RecordUsage() second error: %v", err)
 	}

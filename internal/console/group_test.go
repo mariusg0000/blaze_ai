@@ -9,7 +9,7 @@ import (
 // Runs three consecutive tool calls between content blocks and checks blank line placement.
 func TestToolGroupVisual(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
-	c.OnUsage(11186)
+	c.OnUsage(11186, 0, 11186)
 
 	// First content block.
 	c.OnContent("Sure, let me read that file.\n")

@@ -81,23 +81,25 @@ type Console struct {
 
 	outMu sync.Mutex
 
-	contentStarted   bool
-	contentBuffer    string
-	inCodeBlock      bool
-	lastPromptTokens int
-	lineOpen         bool
-	toolsStarted     bool
-	turnAborting     atomic.Bool
-	lastToolArgs     string
-	reasoningStarted bool
-	reasoningLines   int
-	spinnerActive    bool
-	spinnerVisible   bool
-	spinnerFrame     int
-	spinnerWidth     int
-	spinnerLabel     string
-	spinnerStop      chan struct{}
-	spinnerDone      chan struct{}
+	contentStarted          bool
+	contentBuffer           string
+	inCodeBlock             bool
+	lastPromptTokens        int
+	lastCachedTokens        int
+	lastUncachedInputTokens int
+	lineOpen                bool
+	toolsStarted            bool
+	turnAborting            atomic.Bool
+	lastToolArgs            string
+	reasoningStarted        bool
+	reasoningLines          int
+	spinnerActive           bool
+	spinnerVisible          bool
+	spinnerFrame            int
+	spinnerWidth            int
+	spinnerLabel            string
+	spinnerStop             chan struct{}
+	spinnerDone             chan struct{}
 
 	switchLineActive bool   // true when a mode/model status line is present and can be overwritten
 	switchLineWidth  int    // visible width of the current status line for reliable space-padding
@@ -283,7 +285,9 @@ func (c *Console) responseSeparator() {
 	}
 	c.ensureLineBreakBeforeBlock()
 
-	ctxText := "CTX: " + formatCompactInt(c.lastPromptTokens)
+	ctxText := "CTX: " + formatCompactInt(c.lastPromptTokens) +
+		" | CH: " + formatCompactInt(c.lastCachedTokens) +
+		" | CM: " + formatCompactInt(c.lastUncachedInputTokens)
 	model := c.Agent.ModelID
 	workDir := truncatePathTail(c.Agent.WorkDir, 30)
 
@@ -527,9 +531,11 @@ func (c *Console) OnStreamPhase(phase provider.StreamPhase) {
 // OnUsage records the prompt token count from the latest provider response.
 //
 // WHAT:  Stores context size for end-of-turn separator rendering.
-// PARAMS: promptTokens — provider-reported prompt tokens.
-func (c *Console) OnUsage(promptTokens int) {
+// PARAMS: promptTokens — total input tokens; cachedTokens — cache hits; uncachedTokens — cache misses.
+func (c *Console) OnUsage(promptTokens, cachedTokens, uncachedTokens int) {
 	c.lastPromptTokens = promptTokens
+	c.lastCachedTokens = cachedTokens
+	c.lastUncachedInputTokens = uncachedTokens
 }
 
 // OnReasoning is called for each streaming reasoning chunk from the LLM.

@@ -48,7 +48,9 @@ func (h *mockHandler) OnToolCall(name string, args string) {
 func (h *mockHandler) OnToolResult(name string, result string) {
 	h.toolResults = append(h.toolResults, name+": "+result)
 }
-func (h *mockHandler) OnUsage(promptTokens int) { h.usages = append(h.usages, promptTokens) }
+func (h *mockHandler) OnUsage(promptTokens, cachedTokens, uncachedTokens int) {
+	h.usages = append(h.usages, promptTokens)
+}
 func (h *mockHandler) OnReasoning(delta string) {}
 func (h *mockHandler) OnSystem(message string)  { h.systemMsgs = append(h.systemMsgs, message) }
 func (h *mockHandler) OnMaintenanceCall(name string, args string) {

@@ -175,7 +175,7 @@ func (h *Handler) OnToolResult(name string, result string) {
 }
 
 // OnUsage stores prompt token usage for the separator display.
-func (h *Handler) OnUsage(promptTokens int) {
+func (h *Handler) OnUsage(promptTokens, cachedTokens, uncachedTokens int) {
 	h.mu.Lock()
 	h.lastPromptTokens = promptTokens
 	h.mu.Unlock()

@@ -45,15 +45,15 @@ func mockAgent(t *testing.T) *runtime.Agent {
 // mockHandler is a no-op handler for agent construction.
 type mockHandler struct{}
 
-func (h *mockHandler) OnContent(delta string)                            {}
-func (h *mockHandler) OnToolCall(name string, args string)               {}
-func (h *mockHandler) OnToolResult(name string, result string)           {}
-func (h *mockHandler) OnUsage(promptTokens int)                          {}
-func (h *mockHandler) OnReasoning(delta string)                          {}
-func (h *mockHandler) OnSystem(message string)                           {}
-func (h *mockHandler) OnMaintenanceCall(name string, args string)        {}
-func (h *mockHandler) OnMaintenanceResult(name string, result string)    {}
-func (h *mockHandler) RequestSudoApproval(command string) (bool, string) { return false, "" }
+func (h *mockHandler) OnContent(delta string)                                 {}
+func (h *mockHandler) OnToolCall(name string, args string)                    {}
+func (h *mockHandler) OnToolResult(name string, result string)                {}
+func (h *mockHandler) OnUsage(promptTokens, cachedTokens, uncachedTokens int) {}
+func (h *mockHandler) OnReasoning(delta string)                               {}
+func (h *mockHandler) OnSystem(message string)                                {}
+func (h *mockHandler) OnMaintenanceCall(name string, args string)             {}
+func (h *mockHandler) OnMaintenanceResult(name string, result string)         {}
+func (h *mockHandler) RequestSudoApproval(command string) (bool, string)      { return false, "" }
 
 // newConsole creates a Console with a buffer for output in TTY mode.
 func newConsole(agent *runtime.Agent) (*Console, *bytes.Buffer) {
@@ -485,7 +485,7 @@ func TestOnStreamPhaseUpdatesSpinnerLabel(t *testing.T) {
 func TestOnToolRoundTripAfterContent(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnContent("hello")
-	c.OnUsage(11186)
+	c.OnUsage(11186, 0, 11186)
 	c.OnToolCall("shell", "inspect package.json scripts")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nok\n")
 	plain := stripANSICodes(out.String())
@@ -503,7 +503,7 @@ func TestOnToolRoundTripAfterContent(t *testing.T) {
 // TestToolGroupConsecutive verifies multiple consecutive tools each show CTX inline.
 func TestToolGroupConsecutive(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
-	c.OnUsage(11186)
+	c.OnUsage(11186, 0, 11186)
 	c.OnToolCall("shell", "list root")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\na\n")
 	c.OnToolCall("shell", "inspect config")
@@ -526,7 +526,7 @@ func TestToolGroupConsecutive(t *testing.T) {
 // TestToolGroupInterruptedByContent verifies content between tools shows [BLAZE] on new line.
 func TestToolGroupInterruptedByContent(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
-	c.OnUsage(11186)
+	c.OnUsage(11186, 0, 11186)
 	c.OnToolCall("shell", "list root")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\na\n")
 	c.OnContent("continuing")
@@ -574,7 +574,7 @@ func TestToolEmojiMapping(t *testing.T) {
 // TestOnUsage verifies context usage is stored and rendered in the separator.
 func TestOnUsage(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
-	c.OnUsage(11186)
+	c.OnUsage(11186, 0, 11186)
 	c.responseSeparator()
 	output := out.String()
 	if !strings.Contains(output, "CTX: 11k") {
@@ -588,7 +588,7 @@ func TestOnUsage(t *testing.T) {
 // TestOnUsageZero verifies no context shown when prompt tokens are zero.
 func TestOnUsageZero(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
-	c.OnUsage(0)
+	c.OnUsage(0, 0, 0)
 	c.responseSeparator()
 	output := out.String()
 	if output != "" {
