@@ -236,8 +236,11 @@ func TestBuildRuntimePartFull(t *testing.T) {
 	if !strings.Contains(result, "skill-manager") {
 		t.Error("runtime part missing skill name")
 	}
-	if !strings.Contains(result, "[RUNNABLE SKILLS]") {
-		t.Error("runtime part missing runnable skills section")
+	if !strings.Contains(result, "[RUNNABLE SKILLS — use run_skill only; never use load_skill]") {
+		t.Error("runtime part missing explicit runnable skills section")
+	}
+	if !strings.Contains(result, "[NON-RUNNABLE SKILLS — use load_skill only]") {
+		t.Error("runtime part missing explicit non-runnable skills section")
 	}
 	if !strings.Contains(result, "run_skill(name, arguments)") {
 		t.Error("runtime part missing runnable skills call signature")

@@ -35,11 +35,11 @@ type RunSkillArgs struct {
 // LoadSkillTool adds a skill to the active skills list.
 type LoadSkillTool struct {
 	active  *skills.ActiveList
-	resolve ResolveFunc
+	resolve ResolveSkillFunc
 }
 
 // NewLoadSkillTool creates a LoadSkillTool bound to the given active list and resolver.
-func NewLoadSkillTool(active *skills.ActiveList, resolve ResolveFunc) *LoadSkillTool {
+func NewLoadSkillTool(active *skills.ActiveList, resolve ResolveSkillFunc) *LoadSkillTool {
 	return &LoadSkillTool{active: active, resolve: resolve}
 }
 
@@ -62,7 +62,7 @@ func (t *LoadSkillTool) FormatArgs(args json.RawMessage) string {
 
 // Description returns the human-readable description for the LLM.
 func (t *LoadSkillTool) Description() string {
-	return "name → load skill into active session; project scope → use project/name"
+	return "name → load [NON-RUNNABLE] skill into active session; use run_skill for [RUNNABLE] skills; project scope → use project/name"
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -72,7 +72,7 @@ func (t *LoadSkillTool) Parameters() json.RawMessage {
 		"properties": {
 			"name": {
 				"type": "string",
-				"description": "name = skill id; project scope → use project/name"
+				"description": "name = [NON-RUNNABLE] skill id only; use run_skill for [RUNNABLE] skills; project scope → use project/name"
 			}
 		},
 		"required": ["name"]
@@ -94,9 +94,12 @@ func (t *LoadSkillTool) Execute(ctx context.Context, args json.RawMessage) strin
 
 	name := normalizeSkillName(parsed.Name)
 	if t.resolve != nil {
-		resolved, err := t.resolve(name)
+		resolved, skill, err := t.resolve(name)
 		if err != nil {
 			return fmt.Sprintf("error: %v", err)
+		}
+		if !skill.HasPromptContent() && skill.IsRunnable() {
+			return fmt.Sprintf("error: %s is [RUNNABLE]; use run_skill instead of load_skill", strings.TrimPrefix(resolved, "global/"))
 		}
 		t.active.Load(resolved)
 		return fmt.Sprintf("ok skill loaded: %s", strings.TrimPrefix(resolved, "global/"))
@@ -221,7 +224,7 @@ func (t *RunSkillTool) FormatArgs(args json.RawMessage) string {
 
 // Description returns the human-readable description for the LLM.
 func (t *RunSkillTool) Description() string {
-	return "name + arguments → execute runnable skill"
+	return "name + arguments → execute [RUNNABLE] skill; do not use load_skill"
 }
 
 // Parameters returns the JSON schema for the tool's parameters.

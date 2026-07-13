@@ -216,7 +216,7 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string,
 				return "", "", "", err
 			}
 			if !hasAvail {
-				avail.WriteString("\n")
+				avail.WriteString("\n[NON-RUNNABLE SKILLS — use load_skill only]\n\n")
 				hasAvail = true
 			}
 			avail.WriteString(fmt.Sprintf("- %s = %s\n", displayName, desc))
@@ -231,7 +231,7 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string,
 				return "", "", "", err
 			}
 			if !hasRunnable {
-				runnable.WriteString("[RUNNABLE SKILLS]\n\n")
+				runnable.WriteString("[RUNNABLE SKILLS — use run_skill only; never use load_skill]\n\n")
 				runnable.WriteString("run_skill(name, arguments)\n\n")
 				hasRunnable = true
 			}

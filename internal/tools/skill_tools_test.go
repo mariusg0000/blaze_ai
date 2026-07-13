@@ -43,6 +43,21 @@ func TestLoadSkillExecuteWithMarkdownSuffix(t *testing.T) {
 	}
 }
 
+// TestLoadSkillExecuteRejectsRunnable verifies load_skill rejects runnable-only skills.
+func TestLoadSkillExecuteRejectsRunnable(t *testing.T) {
+	active := skills.NewActiveList()
+	tool := NewLoadSkillTool(active, func(name string) (string, *skills.Skill, error) {
+		return "global/echo", &skills.Skill{Name: name, Syntax: "<text>", CodeLang: "shell", Code: "printf ok"}, nil
+	})
+	result := tool.Execute(context.Background(), json.RawMessage(`{"name":"echo"}`))
+	if !strings.Contains(result, "RUNNABLE") || !strings.Contains(result, "run_skill") {
+		t.Fatalf("Execute() = %q, want runnable guidance", result)
+	}
+	if active.Has("global/echo") {
+		t.Fatal("runnable skill must not be loaded")
+	}
+}
+
 // TestLoadSkillExecuteEmptyName verifies error on empty name.
 func TestLoadSkillExecuteEmptyName(t *testing.T) {
 	active := skills.NewActiveList()
@@ -236,8 +251,8 @@ func TestRunSkillExecuteRejectsMalformedCode(t *testing.T) {
 func TestRunSkillDescription(t *testing.T) {
 	tool := NewRunSkillTool(platform.Linux, nil, nil)
 	desc := tool.Description()
-	if desc != "name + arguments → execute runnable skill" {
-		t.Fatalf("Description() = %q, want compact runnable description", desc)
+	if desc != "name + arguments → execute [RUNNABLE] skill; do not use load_skill" {
+		t.Fatalf("Description() = %q, want explicit runnable description", desc)
 	}
 }
 

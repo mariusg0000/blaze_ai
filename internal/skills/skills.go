@@ -37,6 +37,9 @@ var ErrMissingDescription = errors.New("skill missing [DESCRIPTION] section")
 // ErrMissingBehaviorOrData is returned when a skill file has neither prompt content nor a runnable pair.
 var ErrMissingBehaviorOrData = errors.New("skill missing [BEHAVIOR] and [DATA], and no runnable [SYNTAX] + [CODE] pair")
 
+// ErrMixedSkillTypes is returned when a skill combines loadable prompt content with runnable sections.
+var ErrMixedSkillTypes = errors.New("skill cannot combine [BEHAVIOR]/[DATA] with [SYNTAX]/[CODE]; create separate loadable and runnable skills")
+
 // Skill represents a parsed skill file.
 //
 // WHAT:  Holds the parsed content of a single skill file with prompt and runnable metadata.
@@ -150,7 +153,12 @@ func Parse(name, content string) (*Skill, error) {
 	codeSection, _ := extractOptionalSection(content, "CODE")
 	codeLang, code, codeErr := parseCodeFence(codeSection)
 
-	if strings.TrimSpace(behavior) == "" && strings.TrimSpace(data) == "" && (strings.TrimSpace(syntax) == "" || strings.TrimSpace(code) == "") {
+	hasPromptContent := strings.TrimSpace(behavior) != "" || strings.TrimSpace(data) != ""
+	hasRunnableSection := strings.TrimSpace(syntax) != "" || strings.TrimSpace(codeSection) != ""
+	if hasPromptContent && hasRunnableSection {
+		return nil, ErrMixedSkillTypes
+	}
+	if !hasPromptContent && (strings.TrimSpace(syntax) == "" || strings.TrimSpace(code) == "") && codeErr == "" {
 		return nil, ErrMissingBehaviorOrData
 	}
 

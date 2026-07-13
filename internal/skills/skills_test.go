@@ -143,13 +143,18 @@ func TestParseRunnableSkill(t *testing.T) {
 	}
 }
 
+// TestParseRejectsMixedSkillTypes verifies loadable and runnable sections cannot coexist.
+func TestParseRejectsMixedSkillTypes(t *testing.T) {
+	content := "[DESCRIPTION]\nMixed skill.\n\n[BEHAVIOR]\nUse me.\n\n[SYNTAX]\n<text>\n\n[CODE]\n```shell\nprintf '%s' \\\"$BLAZE_SKILL_ARGS\\\"\n```"
+	if _, err := Parse("mixed", content); err != ErrMixedSkillTypes {
+		t.Fatalf("Parse() error = %v, want ErrMixedSkillTypes", err)
+	}
+}
+
 // TestParseMalformedCodeFence verifies malformed [CODE] does not become runnable.
 func TestParseMalformedCodeFence(t *testing.T) {
 	content := `[DESCRIPTION]
 Runnable echo.
-
-[BEHAVIOR]
-Use me.
 
 [SYNTAX]
 <text>

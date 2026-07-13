@@ -20,7 +20,9 @@ mechanism. Skills with `[CODE]` sections are the dynamic tool system.
 
 ## Skill Format
 
-Skills are Markdown files with section markers at the start of a line:
+Skills are Markdown files with section markers at the start of a line. Skill types are exclusive:
+
+Loadable skill:
 
 ```markdown
 [DESCRIPTION]
@@ -37,6 +39,13 @@ Known project patterns:
 - Maven: pom.xml at project root
 - Gradle: build.gradle at project root
 - Module: module-info.java in source tree
+```
+
+Runnable skill:
+
+```markdown
+[DESCRIPTION]
+Find Java project files, build files, and Maven/Gradle configurations.
 
 [SYNTAX]
 find_java <dir> <pattern>
@@ -46,6 +55,8 @@ find_java <dir> <pattern>
 rg --type java "{{PATTERN}}" {{DIR}} 2>/dev/null || echo "no matches"
 ```
 ```
+
+A skill must not combine `[BEHAVIOR]` or `[DATA]` with `[SYNTAX]` or `[CODE]`. Create separate skills when both prompt guidance and executable behavior are needed.
 
 ### Section Rules
 
@@ -171,25 +182,27 @@ Skills appear in three places in the runtime prompt:
 Compact list in `{SKILLS_AVAILABLE}`:
 
 ```
+[NON-RUNNABLE SKILLS — use load_skill only]
+
 - config-manager = LLM-assisted configuration of modes, roles, providers
 - skill-manager = create and edit skills, validate skill format
 ```
 
-Only skills with `HasPromptContent()` (non-empty Behavior or Data) appear here.
+Only skills with `HasPromptContent()` (non-empty Behavior or Data) appear here. These are loadable skills; do not pass runnable skill names to `load_skill`.
 
 ### Runnable Skills Section
 
 In `{RUNNABLE_SKILLS_SECTION}`:
 
 ```
-[RUNNABLE SKILLS]
+[RUNNABLE SKILLS — use run_skill only; never use load_skill]
 
 run_skill(name, arguments)
 
 - find-java | args: <dir> <pattern> | Find Java project files
 ```
 
-Only skills with `IsRunnable()` appear here.
+Only skills with `IsRunnable()` appear here. These skills are executable and must not be passed to `load_skill`.
 
 ### Active Skills
 
