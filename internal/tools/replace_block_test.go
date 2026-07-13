@@ -217,7 +217,7 @@ func TestReplaceBlockRelativePathNoWorkdir(t *testing.T) {
 	}
 }
 
-// TestReplaceBlockParameters verifies parameters is valid JSON.
+// TestReplaceBlockParameters verifies parameters is valid JSON and advertises batching.
 func TestReplaceBlockParameters(t *testing.T) {
 	tool := NewReplaceBlockTool(nil)
 	params := tool.Parameters()
@@ -225,4 +225,10 @@ func TestReplaceBlockParameters(t *testing.T) {
 		t.Error("Parameters() is not valid JSON")
 	}
 	schemaIncludesRequiredPurpose(t, params)
+	if !strings.Contains(string(params), "MANDATORY") || !strings.Contains(string(params), "same-file edits") {
+		t.Error("Parameters() is missing mandatory same-file batching guidance")
+	}
+	if !strings.Contains(tool.Description(), "MUST batch all independent edits") {
+		t.Error("Description() is missing mandatory same-file batching guidance")
+	}
 }

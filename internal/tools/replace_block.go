@@ -79,7 +79,7 @@ func (t *ReplaceBlockTool) FormatArgs(args json.RawMessage) string {
 
 // Description returns the human-readable description for the LLM.
 func (t *ReplaceBlockTool) Description() string {
-	return "file_path + blocks → replace every uniquely matching exact block in one file; prefer blocks; failed blocks are returned verbatim with the live file content when under 500000 bytes"
+	return "file_path + blocks → replace every uniquely matching exact block in one file; MUST batch all independent edits to the same file into one call; prefer blocks; failed blocks are returned verbatim with the live file content when under 500000 bytes"
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -97,7 +97,7 @@ func (t *ReplaceBlockTool) Parameters() json.RawMessage {
 			},
 			"blocks": {
 				"type": "array",
-				"description": "Prefer blocks. Each old_block must match exactly once, including whitespace, indentation, and newlines. If a block fails, correct and retry only that block; do not resend successful blocks.",
+				"description": "MANDATORY: Put all independent edits for this file in one blocks array and send one call. Each old_block must match exactly once, including whitespace, indentation, and newlines. Do not split independent same-file edits into sequential calls. If a block fails, correct and retry only that block; do not resend successful blocks.",
 				"items": {
 					"type": "object",
 					"properties": {

@@ -173,6 +173,22 @@ func runPolling(ctx context.Context, client telegramClient, bridgeCfg *BridgeCon
 				}
 			}
 
+			handled, response, err := HandleModelSelection(text, agent, cfg, state, statePath)
+			if err != nil {
+				if _, sendErr := client.SendMessage(ctx, bridgeCfg.AllowedChatID, "error: "+err.Error()); sendErr != nil {
+					return fmt.Errorf("telegram model selection failed: %v; cannot send error to chat: %w", err, sendErr)
+				}
+				continue
+			}
+			if handled {
+				if response != "" {
+					if _, err := client.SendMessage(ctx, bridgeCfg.AllowedChatID, response); err != nil {
+						return fmt.Errorf("cannot send telegram model selection response: %w", err)
+					}
+				}
+				continue
+			}
+
 			handler.BeginTurn(ctx)
 			turnErr := agent.RunTurn(ctx, text)
 			flushErr := handler.FinishTurn()

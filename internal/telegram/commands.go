@@ -7,6 +7,7 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"blazeai/internal/config"
@@ -38,11 +39,13 @@ func HandleCommand(_ context.Context, input string, agent *runtime.Agent, cfg *c
 		return true, telegramHelpText(), nil
 	case "/model":
 		if arg == "" {
-			return true, formatModelInfo(agent, cfg), nil
+			response, err := beginModelSelection(agent, cfg, state, statePath)
+			return true, response, err
 		}
 		if err := agent.SetModelLocal(arg); err != nil {
 			return true, "", fmt.Errorf("cannot set model: %w", err)
 		}
+		clearModelSelection(state)
 		state.SelectedModel = arg
 		if err := state.SaveTo(statePath, cfg); err != nil {
 			return true, "", fmt.Errorf("cannot persist telegram state: %w", err)
@@ -63,6 +66,108 @@ func HandleCommand(_ context.Context, input string, agent *runtime.Agent, cfg *c
 	}
 }
 
+const (
+	modelStageProvider = "provider"
+	modelStageModel    = "model"
+)
+
+// beginModelSelection starts the same provider-then-model flow used by the console.
+//
+// WHAT: Lists providers or immediately lists models when only one provider exists.
+// HOW: Stores the next selection stage in Telegram state because replies arrive as separate updates.
+func beginModelSelection(agent *runtime.Agent, cfg *config.Config, state *State, statePath string) (string, error) {
+	if len(cfg.Providers) == 0 {
+		return "", fmt.Errorf("no providers configured")
+	}
+	clearModelSelection(state)
+	if len(cfg.Providers) > 1 {
+		state.PendingStage = modelStageProvider
+		if err := state.SaveTo(statePath, cfg); err != nil {
+			return "", fmt.Errorf("cannot persist telegram model selection: %w", err)
+		}
+		lines := []string{"Select provider:"}
+		for i, provider := range cfg.Providers {
+			lines = append(lines, fmt.Sprintf("%d. %s (%s)", i+1, provider.Name, provider.Endpoint))
+		}
+		return strings.Join(lines, "\n"), nil
+	}
+	return selectProviderForModels(agent, cfg, state, statePath, cfg.Providers[0].Name)
+}
+
+// HandleModelSelection consumes a numeric Telegram reply when /model is awaiting a choice.
+//
+// WHAT: Advances provider selection or applies the selected model.
+// RETURNS: handled is false when no model selection is pending.
+func HandleModelSelection(input string, agent *runtime.Agent, cfg *config.Config, state *State, statePath string) (handled bool, response string, err error) {
+	if state.PendingStage == "" {
+		return false, "", nil
+	}
+	num, parseErr := strconv.Atoi(strings.TrimSpace(input))
+	if parseErr != nil {
+		return true, "", fmt.Errorf("invalid selection: enter a number")
+	}
+	if state.PendingStage == modelStageProvider {
+		if num < 1 || num > len(cfg.Providers) {
+			return true, fmt.Sprintf("invalid provider selection: enter 1-%d", len(cfg.Providers)), nil
+		}
+		response, err := selectProviderForModels(agent, cfg, state, statePath, cfg.Providers[num-1].Name)
+		return true, response, err
+	}
+	if state.PendingStage == modelStageModel {
+		if num < 1 || num > len(state.PendingModels) {
+			return true, fmt.Sprintf("invalid model selection: enter 1-%d", len(state.PendingModels)), nil
+		}
+		modelID := state.PendingProvider + "/" + state.PendingModels[num-1]
+		if err := agent.SetModelLocal(modelID); err != nil {
+			return true, "", fmt.Errorf("cannot set model: %w", err)
+		}
+		state.SelectedModel = modelID
+		clearModelSelection(state)
+		if err := state.SaveTo(statePath, cfg); err != nil {
+			return true, "", fmt.Errorf("cannot persist telegram state: %w", err)
+		}
+		return true, fmt.Sprintf("Model set to: %s", modelID), nil
+	}
+	clearModelSelection(state)
+	if err := state.SaveTo(statePath, cfg); err != nil {
+		return true, "", fmt.Errorf("cannot clear invalid telegram model selection: %w", err)
+	}
+	return true, "model selection was reset; send /model to start again", nil
+}
+
+// selectProviderForModels fetches and displays the live model list for one provider.
+func selectProviderForModels(agent *runtime.Agent, cfg *config.Config, state *State, statePath, providerName string) (string, error) {
+	models, err := agent.ListProviderModels(providerName)
+	if err != nil {
+		return "", fmt.Errorf("cannot list models: %w", err)
+	}
+	if len(models) == 0 {
+		return "", fmt.Errorf("provider %s returned no models", providerName)
+	}
+	state.PendingStage = modelStageModel
+	state.PendingProvider = providerName
+	state.PendingModels = models
+	if err := state.SaveTo(statePath, cfg); err != nil {
+		return "", fmt.Errorf("cannot persist telegram model selection: %w", err)
+	}
+	lines := []string{fmt.Sprintf("Select model from %s:", providerName)}
+	for i, model := range models {
+		marker := ""
+		if providerName+"/"+model == state.SelectedModel {
+			marker = " (current)"
+		}
+		lines = append(lines, fmt.Sprintf("%d. %s%s", i+1, model, marker))
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+// clearModelSelection removes an incomplete interactive selection.
+func clearModelSelection(state *State) {
+	state.PendingStage = ""
+	state.PendingProvider = ""
+	state.PendingModels = nil
+}
+
 func normalizeCommand(cmd string) string {
 	base := strings.TrimSpace(cmd)
 	if idx := strings.Index(base, "@"); idx > 0 {
@@ -75,7 +180,7 @@ func telegramHelpText() string {
 	return strings.Join([]string{
 		"Supported commands:",
 		"/help - show this help",
-		"/model [provider/model_name] - show or change the instance model",
+		"/model [provider/model_name] - select or change the instance model",
 		"/clear - clear the current conversation",
 		"/new - same as /clear in v1",
 		"/exit - close the current session cleanly without stopping the bot",

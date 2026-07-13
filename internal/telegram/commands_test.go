@@ -5,6 +5,7 @@ package telegram
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -96,6 +97,45 @@ func TestHandleCommandModelPersistsStateOnly(t *testing.T) {
 	}
 	if modesBefore.Modes[0].Model != modesAfter.Modes[0].Model {
 		t.Fatalf("modes model changed from %q to %q", modesBefore.Modes[0].Model, modesAfter.Modes[0].Model)
+	}
+}
+
+func TestHandleCommandModelInteractiveSelection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Fatalf("request path = %q, want /models", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"main"},{"id":"other"}]}`))
+	}))
+	defer server.Close()
+
+	agent, cfg, state, statePath := newTelegramAgent(t)
+	cfg.Providers[0].Endpoint = server.URL
+
+	handled, response, err := HandleCommand(context.Background(), "/model", agent, cfg, state, statePath)
+	if err != nil || !handled {
+		t.Fatalf("HandleCommand() = handled=%v err=%v", handled, err)
+	}
+	if !strings.Contains(response, "Select model from test:") || !strings.Contains(response, "1. main") {
+		t.Fatalf("provider/model response = %q", response)
+	}
+	if state.PendingStage != modelStageModel {
+		t.Fatalf("PendingStage = %q, want %q", state.PendingStage, modelStageModel)
+	}
+
+	handled, response, err = HandleModelSelection("2", agent, cfg, state, statePath)
+	if err != nil || !handled {
+		t.Fatalf("HandleModelSelection() = handled=%v err=%v", handled, err)
+	}
+	if response != "Model set to: test/other" {
+		t.Fatalf("selection response = %q", response)
+	}
+	if agent.ModelID != "test/other" {
+		t.Fatalf("agent model = %q, want test/other", agent.ModelID)
+	}
+	if state.SelectedModel != "test/other" || state.PendingStage != "" {
+		t.Fatalf("state after selection = %#v", state)
 	}
 }
 

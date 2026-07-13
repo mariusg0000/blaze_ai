@@ -18,11 +18,15 @@ const stateFileName = "state.json"
 
 // State holds mutable per-instance Telegram bridge state.
 //
-// WHAT:  Stores the Telegram instance's selected model.
-// WHY:   Telegram model changes must persist locally per instance, not globally.
-// PARAMS: SelectedModel — active `provider/model_name` for this instance.
+// WHAT:  Stores the selected model and any pending interactive model selection.
+// WHY:   Telegram delivers each selection step as a separate message.
+// PARAMS: SelectedModel — active `provider/model_name`; PendingStage, PendingProvider,
+// PendingModels — persisted provider/model selection state.
 type State struct {
-	SelectedModel string `json:"selected_model"`
+	SelectedModel   string   `json:"selected_model"`
+	PendingStage    string   `json:"pending_stage,omitempty"`
+	PendingProvider string   `json:"pending_provider,omitempty"`
+	PendingModels   []string `json:"pending_models,omitempty"`
 }
 
 // LoadState loads and validates state.json for one instance.
