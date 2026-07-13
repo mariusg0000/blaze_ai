@@ -546,6 +546,11 @@ func (c *Console) OnReasoning(delta string) {
 	}
 	if !c.reasoningStarted {
 		c.ensureLineBreakBeforeBlock()
+		// Blank line after tool group before reasoning.
+		if c.toolsStarted {
+			fmt.Fprintln(c.Out)
+			c.toolsStarted = false
+		}
 		c.reasoningLines = 0
 		fmt.Fprint(c.Out, c.color(colorReasoning, "🧠 "))
 		c.reasoningStarted = true
