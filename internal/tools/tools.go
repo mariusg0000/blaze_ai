@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 )
 
 // DefaultTimeout is the default tool execution timeout in seconds per spec.
@@ -77,6 +78,9 @@ func (r *Registry) All() []Tool {
 	for _, t := range r.tools {
 		result = append(result, t)
 	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].Name() < result[j].Name()
+	})
 	return result
 }
 
@@ -207,9 +211,9 @@ func ToOpenAIToolCall(tc ToolCall) OpenAIToolCall {
 //
 //	ThoughtSignature — Google Gemini reasoning signature for tool calls.
 type ToolCall struct {
-	ID              string
-	Name            string
-	Arguments       json.RawMessage
+	ID               string
+	Name             string
+	Arguments        json.RawMessage
 	ThoughtSignature string
 }
 

@@ -148,6 +148,7 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 	identity := session.CacheKeyForSession(sess.Folder)
 	client.SetPromptCacheKey(identity)
 	client.SetResponsesIdentity(identity)
+	client.RawCaptureFolder = sess.Folder
 
 	// Create a dedicated summarization client if the summarization role is configured.
 	var summarizationClient *provider.Client
@@ -342,6 +343,7 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 				TotalTokens:      resp.Usage.TotalTokens,
 				CachedTokens:     resp.Usage.CachedTokens,
 				CacheWriteTokens: resp.Usage.CacheWriteTokens,
+				ReasoningTokens:  resp.Usage.ReasoningTokens,
 				CacheStatus:      resp.Usage.CacheStatus,
 			}); err != nil {
 				return fmt.Errorf("cannot persist token usage report: %w", err)
@@ -590,6 +592,7 @@ func (a *Agent) applyModel(modelID string) error {
 	identity := session.CacheKeyForSession(a.Session.Folder)
 	client.SetPromptCacheKey(identity)
 	client.SetResponsesIdentity(identity)
+	client.RawCaptureFolder = a.Session.Folder
 	a.Provider = client
 	a.ModelID = modelID
 	if a.Compactor != nil {

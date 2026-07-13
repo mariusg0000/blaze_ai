@@ -27,6 +27,7 @@ type UsageSnapshot struct {
 	TotalTokens         int       `json:"total_tokens"`
 	CachedTokens        int       `json:"cached_tokens"`
 	CacheWriteTokens    int       `json:"cache_write_tokens"`
+	ReasoningTokens     int       `json:"reasoning_tokens"`
 	UncachedInputTokens int       `json:"uncached_input_tokens"`
 	CacheHits           int       `json:"cache_hits"`
 	CacheMisses         int       `json:"cache_misses"`
@@ -79,6 +80,7 @@ func RecordUsage(folder, modelID string, usage UsageData) error {
 	snapshot.TotalTokens += usage.TotalTokens
 	snapshot.CachedTokens += usage.CachedTokens
 	snapshot.CacheWriteTokens += usage.CacheWriteTokens
+	snapshot.ReasoningTokens += usage.ReasoningTokens
 	switch usage.CacheStatus {
 	case "hit", "miss":
 		snapshot.UncachedInputTokens += usage.PromptTokens - usage.CachedTokens
@@ -120,6 +122,7 @@ type UsageData struct {
 	TotalTokens      int
 	CachedTokens     int
 	CacheWriteTokens int
+	ReasoningTokens  int
 	CacheStatus      string
 }
 

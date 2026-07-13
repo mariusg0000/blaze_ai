@@ -45,6 +45,7 @@ type Usage struct {
 	TotalTokens      int    `json:"total_tokens"`
 	CachedTokens     int    `json:"cached_tokens,omitempty"`
 	CacheWriteTokens int    `json:"cache_write_tokens,omitempty"`
+	ReasoningTokens  int    `json:"reasoning_tokens,omitempty"`
 	CacheStatus      string `json:"-"`
 }
 
@@ -80,19 +81,20 @@ const (
 // WHY:   The runtime uses one client per provider to send chat completion requests.
 // PARAMS: Endpoint — base API URL; APIKey — secret key; Model — bare model name; HTTP — HTTP client.
 type Client struct {
-	Endpoint       string
-	APIKey         string
-	Model          string
-	AuthType       string
-	OAuth          *config.OAuthCredential
-	OAuthStore     func(config.OAuthCredential) error
-	HTTP           *http.Client
-	PromptCacheKey string
-	SessionID      string
-	ThreadID       string
-	WindowID       string
-	InstallationID string
-	oauthMu        sync.Mutex
+	Endpoint         string
+	APIKey           string
+	Model            string
+	AuthType         string
+	OAuth            *config.OAuthCredential
+	OAuthStore       func(config.OAuthCredential) error
+	HTTP             *http.Client
+	PromptCacheKey   string
+	RawCaptureFolder string
+	SessionID        string
+	ThreadID         string
+	WindowID         string
+	InstallationID   string
+	oauthMu          sync.Mutex
 }
 
 // NewClient creates a Client from a config provider and a model identifier.
@@ -393,12 +395,90 @@ type streamChoice struct {
 	FinishReason string      `json:"finish_reason,omitempty"`
 }
 
+// genericUsage contains common and provider-specific OpenAI-compatible usage fields.
+type genericUsage struct {
+	PromptTokens           int                     `json:"prompt_tokens"`
+	InputTokens            int                     `json:"input_tokens"`
+	CompletionTokens       int                     `json:"completion_tokens"`
+	OutputTokens           int                     `json:"output_tokens"`
+	TotalTokens            int                     `json:"total_tokens"`
+	InputTokensDetails     *tokenUsageDetails      `json:"input_tokens_details,omitempty"`
+	PromptTokensDetails    *tokenUsageDetails      `json:"prompt_tokens_details,omitempty"`
+	PromptCacheHitTokens   int                     `json:"prompt_cache_hit_tokens,omitempty"`
+	PromptCacheMissTokens  int                     `json:"prompt_cache_miss_tokens,omitempty"`
+	CompletionTokenDetails *completionTokenDetails `json:"completion_tokens_details,omitempty"`
+	OutputTokenDetails     *completionTokenDetails `json:"output_tokens_details,omitempty"`
+}
+
+// tokenUsageDetails contains cache fields shared by OpenAI-compatible providers.
+type tokenUsageDetails struct {
+	CachedTokens     int `json:"cached_tokens,omitempty"`
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
+}
+
+// completionTokenDetails contains optional reasoning-token accounting.
+type completionTokenDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+}
+
 // streamChunk represents one SSE data chunk from the streaming response.
-//
-// PARAMS: Choices — response choices; Usage — token usage (final chunk only).
 type streamChunk struct {
 	Choices []streamChoice `json:"choices"`
-	Usage   *Usage         `json:"usage,omitempty"`
+	Usage   *genericUsage  `json:"usage,omitempty"`
+}
+
+// normalizeGenericUsage converts provider-specific usage names into shared counters.
+//
+// WHAT: Produces one normalized Usage record from OpenAI-compatible usage variants.
+// HOW:  Prefers input-token details, then prompt-token details, and derives uncached status.
+func normalizeGenericUsage(raw *genericUsage) *Usage {
+	if raw == nil {
+		return nil
+	}
+	cached, writes, hasCache := 0, 0, false
+	for _, details := range []*tokenUsageDetails{raw.InputTokensDetails, raw.PromptTokensDetails} {
+		if details != nil {
+			cached = details.CachedTokens
+			writes = details.CacheWriteTokens
+			hasCache = true
+			break
+		}
+	}
+	if !hasCache && (raw.PromptCacheHitTokens > 0 || raw.PromptCacheMissTokens > 0) {
+		cached = raw.PromptCacheHitTokens
+		hasCache = true
+	}
+	reasoning := 0
+	if raw.CompletionTokenDetails != nil {
+		reasoning = raw.CompletionTokenDetails.ReasoningTokens
+	}
+	if raw.OutputTokenDetails != nil && raw.OutputTokenDetails.ReasoningTokens > reasoning {
+		reasoning = raw.OutputTokenDetails.ReasoningTokens
+	}
+	status := "unknown"
+	if hasCache {
+		status = "miss"
+		if cached > 0 {
+			status = "hit"
+		}
+	}
+	promptTokens := raw.PromptTokens
+	if promptTokens == 0 {
+		promptTokens = raw.InputTokens
+	}
+	completionTokens := raw.CompletionTokens
+	if completionTokens == 0 {
+		completionTokens = raw.OutputTokens
+	}
+	return &Usage{
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		TotalTokens:      raw.TotalTokens,
+		CachedTokens:     cached,
+		CacheWriteTokens: writes,
+		ReasoningTokens:  reasoning,
+		CacheStatus:      status,
+	}
 }
 
 // Stream sends a chat completion request with streaming and calls onContent for each text delta.
@@ -425,6 +505,9 @@ func (c *Client) StreamWithPhase(ctx context.Context, messages []session.Message
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if c.RawCaptureFolder != "" {
+		_ = session.ResetRawJSON(c.RawCaptureFolder, "llm-raw.json")
 	}
 	if onPhase != nil {
 		onPhase(PhaseConnecting)
@@ -468,7 +551,7 @@ func (c *Client) StreamWithPhase(ctx context.Context, messages []session.Message
 		onPhase(PhaseWaitingFirstEvent)
 	}
 
-	return parseSSEStream(ctx, resp.Body, onContent, onReasoning, onPhase)
+	return parseSSEStream(ctx, resp.Body, onContent, onReasoning, onPhase, c.RawCaptureFolder)
 }
 
 // oauthAccessToken returns a valid ChatGPT access token, refreshing and persisting it when needed.
@@ -510,7 +593,7 @@ func (c *Client) oauthAccessToken(ctx context.Context) (string, error) {
 //	onReasoning — callback for reasoning deltas (may be nil).
 //
 // RETURNS: *Response — accumulated response; error on parse failure.
-func parseSSEStream(ctx context.Context, reader io.ReadCloser, onContent func(string), onReasoning func(string), onPhase func(StreamPhase)) (*Response, error) {
+func parseSSEStream(ctx context.Context, reader io.ReadCloser, onContent func(string), onReasoning func(string), onPhase func(StreamPhase), captureFolder string) (*Response, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -572,6 +655,9 @@ func parseSSEStream(ctx context.Context, reader io.ReadCloser, onContent func(st
 				finalizeToolCalls(result, toolCallMap, toolCallOrder)
 				return result, nil
 			}
+			if captureFolder != "" {
+				_ = session.AppendRawJSON(captureFolder, "llm-raw.json", []byte(data))
+			}
 
 			var chunk streamChunk
 			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
@@ -585,7 +671,7 @@ func parseSSEStream(ctx context.Context, reader io.ReadCloser, onContent func(st
 			}
 
 			if chunk.Usage != nil {
-				result.Usage = chunk.Usage
+				result.Usage = normalizeGenericUsage(chunk.Usage)
 			}
 
 			for _, choice := range chunk.Choices {

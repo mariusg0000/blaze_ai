@@ -65,14 +65,21 @@ func TestRegistryGetMissing(t *testing.T) {
 	}
 }
 
-// TestRegistryAll verifies all registered tools are returned.
+// TestRegistryAll verifies all registered tools are returned in deterministic name order.
 func TestRegistryAll(t *testing.T) {
 	r := NewRegistry()
+	r.Register(&dummyTool{name: "z", desc: "z"})
 	r.Register(&dummyTool{name: "a", desc: "a"})
-	r.Register(&dummyTool{name: "b", desc: "b"})
 	all := r.All()
 	if len(all) != 2 {
 		t.Errorf("All() = %d tools, want 2", len(all))
+	}
+	if all[0].Name() != "a" || all[1].Name() != "z" {
+		t.Errorf("All() order = %q, %q; want a, z", all[0].Name(), all[1].Name())
+	}
+	converted := AllToOpenAI(r)
+	if converted[0].Function.Name != "a" || converted[1].Function.Name != "z" {
+		t.Errorf("AllToOpenAI() order = %q, %q; want a, z", converted[0].Function.Name, converted[1].Function.Name)
 	}
 }
 

@@ -21,6 +21,11 @@ This workflow is mandatory.
 
 Follow the KISS (Keep It Simple, Stupid) principle.
 
+**MANDATORY: Do not overengineer. Use the simplest solution that is sufficient to correctly complete the task.**
+
+Avoid unnecessary abstractions, layers, patterns, dependencies, configurability, and speculative future-proofing.
+
+
 ## Testing
 
 Write and run tests. Follow the user-defined test scope.

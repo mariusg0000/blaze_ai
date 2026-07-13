@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 
 	"blazeai/internal/session"
@@ -100,10 +99,16 @@ type chatGPTCompletedResponse struct {
 }
 
 type chatGPTUsage struct {
-	InputTokens        int                      `json:"input_tokens"`
-	OutputTokens       int                      `json:"output_tokens"`
-	TotalTokens        int                      `json:"total_tokens"`
-	InputTokensDetails *chatGPTInputTokenDetail `json:"input_tokens_details,omitempty"`
+	InputTokens         int                       `json:"input_tokens"`
+	OutputTokens        int                       `json:"output_tokens"`
+	TotalTokens         int                       `json:"total_tokens"`
+	InputTokensDetails  *chatGPTInputTokenDetail  `json:"input_tokens_details,omitempty"`
+	OutputTokensDetails *chatGPTOutputTokenDetail `json:"output_tokens_details,omitempty"`
+}
+
+// chatGPTOutputTokenDetail contains Responses reasoning-token accounting.
+type chatGPTOutputTokenDetail struct {
+	ReasoningTokens int `json:"reasoning_tokens"`
 }
 
 // chatGPTInputTokenDetail contains Responses API prompt-cache accounting.
@@ -131,6 +136,9 @@ func (c *Client) streamChatGPT(ctx context.Context, messages []session.Message, 
 	}
 	if onPhase != nil {
 		onPhase(PhaseConnecting)
+	}
+	if c.RawCaptureFolder != "" {
+		_ = session.ResetRawJSON(c.RawCaptureFolder, "llm-raw.json")
 	}
 	token, err := c.oauthAccessToken(ctx)
 	if err != nil {
@@ -195,7 +203,7 @@ func (c *Client) streamChatGPT(ctx context.Context, messages []session.Message, 
 	if onPhase != nil {
 		onPhase(PhaseWaitingFirstEvent)
 	}
-	return parseChatGPTSSE(ctx, response.Body, onContent, onReasoning, onPhase)
+	return parseChatGPTSSE(ctx, response.Body, onContent, onReasoning, onPhase, c.RawCaptureFolder)
 }
 
 func buildChatGPTRequest(model string, messages []session.Message, toolDefs []tools.OpenAITool) (chatGPTResponsesRequest, error) {
@@ -328,9 +336,6 @@ func buildResponseTools(toolDefs []tools.OpenAITool) []chatGPTResponsesTool {
 			Strict:      false,
 		})
 	}
-	sort.SliceStable(responseTools, func(i, j int) bool {
-		return responseTools[i].Name < responseTools[j].Name
-	})
 	return responseTools
 }
 
@@ -490,7 +495,7 @@ func mustJSON(value interface{}) json.RawMessage {
 	return data
 }
 
-func parseChatGPTSSE(ctx context.Context, reader io.ReadCloser, onContent func(string), onReasoning func(string), onPhase func(StreamPhase)) (*Response, error) {
+func parseChatGPTSSE(ctx context.Context, reader io.ReadCloser, onContent func(string), onReasoning func(string), onPhase func(StreamPhase), captureFolder string) (*Response, error) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
 	result := &Response{}
@@ -517,6 +522,9 @@ func parseChatGPTSSE(ctx context.Context, reader io.ReadCloser, onContent func(s
 		if data == "[DONE]" {
 			finalizeChatGPTToolCalls(result, toolCalls, toolOrder)
 			return result, nil
+		}
+		if captureFolder != "" {
+			_ = session.AppendRawJSON(captureFolder, "llm-raw.json", []byte(data))
 		}
 		var event chatGPTStreamEvent
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
@@ -592,6 +600,7 @@ func parseChatGPTSSE(ctx context.Context, reader io.ReadCloser, onContent func(s
 					TotalTokens:      usage.TotalTokens,
 					CachedTokens:     cachedTokens(usage),
 					CacheWriteTokens: cacheWriteTokens(usage),
+					ReasoningTokens:  reasoningTokens(usage),
 					CacheStatus:      cacheStatus(usage),
 				}
 			}
@@ -621,6 +630,13 @@ func cacheWriteTokens(usage *chatGPTUsage) int {
 		return 0
 	}
 	return usage.InputTokensDetails.CacheWriteTokens
+}
+
+func reasoningTokens(usage *chatGPTUsage) int {
+	if usage == nil || usage.OutputTokensDetails == nil {
+		return 0
+	}
+	return usage.OutputTokensDetails.ReasoningTokens
 }
 
 func cacheStatus(usage *chatGPTUsage) string {

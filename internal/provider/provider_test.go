@@ -518,6 +518,20 @@ func TestStreamEmpty(t *testing.T) {
 	}
 }
 
+// TestNormalizeGenericUsage verifies provider-specific usage fields become shared counters.
+func TestNormalizeGenericUsage(t *testing.T) {
+	usage := normalizeGenericUsage(&genericUsage{
+		PromptTokens:           3934,
+		CompletionTokens:       42,
+		TotalTokens:            3976,
+		PromptTokensDetails:    &tokenUsageDetails{CachedTokens: 3072},
+		CompletionTokenDetails: &completionTokenDetails{ReasoningTokens: 26},
+	})
+	if usage.PromptTokens != 3934 || usage.CachedTokens != 3072 || usage.ReasoningTokens != 26 || usage.CacheStatus != "hit" {
+		t.Fatalf("normalized usage = %#v", usage)
+	}
+}
+
 // TestAppendRawJSON verifies argument fragment accumulation.
 func TestAppendRawJSON(t *testing.T) {
 	var args json.RawMessage

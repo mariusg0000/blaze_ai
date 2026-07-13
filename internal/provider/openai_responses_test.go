@@ -224,9 +224,6 @@ func TestBuildChatGPTLiteRequestAddsAllTurnsReasoningAndStripsImageDetail(t *tes
 	if !strings.Contains(encoded, `"type":"additional_tools"`) {
 		t.Fatalf("lite input missing additional_tools: %s", encoded)
 	}
-	if strings.Index(encoded, `"name":"load_skill"`) > strings.Index(encoded, `"name":"shell"`) {
-		t.Fatalf("lite tools are not sorted: %s", encoded)
-	}
 	if !strings.Contains(encoded, `"type":"input_image"`) {
 		t.Fatalf("lite input missing input_image: %s", encoded)
 	}
