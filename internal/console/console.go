@@ -1189,6 +1189,22 @@ func (c *Console) runTTY() error {
 	rl.AcceptMultiline = func(line []rune) bool { return true }
 	rl.Prompt.Primary(func() string { return c.promptLabel() })
 
+	// Override Ctrl+T (default transpose-chars) to toggle reasoning display.
+	rl.Config.Bind("emacs", `\C-t`, "blazeai-reasoning-toggle", false)
+	rl.Keymap.Register(map[string]func(){
+		"blazeai-reasoning-toggle": func() {
+			c.Agent.Config.ShowReasoning = !c.Agent.Config.ShowReasoning
+			if err := c.Agent.Config.Save(); err != nil {
+				return
+			}
+			state := "disabled"
+			if c.Agent.Config.ShowReasoning {
+				state = "enabled"
+			}
+			rl.PrintTransientf("Reasoning: " + state)
+		},
+	})
+
 	for {
 		line, err := rl.Readline()
 		if errors.Is(err, readline.ErrInterrupt) {
