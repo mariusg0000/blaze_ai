@@ -676,3 +676,32 @@ func TestSanitizeMessagesKeepsRuntimeOpenAIToolCalls(t *testing.T) {
 		t.Fatalf("sanitized tool = %#v, want matching tool result kept", sanitized[1])
 	}
 }
+
+// TestRecordUsageAggregatesByModel verifies private per-session token and cache counters.
+func TestRecordUsageAggregatesByModel(t *testing.T) {
+	dir := t.TempDir()
+	if err := RecordUsage(dir, "openai/gpt-5.4", UsageData{
+		PromptTokens: 100, CompletionTokens: 20, TotalTokens: 120,
+		CachedTokens: 80, CacheStatus: "hit",
+	}); err != nil {
+		t.Fatalf("RecordUsage() error: %v", err)
+	}
+	if err := RecordUsage(dir, "openai/gpt-5.4", UsageData{
+		PromptTokens: 50, CompletionTokens: 10, TotalTokens: 60,
+		CacheStatus: "miss",
+	}); err != nil {
+		t.Fatalf("RecordUsage() second error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, usageFileName))
+	if err != nil {
+		t.Fatalf("read usage report: %v", err)
+	}
+	var report UsageReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatalf("decode usage report: %v", err)
+	}
+	snapshot := report.Models["openai/gpt-5.4"]
+	if snapshot.Requests != 2 || snapshot.PromptTokens != 150 || snapshot.CachedTokens != 80 || snapshot.UncachedInputTokens != 70 || snapshot.CacheHits != 1 || snapshot.CacheMisses != 1 {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+}

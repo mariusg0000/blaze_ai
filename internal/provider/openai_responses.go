@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	"blazeai/internal/session"
@@ -37,6 +38,24 @@ type chatGPTResponsesRequest struct {
 
 func isResponsesLiteModel(model string) bool {
 	return strings.HasPrefix(model, "gpt-5.6-")
+}
+
+// responsesClientMetadata builds the stable metadata projection used by Codex.
+func (c *Client) responsesClientMetadata() map[string]string {
+	metadata := map[string]string{}
+	if c.InstallationID != "" {
+		metadata["x-codex-installation-id"] = c.InstallationID
+	}
+	if c.SessionID != "" {
+		metadata["session_id"] = c.SessionID
+	}
+	if c.ThreadID != "" {
+		metadata["thread_id"] = c.ThreadID
+	}
+	if c.WindowID != "" {
+		metadata["x-codex-window-id"] = c.WindowID
+	}
+	return metadata
 }
 
 type chatGPTResponsesTool struct {
@@ -81,9 +100,16 @@ type chatGPTCompletedResponse struct {
 }
 
 type chatGPTUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
-	TotalTokens  int `json:"total_tokens"`
+	InputTokens        int                      `json:"input_tokens"`
+	OutputTokens       int                      `json:"output_tokens"`
+	TotalTokens        int                      `json:"total_tokens"`
+	InputTokensDetails *chatGPTInputTokenDetail `json:"input_tokens_details,omitempty"`
+}
+
+// chatGPTInputTokenDetail contains Responses API prompt-cache accounting.
+type chatGPTInputTokenDetail struct {
+	CachedTokens     int `json:"cached_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens"`
 }
 
 type chatGPTResponseError struct {
@@ -114,6 +140,8 @@ func (c *Client) streamChatGPT(ctx context.Context, messages []session.Message, 
 	if err != nil {
 		return nil, fmt.Errorf("cannot build ChatGPT request: %w", err)
 	}
+	requestBody.PromptCacheKey = c.PromptCacheKey
+	requestBody.ClientMetadata = c.responsesClientMetadata()
 	body, err := json.Marshal(requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("cannot marshal ChatGPT request: %w", err)
@@ -127,12 +155,30 @@ func (c *Client) streamChatGPT(ctx context.Context, messages []session.Message, 
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Originator", "codex_cli_rs")
 	request.Header.Set("User-Agent", chatGPTCodexUserAgent())
+	request.Header.Set("OpenAI-Beta", "responses=experimental")
 	if isResponsesLiteModel(c.Model) {
 		request.Header.Set(chatGPTCodexLiteHeader, "true")
 		request.Header.Set("version", chatGPTCodexClientVersion)
 	}
 	if c.OAuth != nil && c.OAuth.AccountID != "" {
 		request.Header.Set("ChatGPT-Account-Id", c.OAuth.AccountID)
+	}
+	if c.PromptCacheKey != "" {
+		request.Header.Set("conversation_id", c.PromptCacheKey)
+		request.Header.Set("session_id", c.PromptCacheKey)
+	}
+	if c.SessionID != "" {
+		request.Header.Set("session-id", c.SessionID)
+	}
+	if c.ThreadID != "" {
+		request.Header.Set("thread-id", c.ThreadID)
+		request.Header.Set("x-client-request-id", c.ThreadID)
+	}
+	if c.WindowID != "" {
+		request.Header.Set("x-codex-window-id", c.WindowID)
+	}
+	if c.InstallationID != "" {
+		request.Header.Set("x-codex-installation-id", c.InstallationID)
 	}
 	response, err := c.HTTP.Do(request)
 	if err != nil {
@@ -173,6 +219,7 @@ func buildChatGPTRequest(model string, messages []session.Message, toolDefs []to
 		Include:           []string{"reasoning.encrypted_content"},
 		Reasoning:         chatGPTReasoning{Effort: "medium", Summary: "auto"},
 		Text:              chatGPTText{Verbosity: "low"},
+		PromptCacheKey:    "",
 	}, nil
 }
 
@@ -256,8 +303,11 @@ func buildChatGPTLiteInput(messages []session.Message, toolDefs []tools.OpenAITo
 	}
 	if len(instructions) > 0 {
 		prefix = append(prefix, mustJSON(map[string]interface{}{
-			"role":    "developer",
-			"content": []interface{}{map[string]string{"type": "input_text", "text": strings.Join(instructions, "\n\n")}},
+			"role": "developer",
+			"content": []interface{}{map[string]string{
+				"type": "input_text",
+				"text": strings.Join(instructions, "\n\n"),
+			}},
 		}))
 	}
 	return append(prefix, input...), nil
@@ -278,6 +328,9 @@ func buildResponseTools(toolDefs []tools.OpenAITool) []chatGPTResponsesTool {
 			Strict:      false,
 		})
 	}
+	sort.SliceStable(responseTools, func(i, j int) bool {
+		return responseTools[i].Name < responseTools[j].Name
+	})
 	return responseTools
 }
 
@@ -533,7 +586,14 @@ func parseChatGPTSSE(ctx context.Context, reader io.ReadCloser, onContent func(s
 		case "response.completed":
 			if event.Response.Usage != nil {
 				usage := event.Response.Usage
-				result.Usage = &Usage{PromptTokens: usage.InputTokens, CompletionTokens: usage.OutputTokens, TotalTokens: usage.TotalTokens}
+				result.Usage = &Usage{
+					PromptTokens:     usage.InputTokens,
+					CompletionTokens: usage.OutputTokens,
+					TotalTokens:      usage.TotalTokens,
+					CachedTokens:     cachedTokens(usage),
+					CacheWriteTokens: cacheWriteTokens(usage),
+					CacheStatus:      cacheStatus(usage),
+				}
 			}
 			finalizeChatGPTToolCalls(result, toolCalls, toolOrder)
 			return result, nil
@@ -545,6 +605,32 @@ func parseChatGPTSSE(ctx context.Context, reader io.ReadCloser, onContent func(s
 			return nil, fmt.Errorf("%s", message)
 		}
 	}
+}
+
+// cachedTokens extracts explicit cache accounting from a completed Responses usage block.
+func cachedTokens(usage *chatGPTUsage) int {
+	if usage == nil || usage.InputTokensDetails == nil {
+		return 0
+	}
+	return usage.InputTokensDetails.CachedTokens
+}
+
+// cacheStatus distinguishes explicit cache hits and misses from providers that omit the field.
+func cacheWriteTokens(usage *chatGPTUsage) int {
+	if usage == nil || usage.InputTokensDetails == nil {
+		return 0
+	}
+	return usage.InputTokensDetails.CacheWriteTokens
+}
+
+func cacheStatus(usage *chatGPTUsage) string {
+	if usage == nil || usage.InputTokensDetails == nil {
+		return "unknown"
+	}
+	if usage.InputTokensDetails.CachedTokens > 0 {
+		return "hit"
+	}
+	return "miss"
 }
 
 func finalizeChatGPTToolCalls(result *Response, calls map[string]*tools.ToolCall, order []string) {

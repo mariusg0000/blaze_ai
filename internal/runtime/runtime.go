@@ -145,6 +145,9 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 	if err != nil {
 		return nil, fmt.Errorf("cannot create provider client: %w", err)
 	}
+	identity := session.CacheKeyForSession(sess.Folder)
+	client.SetPromptCacheKey(identity)
+	client.SetResponsesIdentity(identity)
 
 	// Create a dedicated summarization client if the summarization role is configured.
 	var summarizationClient *provider.Client
@@ -332,8 +335,20 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		}
 
 		// Report prompt token usage to the transport.
-		if resp.Usage != nil && a.Handler != nil {
-			a.Handler.OnUsage(resp.Usage.PromptTokens)
+		if resp.Usage != nil {
+			if err := session.RecordUsage(a.Session.Folder, a.ModelID, session.UsageData{
+				PromptTokens:     resp.Usage.PromptTokens,
+				CompletionTokens: resp.Usage.CompletionTokens,
+				TotalTokens:      resp.Usage.TotalTokens,
+				CachedTokens:     resp.Usage.CachedTokens,
+				CacheWriteTokens: resp.Usage.CacheWriteTokens,
+				CacheStatus:      resp.Usage.CacheStatus,
+			}); err != nil {
+				return fmt.Errorf("cannot persist token usage report: %w", err)
+			}
+			if a.Handler != nil {
+				a.Handler.OnUsage(resp.Usage.PromptTokens)
+			}
 		}
 
 		// Build assistant message.
@@ -572,6 +587,9 @@ func (a *Agent) applyModel(modelID string) error {
 	if err != nil {
 		return fmt.Errorf("cannot create provider client: %w", err)
 	}
+	identity := session.CacheKeyForSession(a.Session.Folder)
+	client.SetPromptCacheKey(identity)
+	client.SetResponsesIdentity(identity)
 	a.Provider = client
 	a.ModelID = modelID
 	if a.Compactor != nil {

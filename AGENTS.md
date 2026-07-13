@@ -57,35 +57,33 @@ When unsure, document it.
 
 ## Commit Workflow
 
-**MANDATORY: Commit only when the user explicitly requests a commit in the current turn.**
+**MANDATORY: Run this workflow only when the user explicitly requests a commit in the current turn.**
 
-Completing an implementation, fixing tests, or finishing a task is never permission to run `git add`, create a decision summary, or commit.
+Finishing an implementation, fixing tests, or completing a task does not authorize `git add`, creation of a decision file, or `git commit`.
 
-When a commit is requested:
+When a commit is explicitly requested, follow these steps in order:
 
-1. Run `git status --short`.
-2. Infer known changes from the conversation. Do not perform unnecessary reads.
-3. For files not explained by the conversation, run `git diff` only on those files and infer their purpose.
+1. Run:
+
+```bash
+git status --short
+```
+
+2. Identify changes explained by the conversation.
+
+3. For changed files not explained by the conversation, run `git diff` only on those files and infer their purpose.
+
 4. Add secrets, generated files, executables, dependencies, virtual environments, caches, build outputs, logs, local databases, and other repository-irrelevant files or directories to `.gitignore`.
-5. Stage and commit every other repository change, including pre-existing or unrelated changes. Do not leave relevant changes uncommitted.
-6. Mention all included pre-existing or unrelated changes in the commit message.
-7. Run `git status --short` after the commit and verify that no relevant changes remain.
 
-Create `decisions/` when required and missing.
+5. Review every remaining repository change. Include all relevant changes in the commit, including pre-existing or unrelated changes. Do not leave relevant files uncommitted.
 
-## Decision Summary
-
-Use:
+6. Create `decisions/` if missing, then create the decision summary:
 
 ```text
 decisions/YYYY-MM-DD-HHMM-short-topic-keyword1-keyword2-keyword3-keyword4-keyword5.md
 ```
 
 Use exactly five concise, lowercase keywords describing the main decisions.
-
-Include major pre-existing changes committed with the work. Mention minor included changes briefly.
-
-Use:
 
 ```md
 # Session Decision Summary: <topic>
@@ -105,20 +103,30 @@ Date: YYYY-MM-DD HH:MM
 <supported decisions, rationale, and trade-offs>
 ```
 
-Do not invent rationale. Use only the conversation, implementation, changed files, and validation results.
+Include major pre-existing or unrelated changes committed with the work. Mention minor included changes briefly.
 
-## Commit Message
+Do not invent rationale. Use only the conversation, implementation, changed files, diffs, and validation results.
 
-Use an imperative subject under 50 characters.
+7. Stage all relevant changes, including the decision summary.
 
-The body must state:
+8. Commit using an imperative subject under 50 characters.
+
+The commit body must state:
 
 * what changed
 * why it changed
 * how it was implemented
 * validation performed
-* decision summary path, when created
+* decision summary path
 * all included pre-existing or unrelated changes
+
+9. Run:
+
+```bash
+git status --short
+```
+
+Verify that no relevant repository changes remain uncommitted.
 
 
 ## Push

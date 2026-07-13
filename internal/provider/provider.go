@@ -40,9 +40,12 @@ var providerStreamIdleTimeout = 180 * time.Second
 // WHY:   Compaction triggers on usage.prompt_tokens reaching maxContextTokens.
 // PARAMS: PromptTokens — tokens in the prompt; CompletionTokens — tokens generated; TotalTokens — sum.
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens     int    `json:"prompt_tokens"`
+	CompletionTokens int    `json:"completion_tokens"`
+	TotalTokens      int    `json:"total_tokens"`
+	CachedTokens     int    `json:"cached_tokens,omitempty"`
+	CacheWriteTokens int    `json:"cache_write_tokens,omitempty"`
+	CacheStatus      string `json:"-"`
 }
 
 // Response holds the complete response from a streaming chat completion.
@@ -77,14 +80,19 @@ const (
 // WHY:   The runtime uses one client per provider to send chat completion requests.
 // PARAMS: Endpoint — base API URL; APIKey — secret key; Model — bare model name; HTTP — HTTP client.
 type Client struct {
-	Endpoint   string
-	APIKey     string
-	Model      string
-	AuthType   string
-	OAuth      *config.OAuthCredential
-	OAuthStore func(config.OAuthCredential) error
-	HTTP       *http.Client
-	oauthMu    sync.Mutex
+	Endpoint       string
+	APIKey         string
+	Model          string
+	AuthType       string
+	OAuth          *config.OAuthCredential
+	OAuthStore     func(config.OAuthCredential) error
+	HTTP           *http.Client
+	PromptCacheKey string
+	SessionID      string
+	ThreadID       string
+	WindowID       string
+	InstallationID string
+	oauthMu        sync.Mutex
 }
 
 // NewClient creates a Client from a config provider and a model identifier.
@@ -101,6 +109,28 @@ func NewClient(cfg *config.Config, modelID string) (*Client, error) {
 	}
 	client.Model = modelName
 	return client, nil
+}
+
+// SetPromptCacheKey assigns the stable cache identity used by Responses requests.
+//
+// WHAT: Sets a session-scoped prompt cache key on the provider client.
+// WHY:  The Responses API groups reusable prompt prefixes by this key.
+// PARAMS: key — stable, non-sensitive session identifier.
+func (c *Client) SetPromptCacheKey(key string) {
+	c.PromptCacheKey = strings.TrimSpace(key)
+}
+
+// SetResponsesIdentity assigns stable Codex-compatible request identities.
+//
+// WHAT: Sets session, thread, and window identifiers for Responses requests.
+// WHY:  ChatGPT's Codex route uses these values for request correlation and sticky routing.
+// PARAMS: identity — stable non-sensitive identifier for the BlazeAI session.
+func (c *Client) SetResponsesIdentity(identity string) {
+	identity = strings.TrimSpace(identity)
+	c.SessionID = identity
+	c.ThreadID = identity
+	c.WindowID = identity
+	c.InstallationID = "blazeai"
 }
 
 // NewClientForProvider creates a client for provider-level operations such as model listing.
@@ -581,28 +611,28 @@ func parseSSEStream(ctx context.Context, reader io.ReadCloser, onContent func(st
 					}
 				}
 
-			for _, tc := range delta.ToolCalls {
-				existing, ok := toolCallMap[tc.Index]
-				if !ok {
-					existing = &tools.ToolCall{
-						ID:   tc.ID,
-						Name: tc.Function.Name,
+				for _, tc := range delta.ToolCalls {
+					existing, ok := toolCallMap[tc.Index]
+					if !ok {
+						existing = &tools.ToolCall{
+							ID:   tc.ID,
+							Name: tc.Function.Name,
+						}
+						toolCallMap[tc.Index] = existing
+						toolCallOrder = append(toolCallOrder, tc.Index)
 					}
-					toolCallMap[tc.Index] = existing
-					toolCallOrder = append(toolCallOrder, tc.Index)
+					if tc.ID != "" && existing.ID == "" {
+						existing.ID = tc.ID
+					}
+					if tc.Function.Name != "" && existing.Name == "" {
+						existing.Name = tc.Function.Name
+					}
+					if tc.ExtraContent != nil && tc.ExtraContent.Google != nil &&
+						tc.ExtraContent.Google.ThoughtSignature != "" && existing.ThoughtSignature == "" {
+						existing.ThoughtSignature = tc.ExtraContent.Google.ThoughtSignature
+					}
+					existing.Arguments = appendRawJSON(existing.Arguments, tc.Function.Arguments)
 				}
-				if tc.ID != "" && existing.ID == "" {
-					existing.ID = tc.ID
-				}
-				if tc.Function.Name != "" && existing.Name == "" {
-					existing.Name = tc.Function.Name
-				}
-				if tc.ExtraContent != nil && tc.ExtraContent.Google != nil &&
-					tc.ExtraContent.Google.ThoughtSignature != "" && existing.ThoughtSignature == "" {
-					existing.ThoughtSignature = tc.ExtraContent.Google.ThoughtSignature
-				}
-				existing.Arguments = appendRawJSON(existing.Arguments, tc.Function.Arguments)
-			}
 			}
 		}
 	}

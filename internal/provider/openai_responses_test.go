@@ -63,8 +63,9 @@ func TestBuildChatGPTRequestConvertsHistoryAndTools(t *testing.T) {
 func TestStreamChatGPTParsesTextToolCallAndUsage(t *testing.T) {
 	var requested *http.Request
 	client := &Client{
-		Model:    "gpt-5.4",
-		AuthType: config.OAuthAuthType,
+		Model:          "gpt-5.4",
+		PromptCacheKey: "blazeai-session-key",
+		AuthType:       config.OAuthAuthType,
 		OAuth: &config.OAuthCredential{
 			AccessToken:  "access-token",
 			RefreshToken: "refresh-token",
@@ -84,7 +85,7 @@ func TestStreamChatGPTParsesTextToolCallAndUsage(t *testing.T) {
 				"",
 				`data: {"type":"response.output_text.delta","delta":"done"}`,
 				"",
-				`data: {"type":"response.completed","response":{"usage":{"input_tokens":12,"output_tokens":4,"total_tokens":16}}}`,
+				`data: {"type":"response.completed","response":{"usage":{"input_tokens":12,"output_tokens":4,"total_tokens":16,"input_tokens_details":{"cached_tokens":9}}}}`,
 				"",
 			}, "\n")
 			return &http.Response{
@@ -94,6 +95,7 @@ func TestStreamChatGPTParsesTextToolCallAndUsage(t *testing.T) {
 			}, nil
 		})},
 	}
+	client.SetResponsesIdentity("session-1")
 
 	resp, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "run pwd"}}, nil, nil, nil)
 	if err != nil {
@@ -104,6 +106,25 @@ func TestStreamChatGPTParsesTextToolCallAndUsage(t *testing.T) {
 	}
 	if requested.URL.String() != chatGPTCodexEndpoint {
 		t.Errorf("URL = %q, want %q", requested.URL, chatGPTCodexEndpoint)
+	}
+	var requestBody chatGPTResponsesRequest
+	if err := json.NewDecoder(requested.Body).Decode(&requestBody); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	if requestBody.PromptCacheKey != "blazeai-session-key" {
+		t.Errorf("PromptCacheKey = %q", requestBody.PromptCacheKey)
+	}
+	if requestBody.ClientMetadata["session_id"] != "session-1" || requestBody.ClientMetadata["thread_id"] != "session-1" {
+		t.Errorf("ClientMetadata = %#v", requestBody.ClientMetadata)
+	}
+	if requested.Header.Get("session-id") != "session-1" || requested.Header.Get("thread-id") != "session-1" || requested.Header.Get("x-client-request-id") != "session-1" {
+		t.Errorf("identity headers are missing: %v", requested.Header)
+	}
+	if requested.Header.Get("conversation_id") != "blazeai-session-key" || requested.Header.Get("session_id") != "blazeai-session-key" {
+		t.Errorf("cache identity headers are missing: %v", requested.Header)
+	}
+	if requested.Header.Get("OpenAI-Beta") != "responses=experimental" {
+		t.Errorf("OpenAI-Beta = %q", requested.Header.Get("OpenAI-Beta"))
 	}
 	if requested.Header.Get("Authorization") != "Bearer access-token" {
 		t.Errorf("Authorization = %q", requested.Header.Get("Authorization"))
@@ -129,7 +150,7 @@ func TestStreamChatGPTParsesTextToolCallAndUsage(t *testing.T) {
 	if resp.ToolCalls[0].ID != "call_1" || resp.ToolCalls[0].Name != "shell" {
 		t.Errorf("ToolCall = %#v", resp.ToolCalls[0])
 	}
-	if resp.Usage == nil || resp.Usage.PromptTokens != 12 || resp.Usage.CompletionTokens != 4 {
+	if resp.Usage == nil || resp.Usage.PromptTokens != 12 || resp.Usage.CompletionTokens != 4 || resp.Usage.CachedTokens != 9 || resp.Usage.CacheStatus != "hit" {
 		t.Errorf("Usage = %#v", resp.Usage)
 	}
 }
@@ -186,9 +207,12 @@ func TestBuildChatGPTLiteRequestAddsAllTurnsReasoningAndStripsImageDetail(t *tes
 	}}, []tools.OpenAITool{{
 		Type:     "function",
 		Function: tools.FunctionDef{Name: "shell", Description: "Run a command", Parameters: json.RawMessage(`{"type":"object"}`)},
+	}, {
+		Type:     "function",
+		Function: tools.FunctionDef{Name: "load_skill", Description: "Load a skill", Parameters: json.RawMessage(`{"type":"object"}`)},
 	}})
 	if err != nil {
-		 t.Fatalf("buildChatGPTRequest() error: %v", err)
+		t.Fatalf("buildChatGPTRequest() error: %v", err)
 	}
 	if request.Reasoning.Context != "all_turns" {
 		t.Fatalf("Reasoning.Context = %q, want all_turns", request.Reasoning.Context)
@@ -199,6 +223,9 @@ func TestBuildChatGPTLiteRequestAddsAllTurnsReasoningAndStripsImageDetail(t *tes
 	encoded := string(request.Input[0]) + string(request.Input[1])
 	if !strings.Contains(encoded, `"type":"additional_tools"`) {
 		t.Fatalf("lite input missing additional_tools: %s", encoded)
+	}
+	if strings.Index(encoded, `"name":"load_skill"`) > strings.Index(encoded, `"name":"shell"`) {
+		t.Fatalf("lite tools are not sorted: %s", encoded)
 	}
 	if !strings.Contains(encoded, `"type":"input_image"`) {
 		t.Fatalf("lite input missing input_image: %s", encoded)
