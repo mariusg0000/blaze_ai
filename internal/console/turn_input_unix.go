@@ -33,6 +33,10 @@ func newTurnAbortWatcher(input *os.File) (*turnAbortWatcher, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot enable raw terminal input for ESC: %w", err)
 	}
+	if err := preserveTerminalOutput(fd); err != nil {
+		_ = term.Restore(fd, state)
+		return nil, fmt.Errorf("cannot preserve terminal output while monitoring ESC: %w", err)
+	}
 	flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
 	if err != nil {
 		_ = term.Restore(fd, state)
