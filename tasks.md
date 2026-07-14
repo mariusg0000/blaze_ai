@@ -6,3 +6,8 @@
 - [x] Exit history navigation when the recalled entry is edited
 - [x] Add focused history unit tests
 - [x] Run gofmt, go test ./..., go build ./..., and git diff --check
+
+# Reasoning block compaction
+
+- [ ] Replace consecutive `\n\n` pairs in reasoning output with a single newline + small separator emoji (e.g. `·` or `•`) to reduce reasoning block height
+- [ ] Strip or clamp reasoning display height to cap the visible reasoning block size

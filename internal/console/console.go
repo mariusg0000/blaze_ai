@@ -25,6 +25,8 @@ import (
 	"blazeai/internal/runtime"
 	"blazeai/internal/skills"
 
+	"golang.org/x/term"
+
 	"github.com/reeflective/readline"
 	"github.com/reeflective/readline/inputrc"
 )
@@ -78,6 +80,7 @@ type Console struct {
 	In     io.Reader
 	Agent  *runtime.Agent
 	Reader *Reader
+	rl     *readline.Shell // readline instance for persistent hint status bar updates
 
 	outMu sync.Mutex
 
@@ -316,6 +319,109 @@ func (c *Console) responseSeparator() {
 	fmt.Fprintln(c.Out, c.color(colorBrightBlue, botLine))
 }
 
+// terminalWidth returns the current terminal column count, falling back to 80.
+//
+// WHAT:  Reads terminal width for status bar padding.
+// RETURNS: int — terminal columns, or 80 if unavailable.
+func (c *Console) terminalWidth() int {
+	w, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || w <= 0 {
+		return 80
+	}
+	return w
+}
+
+// buildStatusBar constructs a single-line persistent hint with dark background.
+//
+// WHAT:  Builds a full-width ANSI status bar showing CTX/CH/CM tokens, model, and work dir.
+// WHY:   The persistent hint is rendered by readline below the input prompt on every refresh.
+// HOW:   Computes visible width from ASCII text, pads to terminal width, wraps with 256-color background.
+// RETURNS: string — ANSI-encoded status bar line.
+func (c *Console) buildStatusBar() string {
+	const (
+		bg  = "\033[48;5;236m" // dark gray background
+		dim = "\033[38;5;244m" // labels
+		val = "\033[38;5;252m" // values
+		acc = "\033[38;5;114m" // model accent
+		dir = "\033[38;5;109m" // directory accent
+		sep = "\033[38;5;240m" // separators
+		rst = "\033[0m"
+	)
+
+	model := c.Agent.ModelID
+	if model == "" {
+		model = "no model"
+	}
+	if len(model) > 30 {
+		model = model[:27] + "..."
+	}
+	workDir := truncatePathTail(c.Agent.WorkDir, 30)
+
+	ctx := formatCompactInt(c.lastPromptTokens)
+	ch := formatCompactInt(c.lastCachedTokens)
+	cm := formatCompactInt(c.lastUncachedInputTokens)
+
+	// Visible text (ASCII only) for width calculation.
+	vis := " CTX: " + ctx + " | CH: " + ch + " | CM: " + cm + " | " + model + " | " + workDir + " "
+	visLen := len(vis)
+
+	// Build ANSI-colored text.
+	var b strings.Builder
+	b.Grow(visLen + 200)
+	b.WriteString(bg)
+	b.WriteString(dim)
+	b.WriteString(" CTX: ")
+	b.WriteString(val)
+	b.WriteString(ctx)
+	b.WriteString(sep)
+	b.WriteString(" | ")
+	b.WriteString(dim)
+	b.WriteString("CH: ")
+	b.WriteString(val)
+	b.WriteString(ch)
+	b.WriteString(sep)
+	b.WriteString(" | ")
+	b.WriteString(dim)
+	b.WriteString("CM: ")
+	b.WriteString(val)
+	b.WriteString(cm)
+	b.WriteString(sep)
+	b.WriteString(" | ")
+	b.WriteString(acc)
+	b.WriteString(model)
+	b.WriteString(sep)
+	b.WriteString(" | ")
+	b.WriteString(dir)
+	b.WriteString(workDir)
+	b.WriteString(" ")
+
+	// Stop one column short. Filling the exact terminal width can trigger the
+	// terminal's pending-wrap state, which makes readline's next clear/redraw
+	// sequence overwrite the footer while editing multiline input.
+	width := c.terminalWidth() - 1
+	if width < 1 {
+		width = 1
+	}
+	if visLen < width {
+		b.WriteString(strings.Repeat(" ", width-visLen))
+	}
+
+	b.WriteString(rst)
+	return b.String()
+}
+
+// updateStatusBar pushes the current model/dir/tokens into readline's persistent hint lane.
+//
+// WHAT:  Refreshes the persistent hint below the input prompt.
+// WHY:   The hint is rendered by readline on every display refresh after Persist is called.
+// HOW:   Guards on c.rl being set (only active during the TTY REPL).
+func (c *Console) updateStatusBar() {
+	if c.rl == nil {
+		return
+	}
+	c.rl.Hint.Persist(c.buildStatusBar())
+}
+
 // formatCompactInt returns a shorter human-readable token count such as 12.3k.
 //
 // WHAT:  Formats token counts compactly for separator display.
@@ -537,6 +643,7 @@ func (c *Console) OnUsage(promptTokens, cachedTokens, uncachedTokens int) {
 	c.lastPromptTokens = promptTokens
 	c.lastCachedTokens = cachedTokens
 	c.lastUncachedInputTokens = uncachedTokens
+	c.updateStatusBar()
 }
 
 // OnReasoning is called for each streaming reasoning chunk from the LLM.
@@ -1210,11 +1317,16 @@ func (c *Console) Run() error {
 // HOW:   Enter accepts the buffer; pasted newlines remain inside it.
 func (c *Console) runTTY() error {
 	rl := readline.NewShell()
+	c.rl = rl
+	defer func() { c.rl = nil }()
 	if err := rl.Config.Set("enable-bracketed-paste", true); err != nil {
 		return fmt.Errorf("cannot enable bracketed paste: %w", err)
 	}
 	rl.AcceptMultiline = func(line []rune) bool { return true }
 	rl.Prompt.Primary(func() string {
+		// Re-persist the footer on every readline refresh. This is intentional:
+		// multiline editing clears and rebuilds the helper area after each key.
+		c.updateStatusBar()
 		// Keep shortcut feedback only while the input buffer is empty; once the
 		// user types, the accepted line and the next prompt show the mode alone.
 		return c.promptLabelWithStatus(rl.Line().Len() == 0)
@@ -1233,6 +1345,7 @@ func (c *Console) runTTY() error {
 				setShortcutStatus("Mode switch error: %v", err)
 				return
 			}
+			c.updateStatusBar()
 			setShortcutStatus("[%s]", c.Agent.ModelID)
 		},
 		"blazeai-model-next": func() {
@@ -1240,6 +1353,7 @@ func (c *Console) runTTY() error {
 				setShortcutStatus("Model switch error: %v", err)
 				return
 			}
+			c.updateStatusBar()
 			setShortcutStatus("[%s]", c.Agent.ModelID)
 		},
 		"blazeai-favorite-add": func() {
@@ -1296,6 +1410,8 @@ func (c *Console) runTTY() error {
 		}
 	}
 
+	c.updateStatusBar()
+
 	for {
 		line, err := rl.Readline()
 		if errors.Is(err, readline.ErrInterrupt) {
@@ -1348,6 +1464,7 @@ func (c *Console) runTTY() error {
 		fmt.Fprintln(c.Out)
 		c.lineOpen = false
 		c.responseSeparator()
+		c.updateStatusBar()
 	}
 }
 
@@ -1510,6 +1627,7 @@ func (c *Console) handleCommand(input string) (bool, bool, error) {
 				if err := c.Agent.NextFavoriteModel(); err != nil {
 					return true, false, err
 				}
+				c.updateStatusBar()
 				fmt.Fprintf(c.Out, "Switched to: %s\n", c.Agent.ModelID)
 			}
 			return true, false, nil
@@ -1517,6 +1635,7 @@ func (c *Console) handleCommand(input string) (bool, bool, error) {
 		if err := c.Agent.SetModel(arg); err != nil {
 			return true, false, err
 		}
+		c.updateStatusBar()
 		fmt.Fprintf(c.Out, "Model set to: %s\n", arg)
 		return true, false, nil
 	case "/cd":
@@ -1526,12 +1645,17 @@ func (c *Console) handleCommand(input string) (bool, bool, error) {
 		if err := c.Agent.SetWorkDir(arg); err != nil {
 			return true, false, err
 		}
+		c.updateStatusBar()
 		fmt.Fprintf(c.Out, "Work folder: %s\n", arg)
 		return true, false, nil
 	case "/clear", "/new":
 		if err := c.Agent.ResetConversation(); err != nil {
 			return true, false, fmt.Errorf("cannot reset session: %w", err)
 		}
+		c.lastPromptTokens = 0
+		c.lastCachedTokens = 0
+		c.lastUncachedInputTokens = 0
+		c.updateStatusBar()
 		fmt.Fprintln(c.Out, "Session cleared.")
 		return true, false, nil
 	default:
@@ -1658,6 +1782,7 @@ func (c *Console) interactiveSelectModel() error {
 	if err := c.Agent.SetModel(modelID); err != nil {
 		return err
 	}
+	c.updateStatusBar()
 	fmt.Fprintf(c.Out, "Model set to: %s\n", modelID)
 	return nil
 }
