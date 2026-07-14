@@ -129,6 +129,17 @@ func TestReplaceBlockMultiplePartialSuccess(t *testing.T) {
 	if !strings.Contains(result, "1 block(s) failed") || !strings.Contains(result, "first new") || !strings.Contains(result, "missing old") {
 		t.Errorf("Execute() = %q, want partial result with failed block and live file", result)
 	}
+	for _, marker := range []string{
+		"applied_blocks: [1]",
+		"successful blocks are already on disk; do not resend them",
+		"AUTHORITATIVE LIVE FILE CONTENT",
+		"supersedes the old file content in the conversation context",
+		"MANDATORY RETRY RULE",
+	} {
+		if !strings.Contains(result, marker) {
+			t.Errorf("Execute() = %q, missing authoritative retry marker %q", result, marker)
+		}
+	}
 	data, _ := os.ReadFile(path)
 	if string(data) != "first new\nsecond old\nfooter" {
 		t.Errorf("file content = %q, want successful replacement only", string(data))
