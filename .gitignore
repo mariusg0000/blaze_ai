@@ -28,6 +28,9 @@ go.work.sum
 
 # Environment and secrets
 .env
+
+# Local readline fork test artifacts
+third_party/**/*_test.go
 .env.*
 .direnv/
 

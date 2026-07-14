@@ -14,3 +14,5 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 )
+
+replace github.com/reeflective/readline => ./third_party/readline
