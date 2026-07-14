@@ -104,9 +104,8 @@ type Console struct {
 	spinnerStop             chan struct{}
 	spinnerDone             chan struct{}
 
-	switchLineActive bool   // true when a mode/model status line is present and can be overwritten
-	switchLineWidth  int    // visible width of the current status line for reliable space-padding
-	shortcutStatus   string // status rendered as the readline prompt's overwriteable upper line
+	switchLineActive bool // true when a mode/model status line is present and can be overwritten
+	switchLineWidth  int  // visible width of the current status line for reliable space-padding
 }
 
 // NewConsole creates a Console for terminal interaction.
@@ -348,6 +347,10 @@ func (c *Console) buildStatusBar() string {
 		rst = "\033[0m"
 	)
 
+	modeName := "default"
+	if c.Agent.CurrentMode != nil {
+		modeName = c.Agent.CurrentMode.Name
+	}
 	model := c.Agent.ModelID
 	if model == "" {
 		model = "no model"
@@ -361,16 +364,39 @@ func (c *Console) buildStatusBar() string {
 	ch := formatCompactInt(c.lastCachedTokens)
 	cm := formatCompactInt(c.lastUncachedInputTokens)
 
+	const reasoningLevel = "medium"
+
 	// Visible text (ASCII only) for width calculation.
-	vis := " CTX: " + ctx + " | CH: " + ch + " | CM: " + cm + " | " + model + " | " + workDir + " "
+	vis := " " + modeName + " | " + model + " | " + reasoningLevel + " | " + workDir + " | CTX: " + ctx + " | CH: " + ch + " | CM: " + cm + " "
 	visLen := len(vis)
 
 	// Build ANSI-colored text.
 	var b strings.Builder
 	b.Grow(visLen + 200)
 	b.WriteString(bg)
+	b.WriteString(colorBold)
+	b.WriteString("\033[38;5;220m")
+	b.WriteString(" ")
+	b.WriteString(modeName)
+	// Reset only mode styling, then restore the footer background for the remaining fields.
+	b.WriteString("\033[22m\033[39m")
+	b.WriteString(bg)
+	b.WriteString(sep)
+	b.WriteString(" | ")
+	b.WriteString(acc)
+	b.WriteString(model)
+	b.WriteString(sep)
+	b.WriteString(" | ")
+	b.WriteString(val)
+	b.WriteString(reasoningLevel)
+	b.WriteString(sep)
+	b.WriteString(" | ")
+	b.WriteString(dir)
+	b.WriteString(workDir)
+	b.WriteString(sep)
+	b.WriteString(" | ")
 	b.WriteString(dim)
-	b.WriteString(" CTX: ")
+	b.WriteString("CTX: ")
 	b.WriteString(val)
 	b.WriteString(ctx)
 	b.WriteString(sep)
@@ -385,14 +411,6 @@ func (c *Console) buildStatusBar() string {
 	b.WriteString("CM: ")
 	b.WriteString(val)
 	b.WriteString(cm)
-	b.WriteString(sep)
-	b.WriteString(" | ")
-	b.WriteString(acc)
-	b.WriteString(model)
-	b.WriteString(sep)
-	b.WriteString(" | ")
-	b.WriteString(dir)
-	b.WriteString(workDir)
 	b.WriteString(" ")
 
 	// Stop one column short. Filling the exact terminal width can trigger the
@@ -1270,31 +1288,22 @@ func splitTableRow(line string) []string {
 	return cells
 }
 
-// promptLabel returns the colored input prompt label and active model status.
+// promptLabel returns the compact input marker used by the readline prompt.
 //
-// WHAT:  Builds the [mode][model]> label used by the readline prompt.
-// WHY:   Model changes must be visible after the mode without adding output lines.
-// HOW:   Mode uses blue bold text; the active model status uses yellow bold text.
-// RETURNS: string — the formatted input prompt label.
+// WHAT:  Marks the beginning of the user input area.
+// WHY:   Session state belongs in the persistent footer, leaving the prompt stable during mode/model changes.
+// RETURNS: string — the colored input arrow.
 func (c *Console) promptLabel() string {
-	return c.promptLabelWithStatus(true)
+	return c.color(colorOrange, "❯ ")
 }
 
-// promptLabelWithStatus builds the prompt with optional one-shot shortcut status.
+// promptLabelWithStatus retains the readline callback contract while keeping the prompt state-free.
 //
-// WHAT:  Formats the mode and optionally the model-change bracket.
-// WHY:   The model status must disappear before submitted user text is accepted.
-// PARAMS: includeStatus — whether the active shortcut status should be shown.
-func (c *Console) promptLabelWithStatus(includeStatus bool) string {
-	modeName := "default"
-	if c.Agent.CurrentMode != nil {
-		modeName = c.Agent.CurrentMode.Name
-	}
-	label := c.color(colorBlue, c.bold("["+modeName+"]"))
-	if includeStatus && c.shortcutStatus != "" {
-		label += c.color(colorOrange, c.bold(c.shortcutStatus))
-	}
-	return label + "> "
+// WHAT:  Returns the stable user input marker regardless of shortcut state.
+// WHY:   Mode and model changes must update only the persistent status bar.
+// PARAMS: includeStatus — retained for callers; intentionally ignored.
+func (c *Console) promptLabelWithStatus(_ bool) string {
+	return c.promptLabel()
 }
 
 // Run starts the REPL loop. Reads input, handles slash commands, and runs agent turns.
@@ -1327,73 +1336,62 @@ func (c *Console) runTTY() error {
 		// Re-persist the footer on every readline refresh. This is intentional:
 		// multiline editing clears and rebuilds the helper area after each key.
 		c.updateStatusBar()
-		// Keep shortcut feedback only while the input buffer is empty; once the
-		// user types, the accepted line and the next prompt show the mode alone.
-		return c.promptLabelWithStatus(rl.Line().Len() == 0)
+		return c.promptLabel()
 	})
 
-	// setShortcutStatus updates the single redrawable primary prompt line.
-	setShortcutStatus := func(format string, args ...any) {
-		c.shortcutStatus = fmt.Sprintf(format, args...)
-		rl.Display.Refresh()
-	}
-
 	// Register BlazeAI shortcuts before binding them over readline defaults.
+	showShortcutError := func(format string, args ...any) {
+		_, _ = rl.Printf(c.color(colorRed, format), args...)
+	}
 	rl.Keymap.Register(map[string]func(){
 		"blazeai-mode-next": func() {
 			if _, err := c.Agent.NextMode(); err != nil {
-				setShortcutStatus("Mode switch error: %v", err)
+				showShortcutError("Mode switch error: %v", err)
 				return
 			}
 			c.updateStatusBar()
-			setShortcutStatus("[%s]", c.Agent.ModelID)
 		},
 		"blazeai-model-next": func() {
 			if err := c.Agent.NextFavoriteModel(); err != nil {
-				setShortcutStatus("Model switch error: %v", err)
+				showShortcutError("Model switch error: %v", err)
 				return
 			}
 			c.updateStatusBar()
-			setShortcutStatus("[%s]", c.Agent.ModelID)
 		},
 		"blazeai-favorite-add": func() {
 			if err := c.Agent.Config.AddFavorite(c.Agent.ModelID); err != nil {
-				setShortcutStatus("Add favorite error: %v", err)
+				showShortcutError("Add favorite error: %v", err)
 				return
 			}
 			if err := c.Agent.Config.Save(); err != nil {
-				setShortcutStatus("Save config error: %v", err)
+				showShortcutError("Save config error: %v", err)
 				return
 			}
-			setShortcutStatus("Added favorite: %s", c.Agent.ModelID)
+			c.updateStatusBar()
 		},
 		"blazeai-favorite-remove": func() {
 			removed, err := c.Agent.Config.RemoveFavorite(c.Agent.ModelID)
 			if err != nil {
-				setShortcutStatus("Remove favorite error: %v", err)
+				showShortcutError("Remove favorite error: %v", err)
 				return
 			}
 			if !removed {
-				setShortcutStatus("Not a favorite: %s", c.Agent.ModelID)
+				showShortcutError("Not a favorite: %s", c.Agent.ModelID)
 				return
 			}
 			if err := c.Agent.Config.Save(); err != nil {
-				setShortcutStatus("Save config error: %v", err)
+				showShortcutError("Save config error: %v", err)
 				return
 			}
-			setShortcutStatus("Removed favorite: %s", c.Agent.ModelID)
+			c.updateStatusBar()
 		},
 		"blazeai-reasoning-toggle": func() {
 			c.Agent.Config.ShowReasoning = !c.Agent.Config.ShowReasoning
 			if err := c.Agent.Config.Save(); err != nil {
-				setShortcutStatus("Reasoning toggle error: %v", err)
+				showShortcutError("Reasoning toggle error: %v", err)
 				return
 			}
-			state := "disabled"
-			if c.Agent.Config.ShowReasoning {
-				state = "enabled"
-			}
-			setShortcutStatus("Reasoning: %s", state)
+			c.updateStatusBar()
 		},
 	})
 	for sequence, action := range map[string]string{
@@ -1426,8 +1424,6 @@ func (c *Console) runTTY() error {
 			return fmt.Errorf("input error: %w", err)
 		}
 
-		// The shortcut status belongs to the active editing prompt only.
-		c.shortcutStatus = ""
 		input := strings.TrimSpace(line)
 		if input == "" {
 			continue
@@ -1463,7 +1459,6 @@ func (c *Console) runTTY() error {
 		c.flushPendingContent()
 		fmt.Fprintln(c.Out)
 		c.lineOpen = false
-		c.responseSeparator()
 		c.updateStatusBar()
 	}
 }
