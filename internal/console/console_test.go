@@ -436,8 +436,8 @@ func TestSpinnerStopsBeforeContent(t *testing.T) {
 	c.unlockOutput()
 
 	plain := stripANSICodes(strings.ReplaceAll(out.String(), "\r", ""))
-	if !strings.Contains(plain, "thinking...") {
-		t.Fatalf("output missing spinner text: %q", plain)
+	if c.statusPhase != "Working" {
+		t.Fatalf("status phase = %q, want Working", c.statusPhase)
 	}
 	if !strings.Contains(plain, "[BLAZE]\nhello") {
 		t.Fatalf("output missing assistant content after spinner: %q", plain)
@@ -452,6 +452,7 @@ func TestSpinnerStopsBeforeToolCall(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	c.lockOutput()
 	c.stopSpinnerLocked()
+	c.setStatusPhaseLocked("Tool", "shell")
 	c.ensureLineBreakBeforeBlock()
 	c.toolsStarted = true
 	c.lastToolArgs = "ls"
@@ -463,8 +464,8 @@ func TestSpinnerStopsBeforeToolCall(t *testing.T) {
 	c.stopSpinner()
 
 	plain := stripANSICodes(strings.ReplaceAll(out.String(), "\r", ""))
-	if !strings.Contains(plain, "thinking...") {
-		t.Fatalf("output missing spinner text: %q", plain)
+	if c.statusPhase != "Tool" {
+		t.Fatalf("status phase = %q, want Tool", c.statusPhase)
 	}
 	if !strings.Contains(plain, "💻 ls … ✔️") {
 		t.Fatalf("output missing tool line after spinner: %q", plain)
@@ -483,11 +484,11 @@ func TestOnStreamPhaseUpdatesSpinnerLabel(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 
 	plain := stripANSICodes(strings.ReplaceAll(out.String(), "\r", ""))
-	if !strings.Contains(plain, "Connecting") {
-		t.Fatalf("output missing initial spinner label: %q", plain)
+	if c.statusPhase != "Wait" {
+		t.Fatalf("status phase = %q, want Wait", c.statusPhase)
 	}
-	if !strings.Contains(plain, "Waiting") {
-		t.Fatalf("output missing updated spinner label: %q", plain)
+	if plain != "" {
+		t.Fatalf("status-only spinner should not write output: %q", plain)
 	}
 }
 
@@ -884,12 +885,12 @@ func TestDeleteBeforeCursorAcrossNewline(t *testing.T) {
 	}
 }
 
-// TestPromptLabel verifies the input prompt is a stable arrow marker.
+// TestPromptLabel verifies the input prompt is a stable lightning marker.
 func TestPromptLabel(t *testing.T) {
 	c, _ := newConsole(mockAgent(t))
 	label := stripANSICodes(c.promptLabel())
-	if label != "❯ " {
-		t.Errorf("promptLabel() = %q, want arrow marker", label)
+	if label != "⚡ " {
+		t.Errorf("promptLabel() = %q, want lightning marker", label)
 	}
 	if strings.Contains(label, "default") || strings.Contains(label, c.Agent.ModelID) {
 		t.Errorf("promptLabel() = %q, must not contain session state", label)
@@ -900,8 +901,8 @@ func TestPromptLabel(t *testing.T) {
 func TestPromptLabelWithMode(t *testing.T) {
 	c, _ := newConsole(mockAgent(t))
 	c.Agent.CurrentMode = &config.Mode{Name: "planning", Model: c.Agent.ModelID}
-	if got := stripANSICodes(c.promptLabel()); got != "❯ " {
-		t.Errorf("promptLabel() = %q, want stable arrow marker", got)
+	if got := stripANSICodes(c.promptLabel()); got != "⚡ " {
+		t.Errorf("promptLabel() = %q, want stable lightning marker", got)
 	}
 }
 

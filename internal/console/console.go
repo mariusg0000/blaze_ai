@@ -105,6 +105,9 @@ type Console struct {
 	spinnerStop             chan struct{}
 	spinnerDone             chan struct{}
 	turnStatusBarVisible    bool
+	statusPhase             string
+	statusTool              string
+	statusDeadline          time.Time
 
 	switchLineActive bool // true when a mode/model status line is present and can be overwritten
 	switchLineWidth  int  // visible width of the current status line for reliable space-padding
@@ -154,21 +157,47 @@ func (c *Console) startSpinner(label string) {
 }
 
 func (c *Console) startSpinnerLocked(label string) {
-	if c.turnStatusBarVisible {
-		return
-	}
+	c.setStatusPhaseLocked(label, "")
 	if c.spinnerActive {
 		c.spinnerLabel = label
 		return
 	}
 	c.spinnerActive = true
-	c.spinnerVisible = false
-	c.spinnerFrame = 0
-	c.spinnerWidth = 0
 	c.spinnerLabel = label
 	c.spinnerStop = make(chan struct{})
 	c.spinnerDone = make(chan struct{})
 	go c.runSpinner(c.spinnerStop, c.spinnerDone)
+}
+
+// setStatusPhaseLocked sets the status phase and resets its countdown deadline.
+//
+// WHAT: Updates the phase shown in the persistent statusbar.
+// HOW: Maps provider-facing labels to the existing provider timeout budgets.
+func (c *Console) setStatusPhaseLocked(label, tool string) {
+	phase := label
+	var timeout time.Duration
+	switch label {
+	case "Connect":
+		timeout = provider.StreamPhaseTimeout(provider.PhaseConnecting)
+	case "Wait":
+		timeout = provider.StreamPhaseTimeout(provider.PhaseWaitingFirstEvent)
+	case "Think":
+		timeout = provider.StreamPhaseTimeout(provider.PhaseHiddenReasoning)
+	case "Working":
+		timeout = provider.StreamPhaseTimeout(provider.PhaseStreaming)
+	case "Tool":
+	case "Ready":
+	default:
+		phase = "Working"
+	}
+	c.statusPhase = phase
+	c.statusTool = tool
+	if timeout > 0 {
+		c.statusDeadline = time.Now().Add(timeout)
+	} else {
+		c.statusDeadline = time.Time{}
+	}
+	c.refreshTurnStatusBarLocked()
 }
 
 // updateSpinnerLabel changes the active spinner text without restarting the animation.
@@ -200,11 +229,8 @@ func (c *Console) stopSpinnerLocked() {
 	if stop != nil {
 		close(stop)
 	}
-	if c.spinnerVisible {
-		fmt.Fprintf(c.Out, "\r%s\r", strings.Repeat(" ", c.spinnerWidth))
-		c.spinnerVisible = false
-		c.spinnerWidth = 0
-	}
+	c.spinnerVisible = false
+	c.spinnerWidth = 0
 	if done != nil {
 		c.outMu.Unlock()
 		<-done
@@ -230,16 +256,7 @@ func (c *Console) runSpinner(stop <-chan struct{}, done chan<- struct{}) {
 				c.outMu.Unlock()
 				return
 			}
-			frame := spinnerFrames[c.spinnerFrame%len(spinnerFrames)]
-			c.spinnerFrame++
-			line := frame + " " + c.spinnerLabel
-			width := len(line)
-			if c.spinnerWidth > width {
-				width = c.spinnerWidth
-			}
-			fmt.Fprintf(c.Out, "\r%-*s\r%s", width, "", line)
-			c.spinnerVisible = true
-			c.spinnerWidth = len(line)
+			c.refreshTurnStatusBarLocked()
 			c.outMu.Unlock()
 		}
 	}
@@ -370,14 +387,33 @@ func (c *Console) buildStatusBar() string {
 	}
 	workDir := truncatePathTail(c.Agent.WorkDir, 30)
 
-	ctx := formatCompactInt(c.lastPromptTokens)
-	ch := formatCompactInt(c.lastCachedTokens)
-	cm := formatCompactInt(c.lastUncachedInputTokens)
+	ctx := formatStatusTokens(c.lastPromptTokens)
+	cache := formatStatusTokens(c.lastCachedTokens)
+	phase := c.statusPhase
+	if phase == "" {
+		phase = "Ready"
+	}
+	if c.statusTool != "" {
+		phase += " " + c.statusTool
+	}
+	if !c.statusDeadline.IsZero() {
+		remaining := time.Until(c.statusDeadline)
+		seconds := int((remaining + time.Second - 1) / time.Second)
+		if seconds < 0 {
+			seconds = 0
+		}
+		phase += fmt.Sprintf(" %ds", seconds)
+	}
+	const phaseWidth = 14
+	if len(phase) > phaseWidth {
+		phase = phase[:phaseWidth]
+	}
+	phase = fmt.Sprintf("%-*s", phaseWidth, phase)
 
 	const reasoningLevel = "medium"
 
 	// Visible text (ASCII only) for width calculation.
-	vis := " " + modeName + " | " + model + " | " + reasoningLevel + " | " + workDir + " | CTX: " + ctx + " | CH: " + ch + " | CM: " + cm + " "
+	vis := " " + phase + " | " + modeName + " | " + model + " | " + reasoningLevel + " | " + workDir + " | CTX " + ctx + "(" + cache + ") "
 	visLen := len(vis)
 
 	// Build ANSI-colored text.
@@ -387,8 +423,14 @@ func (c *Console) buildStatusBar() string {
 	b.WriteString(colorBold)
 	b.WriteString("\033[38;5;220m")
 	b.WriteString(" ")
+	b.WriteString(phase)
+	// Reset phase styling, then restore the footer background for the remaining fields.
+	b.WriteString("\033[22m\033[39m")
+	b.WriteString(bg)
+	b.WriteString(sep)
+	b.WriteString(" | ")
+	b.WriteString(colorOrange)
 	b.WriteString(modeName)
-	// Reset only mode styling, then restore the footer background for the remaining fields.
 	b.WriteString("\033[22m\033[39m")
 	b.WriteString(bg)
 	b.WriteString(sep)
@@ -406,21 +448,14 @@ func (c *Console) buildStatusBar() string {
 	b.WriteString(sep)
 	b.WriteString(" | ")
 	b.WriteString(dim)
-	b.WriteString("CTX: ")
+	b.WriteString("CTX ")
 	b.WriteString(val)
 	b.WriteString(ctx)
-	b.WriteString(sep)
-	b.WriteString(" | ")
-	b.WriteString(dim)
-	b.WriteString("CH: ")
+	b.WriteString("(")
+	b.WriteString("\033[38;5;114m")
+	b.WriteString(cache)
 	b.WriteString(val)
-	b.WriteString(ch)
-	b.WriteString(sep)
-	b.WriteString(" | ")
-	b.WriteString(dim)
-	b.WriteString("CM: ")
-	b.WriteString(val)
-	b.WriteString(cm)
+	b.WriteString(")")
 	b.WriteString(" ")
 
 	// Stop one column short. Filling the exact terminal width can trigger the
@@ -450,14 +485,35 @@ func (c *Console) updateStatusBar() {
 	c.rl.Hint.Persist(c.buildStatusBar())
 }
 
+// refreshTurnStatusBarLocked redraws the footer in place without moving the output cursor.
+//
+// WHAT: Updates phase/countdown text during an active turn.
+// HOW: Saves the cursor, paints the last row, then restores the cursor.
+func (c *Console) refreshTurnStatusBarLocked() {
+	if !c.turnStatusBarVisible {
+		return
+	}
+	_, height, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || height < 3 {
+		return
+	}
+	fmt.Fprint(c.Out, "\0337")
+	fmt.Fprintf(c.Out, "\033[%d;1H\033[2K", height)
+	fmt.Fprint(c.Out, c.buildStatusBar())
+	fmt.Fprint(c.Out, "\0338")
+}
+
 // printTurnStatusBar sets a bottom-pinned footer via terminal scrolling regions.
 //
 // WHAT:  Keeps the statusbar at the bottom while the LLM streams output above it.
 // WHY:   Readline clears its hint lane after Readline returns, so Persist alone
-//        cannot keep the statusbar visible during synchronous turn execution.
+//
+//	cannot keep the statusbar visible during synchronous turn execution.
+//
 // HOW:   Sets the terminal scroll region to all rows except the last, moves to
-//        the last row to print the statusbar, then restores the cursor. All
-//        subsequent output scrolls in the top region; the footer stays pinned.
+//
+//	the last row to print the statusbar, then restores the cursor. All
+//	subsequent output scrolls in the top region; the footer stays pinned.
 func (c *Console) printTurnStatusBar() {
 	c.outMu.Lock()
 	defer c.outMu.Unlock()
@@ -472,18 +528,18 @@ func (c *Console) printTurnStatusBar() {
 
 	// Save cursor, set scroll region to exclude the last line, move to last
 	// line, clear it, print the footer without a trailing newline.
-	fmt.Fprint(c.Out, "\0337")                              // DECSC
-	fmt.Fprintf(c.Out, "\033[1;%dr", height-1)            // DECSTBM
-	fmt.Fprintf(c.Out, "\033[%d;1H", height)              // CUP to last line
-	fmt.Fprint(c.Out, "\033[2K")                           // EL
-	fmt.Fprint(c.Out, c.buildStatusBar())                  // no \n
-	fmt.Fprint(c.Out, "\0338")                              // DECRC
+	fmt.Fprint(c.Out, "\0337")                 // DECSC
+	fmt.Fprintf(c.Out, "\033[1;%dr", height-1) // DECSTBM
+	fmt.Fprintf(c.Out, "\033[%d;1H", height)   // CUP to last line
+	fmt.Fprint(c.Out, "\033[2K")               // EL
+	fmt.Fprint(c.Out, c.buildStatusBar())      // no \n
+	fmt.Fprint(c.Out, "\0338")                 // DECRC
 
 	// DECRC may restore cursor outside the scroll region when the terminal
 	// is full. Move up one line to guarantee the cursor sits inside the
 	// region before we write, so the next newline stays inside and scrolls
 	// the top area instead of the whole screen.
-	fmt.Fprint(c.Out, "\033[1A")                            // CUU 1
+	fmt.Fprint(c.Out, "\033[1A") // CUU 1
 	fmt.Fprintln(c.Out)
 }
 
@@ -494,6 +550,9 @@ func (c *Console) printTurnStatusBar() {
 func (c *Console) finishTurnStatusBar() {
 	c.outMu.Lock()
 	defer c.outMu.Unlock()
+	c.statusPhase = "Ready"
+	c.statusTool = ""
+	c.statusDeadline = time.Time{}
 	if !c.turnStatusBarVisible {
 		return
 	}
@@ -505,9 +564,9 @@ func (c *Console) finishTurnStatusBar() {
 	}
 
 	// Reset scroll region in-place without triggering a newline on the last row.
-	fmt.Fprint(c.Out, "\033[r")                            // DECSTBM reset
-	fmt.Fprintf(c.Out, "\033[%d;1H", height)              // CUP to last line
-	fmt.Fprint(c.Out, "\033[2K")                           // EL — clear footer
+	fmt.Fprint(c.Out, "\033[r")              // DECSTBM reset
+	fmt.Fprintf(c.Out, "\033[%d;1H", height) // CUP to last line
+	fmt.Fprint(c.Out, "\033[2K")             // EL — clear footer
 }
 
 // formatCompactInt returns a shorter human-readable token count such as 12.3k.
@@ -521,6 +580,19 @@ func formatCompactInt(n int) string {
 		return fmt.Sprintf("%.1fk", float64(n)/1000)
 	}
 	return fmt.Sprintf("%dk", n/1000)
+}
+
+// formatStatusTokens formats statusbar token counts with an uppercase K suffix.
+//
+// WHAT: Produces compact values such as 12K or 12.3K.
+func formatStatusTokens(n int) string {
+	if n < 1000 {
+		return strconv.Itoa(n)
+	}
+	if n < 10000 {
+		return fmt.Sprintf("%.1fK", float64(n)/1000)
+	}
+	return fmt.Sprintf("%dK", n/1000)
 }
 
 // truncatePathTail returns the last maxLen characters of an absolute path.
@@ -711,15 +783,17 @@ func (c *Console) OnMaintenanceResult(name string, result string) {
 
 // OnStreamPhase updates the waiting spinner label for transports that can show provider phases.
 func (c *Console) OnStreamPhase(phase provider.StreamPhase) {
+	c.outMu.Lock()
+	defer c.outMu.Unlock()
 	switch phase {
 	case provider.PhaseConnecting:
-		c.updateSpinnerLabel("Connecting")
+		c.setStatusPhaseLocked("Connect", "")
 	case provider.PhaseWaitingFirstEvent:
-		c.updateSpinnerLabel("Waiting")
+		c.setStatusPhaseLocked("Wait", "")
 	case provider.PhaseHiddenReasoning:
-		c.updateSpinnerLabel("Thinking")
+		c.setStatusPhaseLocked("Think", "")
 	case provider.PhaseStreaming:
-		// The next visible output stops the spinner, so no label change is needed here.
+		c.setStatusPhaseLocked("Working", "")
 	}
 }
 
@@ -744,6 +818,7 @@ func (c *Console) OnReasoning(delta string) {
 	}
 	c.lockOutput()
 	defer c.unlockOutput()
+	c.setStatusPhaseLocked("Think", "")
 	maxHeight := c.Agent.Config.ReasoningMaxHeight
 	if maxHeight > 0 && c.reasoningLines >= maxHeight {
 		return
@@ -796,6 +871,7 @@ func (c *Console) OnContent(delta string) {
 	}
 	c.lockOutput()
 	defer c.unlockOutput()
+	c.setStatusPhaseLocked("Working", "")
 	if c.reasoningStarted {
 		fmt.Fprintln(c.Out)
 		fmt.Fprintln(c.Out) // blank line after reasoning
@@ -841,6 +917,7 @@ func (c *Console) OnToolCall(name string, args string) {
 	}
 	c.lockOutput()
 	defer c.unlockOutput()
+	c.setStatusPhaseLocked("Tool", "")
 	c.ensureLineBreakBeforeBlock()
 	c.toolsStarted = true
 
@@ -981,7 +1058,7 @@ func (c *Console) renderToolResult(name string, result string, showContext bool,
 		}
 	}
 	c.lineOpen = false
-	c.startSpinnerLocked("Waiting")
+	c.startSpinnerLocked("Wait")
 }
 
 // RequestSudoApproval prompts the user for confirmation before executing a sudo command.
@@ -1361,10 +1438,13 @@ func splitTableRow(line string) []string {
 // promptLabel returns the compact input marker used by the readline prompt.
 //
 // WHAT:  Marks the beginning of the user input area.
-// WHY:   Session state belongs in the persistent footer, leaving the prompt stable during mode/model changes.
-// RETURNS: string — the colored input arrow.
+// WHY:   The lightning glyph reinforces Blaze's fast interaction identity while
+//
+//	session state remains in the persistent footer.
+//
+// RETURNS: string — the colored lightning prompt marker.
 func (c *Console) promptLabel() string {
-	return c.color(colorOrange, "❯ ")
+	return c.color(colorOrange, "⚡ ")
 }
 
 // promptLabelWithStatus retains the readline callback contract while keeping the prompt state-free.
@@ -1595,7 +1675,7 @@ func (c *Console) runAgentTurn(input string, interrupts <-chan os.Signal) error 
 	}
 	defer escWatcher.stop()
 
-	c.startSpinner("Connecting")
+	c.startSpinner("Connect")
 	defer c.stopSpinner()
 
 	errCh := make(chan error, 1)

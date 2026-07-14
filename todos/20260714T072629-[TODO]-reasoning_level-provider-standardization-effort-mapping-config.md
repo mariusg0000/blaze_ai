@@ -14,7 +14,7 @@ Core requirements:
 - No OpenAI standard exists for reasoning levels — each provider invented its own format
 - Without normalization, reasoning level logic would be scattered across provider code with inconsistent handling
 - A dedicated module makes it trivial to add new providers or adjust mappings
-- User-facing config uses simple values (`low`, `medium`, `high`); the module handles the ugly translation
+- User-facing config uses simple values (`low`, `med`, `high`); the module handles the ugly translation
 
 ## HOW IT MUST BE DONE
 
@@ -39,9 +39,9 @@ opencode solves this with a `variants()` function. Key provider-specific formats
 // Standard levels that users and config reference.
 const (
     LevelNone     = "none"
-    LevelMinimal  = "minimal"
+    LevelMin      = "min"
     LevelLow      = "low"
-    LevelMedium   = "medium"
+    LevelMed      = "med"
     LevelHigh     = "high"
     LevelXHigh    = "xhigh"
     LevelMax      = "max"
@@ -78,7 +78,7 @@ func SupportedLevels(provider, modelID string) []string
 - `internal/console/input.go` — Bind `Ctrl+]` to cycle through supported reasoning levels
 
 **Hotkey: Ctrl+]**
-- Cycles through the supported levels for the current model in order: `none → minimal → low → medium → high → xhigh → max → none → ...`
+- Cycles through the supported levels for the current model in order: `none → min → low → med → high → xhigh → max → none → ...`
 - Only cycles through levels present in `SupportedLevels(provider, modelID)`
 - Displays current level after change (e.g. ` reasoning: high `)
 - If model has no reasoning support, the keypress is a no-op
@@ -94,7 +94,7 @@ func SupportedLevels(provider, modelID string) []string
 - When the model changes, the reasoning level loads from the stored value for that model
 - `Ctrl+]` or `/reasoning` updates the stored value immediately
 - Level persists across sessions and restarts until explicitly changed
-- If a model has no stored level, it starts with the provider's default (or `medium` if no default)
+- If a model has no stored level, it starts with the provider's default (or `med` if no default)
 
 **Open questions:**
 - Budget tokens for Anthropic: fixed values (16k/32k) or configurable via `reasoning_budget` in config?

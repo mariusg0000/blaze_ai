@@ -64,6 +64,24 @@ const (
 	PhaseStreaming         StreamPhase = "streaming"
 )
 
+// StreamPhaseTimeout returns the existing timeout budget for a provider phase.
+//
+// WHAT: Exposes phase timeout values to transport status displays.
+// WHY: The console must show the real provider deadline instead of duplicating constants.
+// RETURNS: timeout duration, or zero when the phase has no countdown.
+func StreamPhaseTimeout(phase StreamPhase) time.Duration {
+	switch phase {
+	case PhaseConnecting:
+		return providerConnectTimeout
+	case PhaseWaitingFirstEvent:
+		return providerResponseHeaderTimeout
+	case PhaseHiddenReasoning, PhaseStreaming:
+		return providerStreamIdleTimeout
+	default:
+		return 0
+	}
+}
+
 // Client communicates with an OpenAI-compatible endpoint.
 //
 // WHAT:  HTTP client for a single provider endpoint.
