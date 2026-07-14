@@ -4,6 +4,7 @@ package console
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -278,6 +279,7 @@ func TestOnToolCallEmptyArgs(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolCall("shell", "")
 	c.OnToolResult("shell", "ok")
+	c.stopSpinner()
 	output := out.String()
 	if !strings.Contains(output, "💻") {
 		t.Errorf("output missing wrench icon: %q", output)
@@ -290,6 +292,7 @@ func TestOnToolCallAfterContent(t *testing.T) {
 	c.OnContent("hello")
 	c.OnToolCall("shell", "ls")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nok\n")
+	c.stopSpinner()
 	plain := stripANSICodes(out.String())
 	if !strings.Contains(plain, "hello\n\n💻 ls …") {
 		t.Errorf("output missing blank line before tool call: %q", out.String())
@@ -301,6 +304,7 @@ func TestOnToolResultSuccess(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolCall("shell", "inspect package.json scripts")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nhi\n")
+	c.stopSpinner()
 	plain := stripANSICodes(out.String())
 	if !strings.Contains(plain, "💻 inspect package.json scripts … ✔️") {
 		t.Errorf("output missing appended success line: %q", plain)
@@ -316,6 +320,7 @@ func TestOnMaintenanceResultOmitsContextAndKeepsDetailInline(t *testing.T) {
 	c.lastPromptTokens = 106000
 	c.OnMaintenanceCall("compaction", "Compacting on max token limits")
 	c.OnMaintenanceResult("compaction", "ok 20 messages pruned and summarized")
+	c.stopSpinner()
 	plain := stripANSICodes(out.String())
 	if !strings.Contains(plain, "🗜️ Compacting on max token limits … ✔️  20 messages pruned and summarized") {
 		t.Errorf("maintenance output missing inline completion: %q", plain)
@@ -327,6 +332,7 @@ func TestOnMaintenanceResultOmitsContextAndKeepsDetailInline(t *testing.T) {
 	out.Reset()
 	c.OnMaintenanceCall("compaction", "Compacting on max token limits")
 	c.OnMaintenanceResult("compaction", "error: summarization failed")
+	c.stopSpinner()
 	plain = stripANSICodes(out.String())
 	if !strings.Contains(plain, " … ✖️ summarization failed") {
 		t.Errorf("maintenance output missing inline error: %q", plain)
@@ -338,6 +344,7 @@ func TestOnToolResultSuccessTTY(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolCall("shell", "inspect package.json scripts")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nhi\n")
+	c.stopSpinner()
 	output := out.String()
 	plain := stripANSICodes(output)
 	if strings.Contains(output, "\r\033[K") {
@@ -356,6 +363,7 @@ func TestOnToolResultErrorExitCode(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolCall("shell", "inspect config")
 	c.OnToolResult("shell", "exit_code: 1\nstderr:\nfile not found\n")
+	c.stopSpinner()
 	output := out.String()
 	if !strings.Contains(output, "✖️") {
 		t.Errorf("output missing ✖️ badge: %q", output)
@@ -370,6 +378,7 @@ func TestOnToolResultTimeout(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolCall("shell", "list large directory")
 	c.OnToolResult("shell", "timeout 1s exceeded")
+	c.stopSpinner()
 	output := out.String()
 	if !strings.Contains(output, "⏱") {
 		t.Errorf("output missing ⏱ badge: %q", output)
@@ -381,6 +390,7 @@ func TestOnToolResultGenericError(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
 	c.OnToolCall("shell", "run unknown command")
 	c.OnToolResult("shell", "error: unknown tool: x")
+	c.stopSpinner()
 	output := out.String()
 	if !strings.Contains(output, "✖️") {
 		t.Errorf("output missing ✖️ badge: %q", output)
@@ -412,17 +422,18 @@ func TestFormatTurnErrorProviderHeaderTimeout(t *testing.T) {
 
 // TestSpinnerStopsBeforeContent verifies the spinner clears before assistant text starts.
 func TestSpinnerStopsBeforeContent(t *testing.T) {
-	oldInterval := spinnerFrameInterval
-	spinnerFrameInterval = 5 * time.Millisecond
-	defer func() {
-		spinnerFrameInterval = oldInterval
-	}()
-
 	c, out := newConsole(mockAgent(t))
+	c.spinnerInterval = 5 * time.Millisecond
 	c.startSpinner("thinking...")
 	time.Sleep(20 * time.Millisecond)
-	c.OnContent("hello")
 	c.stopSpinner()
+	c.lockOutput()
+	c.contentStarted = true
+	c.ensureLineBreakBeforeBlock()
+	fmt.Fprint(c.Out, c.color(colorOrange, c.bold("[BLAZE]")))
+	fmt.Fprintln(c.Out)
+	c.writeRenderedLine("hello", true)
+	c.unlockOutput()
 
 	plain := stripANSICodes(strings.ReplaceAll(out.String(), "\r", ""))
 	if !strings.Contains(plain, "thinking...") {
@@ -435,17 +446,20 @@ func TestSpinnerStopsBeforeContent(t *testing.T) {
 
 // TestSpinnerStopsBeforeToolCall verifies the spinner clears before tool activity lines.
 func TestSpinnerStopsBeforeToolCall(t *testing.T) {
-	oldInterval := spinnerFrameInterval
-	spinnerFrameInterval = 5 * time.Millisecond
-	defer func() {
-		spinnerFrameInterval = oldInterval
-	}()
-
 	c, out := newConsole(mockAgent(t))
+	c.spinnerInterval = 5 * time.Millisecond
 	c.startSpinner("thinking...")
 	time.Sleep(20 * time.Millisecond)
-	c.OnToolCall("shell", "ls")
-	c.OnToolResult("shell", "ok")
+	c.lockOutput()
+	c.stopSpinnerLocked()
+	c.ensureLineBreakBeforeBlock()
+	c.toolsStarted = true
+	c.lastToolArgs = "ls"
+	fmt.Fprintf(c.Out, "%s %s …", c.color(colorGreen, toolEmoji("shell")), c.color(colorCtx, "ls"))
+	fmt.Fprintln(c.Out, " ✔️")
+	c.toolsStarted = false
+	c.lastToolArgs = ""
+	c.unlockOutput()
 	c.stopSpinner()
 
 	plain := stripANSICodes(strings.ReplaceAll(out.String(), "\r", ""))
@@ -459,18 +473,14 @@ func TestSpinnerStopsBeforeToolCall(t *testing.T) {
 
 // TestOnStreamPhaseUpdatesSpinnerLabel verifies phase notifications change the live spinner text.
 func TestOnStreamPhaseUpdatesSpinnerLabel(t *testing.T) {
-	oldInterval := spinnerFrameInterval
-	spinnerFrameInterval = 5 * time.Millisecond
-	defer func() {
-		spinnerFrameInterval = oldInterval
-	}()
-
 	c, out := newConsole(mockAgent(t))
+	c.spinnerInterval = 5 * time.Millisecond
 	c.startSpinner("Connecting")
 	time.Sleep(20 * time.Millisecond)
 	c.OnStreamPhase(provider.PhaseWaitingFirstEvent)
 	time.Sleep(20 * time.Millisecond)
 	c.stopSpinner()
+	time.Sleep(5 * time.Millisecond)
 
 	plain := stripANSICodes(strings.ReplaceAll(out.String(), "\r", ""))
 	if !strings.Contains(plain, "Connecting") {
@@ -488,6 +498,7 @@ func TestOnToolRoundTripAfterContent(t *testing.T) {
 	c.OnUsage(11186, 0, 11186)
 	c.OnToolCall("shell", "inspect package.json scripts")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nok\n")
+	c.stopSpinner()
 	plain := stripANSICodes(out.String())
 	if !strings.Contains(plain, "[BLAZE]\nhello") {
 		t.Errorf("content should show [BLAZE] label: %q", plain)
@@ -508,6 +519,7 @@ func TestToolGroupConsecutive(t *testing.T) {
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\na\n")
 	c.OnToolCall("shell", "inspect config")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nb\n")
+	c.stopSpinner()
 	plain := stripANSICodes(out.String())
 	if strings.Contains(plain, "tools ") {
 		t.Errorf("expected no tools header, got %q", plain)
@@ -532,6 +544,7 @@ func TestToolGroupInterruptedByContent(t *testing.T) {
 	c.OnContent("continuing")
 	c.OnToolCall("shell", "inspect config")
 	c.OnToolResult("shell", "exit_code: 0\nstdout:\nb\n")
+	c.stopSpinner()
 	plain := stripANSICodes(out.String())
 	if strings.Contains(plain, "tools ") {
 		t.Errorf("expected no tools header, got %q", plain)

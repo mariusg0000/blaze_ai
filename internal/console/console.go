@@ -66,7 +66,7 @@ var slashCommands = []slashCmd{
 	{"/exit", "close session cleanly"},
 }
 
-var spinnerFrameInterval = 120 * time.Millisecond
+const defaultSpinnerFrameInterval = 120 * time.Millisecond
 
 var spinnerFrames = []string{"|", "/", "-", "\\"}
 
@@ -100,9 +100,11 @@ type Console struct {
 	spinnerVisible          bool
 	spinnerFrame            int
 	spinnerWidth            int
+	spinnerInterval         time.Duration
 	spinnerLabel            string
 	spinnerStop             chan struct{}
 	spinnerDone             chan struct{}
+	turnStatusBarVisible    bool
 
 	switchLineActive bool // true when a mode/model status line is present and can be overwritten
 	switchLineWidth  int  // visible width of the current status line for reliable space-padding
@@ -115,11 +117,12 @@ type Console struct {
 // RETURNS: *Console — ready to run.
 func NewConsole(agent *runtime.Agent) *Console {
 	return &Console{
-		Out:      os.Stdout,
-		In:       os.Stdin,
-		Agent:    agent,
-		Reader:   NewReader(os.Stdin, true),
-		lineOpen: false,
+		Out:             os.Stdout,
+		In:              os.Stdin,
+		Agent:           agent,
+		Reader:          NewReader(os.Stdin, true),
+		spinnerInterval: defaultSpinnerFrameInterval,
+		lineOpen:        false,
 	}
 }
 
@@ -151,6 +154,9 @@ func (c *Console) startSpinner(label string) {
 }
 
 func (c *Console) startSpinnerLocked(label string) {
+	if c.turnStatusBarVisible {
+		return
+	}
 	if c.spinnerActive {
 		c.spinnerLabel = label
 		return
@@ -207,7 +213,11 @@ func (c *Console) stopSpinnerLocked() {
 }
 
 func (c *Console) runSpinner(stop <-chan struct{}, done chan<- struct{}) {
-	ticker := time.NewTicker(spinnerFrameInterval)
+	interval := c.spinnerInterval
+	if interval <= 0 {
+		interval = defaultSpinnerFrameInterval
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	defer close(done)
 	for {
@@ -438,6 +448,66 @@ func (c *Console) updateStatusBar() {
 		return
 	}
 	c.rl.Hint.Persist(c.buildStatusBar())
+}
+
+// printTurnStatusBar sets a bottom-pinned footer via terminal scrolling regions.
+//
+// WHAT:  Keeps the statusbar at the bottom while the LLM streams output above it.
+// WHY:   Readline clears its hint lane after Readline returns, so Persist alone
+//        cannot keep the statusbar visible during synchronous turn execution.
+// HOW:   Sets the terminal scroll region to all rows except the last, moves to
+//        the last row to print the statusbar, then restores the cursor. All
+//        subsequent output scrolls in the top region; the footer stays pinned.
+func (c *Console) printTurnStatusBar() {
+	c.outMu.Lock()
+	defer c.outMu.Unlock()
+	c.turnStatusBarVisible = true
+
+	_, height, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || height < 3 {
+		// Fallback: print statusbar as a plain line when size is unavailable.
+		fmt.Fprintln(c.Out, c.buildStatusBar())
+		return
+	}
+
+	// Save cursor, set scroll region to exclude the last line, move to last
+	// line, clear it, print the footer without a trailing newline.
+	fmt.Fprint(c.Out, "\0337")                              // DECSC
+	fmt.Fprintf(c.Out, "\033[1;%dr", height-1)            // DECSTBM
+	fmt.Fprintf(c.Out, "\033[%d;1H", height)              // CUP to last line
+	fmt.Fprint(c.Out, "\033[2K")                           // EL
+	fmt.Fprint(c.Out, c.buildStatusBar())                  // no \n
+	fmt.Fprint(c.Out, "\0338")                              // DECRC
+
+	// DECRC may restore cursor outside the scroll region when the terminal
+	// is full. Move up one line to guarantee the cursor sits inside the
+	// region before we write, so the next newline stays inside and scrolls
+	// the top area instead of the whole screen.
+	fmt.Fprint(c.Out, "\033[1A")                            // CUU 1
+	fmt.Fprintln(c.Out)
+}
+
+// finishTurnStatusBar removes the bottom-pinned footer and resets the terminal.
+//
+// WHAT:  Tears down the scrolling region and clears the footer line.
+// HOW:   Resets scroll region to full screen, moves to last line, clears it.
+func (c *Console) finishTurnStatusBar() {
+	c.outMu.Lock()
+	defer c.outMu.Unlock()
+	if !c.turnStatusBarVisible {
+		return
+	}
+	c.turnStatusBarVisible = false
+
+	_, height, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || height < 3 {
+		return
+	}
+
+	// Reset scroll region in-place without triggering a newline on the last row.
+	fmt.Fprint(c.Out, "\033[r")                            // DECSTBM reset
+	fmt.Fprintf(c.Out, "\033[%d;1H", height)              // CUP to last line
+	fmt.Fprint(c.Out, "\033[2K")                           // EL — clear footer
 }
 
 // formatCompactInt returns a shorter human-readable token count such as 12.3k.
@@ -1446,6 +1516,7 @@ func (c *Console) runTTY() error {
 		c.switchLineActive = false
 		c.switchLineWidth = 0
 		fmt.Fprintln(c.Out)
+		c.printTurnStatusBar()
 		c.resetTurnState()
 
 		interrupts := make(chan os.Signal, 1)
@@ -1456,6 +1527,7 @@ func (c *Console) runTTY() error {
 			fmt.Fprintln(c.Out, c.color(colorRed, formatTurnError(turnErr)))
 			c.lineOpen = false
 		}
+		c.finishTurnStatusBar()
 		c.flushPendingContent()
 		fmt.Fprintln(c.Out)
 		c.lineOpen = false
