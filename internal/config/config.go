@@ -420,6 +420,13 @@ func validateModelFormat(model string) error {
 	return nil
 }
 
+// ValidateModelFormat validates a provider/model_name identifier for external configuration.
+// WHAT: Exposes the canonical model syntax check to configuration consumers.
+// HOW: Delegates to the internal validator used by modes and provider role validation.
+func ValidateModelFormat(model string) error {
+	return validateModelFormat(model)
+}
+
 // validateProviders checks for duplicate provider names and empty fields.
 //
 // WHAT:  Verifies that all providers have non-empty fields and unique names.

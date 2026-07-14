@@ -771,6 +771,26 @@ func (c *Console) OnSystem(message string) {
 	fmt.Fprintln(c.Out, c.color(colorOrange, "⚡ System: "+message))
 }
 
+// OnAgentActivity renders transient child-agent activity using the agent name as scope.
+func (c *Console) OnAgentActivity(activity runtime.AgentActivity) {
+	text := "[" + activity.Agent + "]"
+	switch activity.Kind {
+	case "tool_call":
+		text += " " + activity.Text
+	case "tool_result":
+		text += " ✔ " + activity.Tool
+		if activity.Text != "" {
+			text += ": " + activity.Text
+		}
+	default:
+		text += " " + activity.Kind
+		if activity.Text != "" {
+			text += ": " + activity.Text
+		}
+	}
+	c.OnSystem(text)
+}
+
 // OnMaintenanceCall renders an internal runtime operation using tool-style inline output.
 func (c *Console) OnMaintenanceCall(name string, args string) {
 	c.OnToolCall(name, args)

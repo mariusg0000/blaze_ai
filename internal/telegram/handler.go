@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"blazeai/internal/runtime"
 )
 
 const (
@@ -108,6 +110,26 @@ func (h *Handler) OnUsage(promptTokens, cachedTokens, uncachedTokens int) {
 // OnSystem sends a system notification as a standalone Telegram message.
 func (h *Handler) OnSystem(message string) {
 	h.sendNotice("⚡ " + message)
+}
+
+// OnAgentActivity renders compact child-agent status in Telegram.
+func (h *Handler) OnAgentActivity(activity runtime.AgentActivity) {
+	text := "[" + activity.Agent + "]"
+	switch activity.Kind {
+	case "tool_call":
+		text += " " + activity.Text
+	case "tool_result":
+		text += " ✔ " + activity.Tool
+		if activity.Text != "" {
+			text += ": " + activity.Text
+		}
+	default:
+		text += " " + activity.Kind
+		if activity.Text != "" {
+			text += ": " + activity.Text
+		}
+	}
+	h.OnSystem(text)
 }
 
 // OnMaintenanceCall renders an internal runtime operation using Telegram tool activity.

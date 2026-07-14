@@ -106,6 +106,10 @@ Already verified — no need to check availability. Prefer these helpers over th
 **Optional host helpers:**
 {HOST_HELPERS_OPTIONAL}
 
+[AGENTS]
+
+{AGENTS_AVAILABLE}
+
 [PROJECT RULES]
 
 {AGENTS_CONTENT}

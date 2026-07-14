@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 
+	"blazeai/internal/agents"
 	"blazeai/internal/config"
 	"blazeai/internal/helpers"
 	"blazeai/internal/platform"
@@ -59,6 +60,7 @@ type Builder struct {
 	TransportContext string
 	HelperSetup      config.HelperSetup
 	HelperLookup     helpers.LookupFunc
+	Agents           []agents.Definition
 }
 
 // injectVariables replaces known variable placeholders in text with resolved values.
@@ -327,8 +329,31 @@ func (b *Builder) buildHostHelpersAdvisory() string {
 	return "helper_setup = unverified\ntask could benefit from host helpers → suggest verification_or_setup\nguidance needed → load_skill setup_helpers\nall helpers verified ∨ user declines → reminder stops"
 }
 
+// buildAgentsSection renders discoverable agents and the exact execution protocol.
+// WHAT: Produces the AGENTS section for the main runtime prompt.
+// HOW: Lists only validated definitions and explains run_agent and agent_done rules.
+func (b *Builder) buildAgentsSection() string {
+	if len(b.Agents) == 0 {
+		return "No user-defined agents are available."
+	}
+	var sb strings.Builder
+	sb.WriteString("Available agents:\n")
+	for _, definition := range b.Agents {
+		model := definition.Model
+		if model == "" {
+			model = "inherit active model"
+		}
+		fmt.Fprintf(&sb, "- %s [%s] — %s (model: %s; tools: %s)\\n", definition.Name, definition.Kind, definition.Description, model, strings.Join(definition.ToolNames, ", "))
+	}
+	sb.WriteString("\\nExecution instructions:\n")
+	sb.WriteString("- Use run_agent only when it is present in your available tool registry and only with an explicitly listed one-shot agent name. Provide purpose as exactly three user-visible sentences; if purpose is unavailable, the UI falls back to the task truncated to 150 characters. Pass the task and only the context the child needs; do not copy the full parent transcript.\\n")
+	sb.WriteString("- One-shot agents are independent and temporary. They must call agent_done with a non-empty final answer; plain assistant text is incomplete and must not be treated as success.\\n")
+	sb.WriteString("- agent_done is internal to one-shot children and is added automatically; do not request it from the parent.\\n")
+	return strings.TrimSpace(sb.String())
+}
+
 // BuildRuntimePart assembles the runtime prompt part from all disk sources.
-// Order: universal → OS → transport → helpers → skills → specs.md → AGENTS.md.
+// Order: universal → OS → transport → helpers → skills → agents → specs.md → AGENTS.md.
 func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, error) {
 	// 1. Universal system prompt (required).
 	universal, err := readFileRequiredFS(b.PromptsFS, "sysprompt.md", ErrUniversalPromptMissing)
@@ -401,6 +426,7 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 		"SKILLS_AVAILABLE":        strings.TrimSpace(skillsAvailable),
 		"RUNNABLE_SKILLS_SECTION": strings.TrimSpace(runnableSkillsAvailable),
 		"SKILLS_ACTIVE":           strings.TrimSpace(skillsActive),
+		"AGENTS_AVAILABLE":        strings.TrimSpace(b.buildAgentsSection()),
 		"PROJECT_CONTENT":         strings.TrimSpace(projectContext),
 		"AGENTS_CONTENT":          strings.TrimSpace(agents),
 	}

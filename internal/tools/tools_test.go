@@ -65,6 +65,23 @@ func TestRegistryGetMissing(t *testing.T) {
 	}
 }
 
+// TestRegistryFilterEnforcesAllowlist verifies filtered registries cannot access omitted tools.
+func TestRegistryFilterEnforcesAllowlist(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&dummyTool{name: "allowed"})
+	r.Register(&dummyTool{name: "blocked"})
+	filtered, err := r.Filter([]string{"allowed"})
+	if err != nil {
+		t.Fatalf("Filter() error: %v", err)
+	}
+	if filtered.Get("allowed") == nil || filtered.Get("blocked") != nil {
+		t.Fatalf("filtered registry contents = %#v", filtered.All())
+	}
+	if _, err := r.Filter([]string{"missing"}); err == nil {
+		t.Fatal("Filter() expected explicit unknown-tool error")
+	}
+}
+
 // TestRegistryAll verifies all registered tools are returned in deterministic name order.
 func TestRegistryAll(t *testing.T) {
 	r := NewRegistry()

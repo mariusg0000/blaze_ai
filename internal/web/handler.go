@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"blazeai/internal/provider"
+	"blazeai/internal/runtime"
 )
 
 // Handler adapts runtime streaming callbacks to the web transcript.
@@ -214,6 +215,26 @@ func (h *Handler) OnSystem(message string) {
 		html := `<span class="orange">⚡ System: ` + escapeHTML(message) + `</span>`
 		h.server.sendBlock("system", html)
 	}
+}
+
+// OnAgentActivity renders child activity in a separate SSE system block.
+func (h *Handler) OnAgentActivity(activity runtime.AgentActivity) {
+	text := "[" + activity.Agent + "]"
+	switch activity.Kind {
+	case "tool_call":
+		text += " " + activity.Text
+	case "tool_result":
+		text += " ✔ " + activity.Tool
+		if activity.Text != "" {
+			text += ": " + activity.Text
+		}
+	default:
+		text += " " + activity.Kind
+		if activity.Text != "" {
+			text += ": " + activity.Text
+		}
+	}
+	h.OnSystem(text)
 }
 
 // OnMaintenanceCall renders an internal runtime operation as a tool block.

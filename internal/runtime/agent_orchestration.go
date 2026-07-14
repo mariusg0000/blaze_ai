@@ -1,0 +1,248 @@
+// agent_orchestration.go — ephemeral one-shot child-agent execution.
+// Runs Markdown one-shot agents independently and returns bounded ordered results.
+// Layer: runtime orchestration. Dependencies: agents, provider, session, tools.
+package runtime
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	"blazeai/internal/agents"
+	"blazeai/internal/session"
+	"blazeai/internal/tools"
+)
+
+const (
+	maxParallelChildren = 4
+	childTimeout        = 2 * time.Minute
+	maxChildAnswerRunes = 12000
+)
+
+// childHandler suppresses child transcript text but forwards scoped tool activity immediately.
+type childHandler struct {
+	agentID string
+	emit    func(AgentActivity)
+}
+
+func (h childHandler) OnContent(string) {}
+func (h childHandler) OnToolCall(name, args string) {
+	h.emit(AgentActivity{Agent: h.agentID, Kind: "tool_call", Tool: name, Status: "running", Text: args})
+}
+func (h childHandler) OnToolResult(name, result string) {
+	h.emit(AgentActivity{Agent: h.agentID, Kind: "tool_result", Tool: name, Status: "ok", Text: result})
+}
+func (h childHandler) OnUsage(int, int, int) {}
+func (h childHandler) OnReasoning(string)    {}
+func (h childHandler) OnSystem(message string) {
+	h.emit(AgentActivity{Agent: h.agentID, Kind: "system", Status: "info", Text: message})
+}
+func (h childHandler) OnMaintenanceCall(name, args string) {
+	h.emit(AgentActivity{Agent: h.agentID, Kind: "tool_call", Tool: name, Status: "running", Text: args})
+}
+func (h childHandler) OnMaintenanceResult(name, result string) {
+	h.emit(AgentActivity{Agent: h.agentID, Kind: "tool_result", Tool: name, Status: "ok", Text: result})
+}
+func (h childHandler) RequestSudoApproval(string) (bool, string) { return false, "" }
+
+// runAgent resolves and executes one or more child tasks.
+// WHAT: Orchestrates one-shot definitions with ordered parallel results.
+// HOW: Validates definitions, starts bounded workers, and cleans every temporary folder by defer.
+func (a *Agent) runAgent(ctx context.Context, args tools.RunAgentArgs) string {
+	tasks := args.Tasks
+	if len(tasks) == 0 {
+		tasks = []tools.RunAgentTask{{Agent: args.Agent, Task: args.Task, Context: args.Context}}
+	}
+	results := make([]string, len(tasks))
+	sem := make(chan struct{}, maxParallelChildren)
+	childCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	var firstErr error
+	var errMu sync.Mutex
+	for i, task := range tasks {
+		wg.Add(1)
+		go func(index int, task tools.RunAgentTask) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-childCtx.Done():
+				setFirstError(&errMu, &firstErr, childCtx.Err())
+				return
+			}
+			defer func() { <-sem }()
+			displayID := fmt.Sprintf("%s_%02d", task.Agent, index+1)
+			result, err := a.runOneChild(childCtx, task, displayID)
+			if err != nil {
+				setFirstError(&errMu, &firstErr, err)
+				cancel()
+				return
+			}
+			results[index] = result
+		}(i, task)
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return "error: " + firstErr.Error()
+	}
+	if len(results) == 1 {
+		return results[0]
+	}
+	return formatOrderedResults(results)
+}
+
+// setFirstError stores one deterministic error while workers continue cleanup.
+func setFirstError(mu *sync.Mutex, target *error, err error) {
+	if err == nil {
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if *target == nil {
+		*target = err
+	}
+}
+
+// emitAgentActivity forwards transient child activity to transports that support it.
+func (a *Agent) emitAgentActivity(activity AgentActivity) {
+	if handler, ok := a.Handler.(AgentActivityHandler); ok {
+		handler.OnAgentActivity(activity)
+	}
+}
+
+// runOneChild creates, runs, and removes one ephemeral child session.
+func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, displayID string) (result string, err error) {
+	definition, ok := a.oneShotDefinition(task.Agent)
+	if !ok {
+		a.emitAgentActivity(AgentActivity{Agent: task.Agent, Kind: "failed", Status: "error", Text: "one-shot agent not found"})
+		return "", fmt.Errorf("one-shot agent not found: %s", task.Agent)
+	}
+	a.emitAgentActivity(AgentActivity{Agent: displayID, Kind: "started", Status: "running", Text: "child agent started"})
+	folder, err := os.MkdirTemp(a.Session.Folder, "agent-")
+	if err != nil {
+		return "", fmt.Errorf("cannot create temporary child session: %w", err)
+	}
+	defer func() {
+		cleanupErr := os.RemoveAll(folder)
+		if cleanupErr != nil && err == nil {
+			err = fmt.Errorf("child cleanup failed: %w", cleanupErr)
+		}
+		if err != nil {
+			kind := "failed"
+			if strings.Contains(err.Error(), "timed out") {
+				kind = "timed out"
+			} else if strings.Contains(err.Error(), "cancelled") {
+				kind = "cancelled"
+			}
+			a.emitAgentActivity(AgentActivity{Agent: displayID, Kind: kind, Status: "error", Text: err.Error()})
+			return
+		}
+		a.emitAgentActivity(AgentActivity{Agent: displayID, Kind: "completed", Status: "ok", Text: "child agent completed"})
+	}()
+
+	childSession := &session.Session{Messages: []session.Message{}, Folder: folder}
+	if err := childSession.Save(); err != nil {
+		return "", fmt.Errorf("cannot initialize temporary child session: %w", err)
+	}
+
+	child, err := NewAgent(a.Config, childSession, a.OS, a.Builder.PromptsFS, a.WorkDir, childHandler{agentID: displayID, emit: a.emitAgentActivity}, a.Builder.TransportName)
+	if err != nil {
+		return "", fmt.Errorf("cannot initialize child agent %q: %w", definition.Name, err)
+	}
+	model := strings.TrimSpace(definition.Model)
+	if model == "" {
+		model = a.ModelID
+	}
+	if err := child.SetModelLocal(model); err != nil {
+		return "", fmt.Errorf("cannot select model for child %q: %w", definition.Name, err)
+	}
+	child.Builder.Agents = []agents.Definition{definition}
+
+	completion := ""
+	child.BaseTools.Register(tools.NewAgentDoneTool(func(answer string) { completion = boundAnswer(answer) }))
+	filteredNames := append([]string(nil), definition.ToolNames...)
+	if !containsToolName(filteredNames, "agent_done") {
+		filteredNames = append(filteredNames, "agent_done")
+	}
+	child.Tools, err = child.BaseTools.Filter(filteredNames)
+	if err != nil {
+		return "", fmt.Errorf("cannot build child tool registry for %q: %w", definition.Name, err)
+	}
+	child.Completion = ""
+
+	ctx, cancel := context.WithTimeout(parentCtx, childTimeout)
+	defer cancel()
+	input := buildChildInput(definition, task)
+	if err := child.RunTurn(ctx, input); err != nil {
+		if ctx.Err() != nil {
+			if parentCtx.Err() != nil {
+				return "", fmt.Errorf("child %q cancelled: %w", definition.Name, parentCtx.Err())
+			}
+			return "", fmt.Errorf("child %q timed out", definition.Name)
+		}
+		return "", fmt.Errorf("child %q failed: %w", definition.Name, err)
+	}
+	if completion == "" {
+		return "", fmt.Errorf("child %q incomplete: agent_done was not called", definition.Name)
+	}
+	return completion, nil
+}
+
+// oneShotDefinition resolves only one-shot definitions and never falls back to modes.
+func (a *Agent) oneShotDefinition(name string) (agents.Definition, bool) {
+	for _, definition := range a.Definitions {
+		if definition.Name == strings.TrimSpace(name) && definition.Kind == agents.KindOneShot {
+			return definition, true
+		}
+	}
+	return agents.Definition{}, false
+}
+
+// containsToolName reports whether a capability is already explicitly declared.
+func containsToolName(names []string, wanted string) bool {
+	for _, name := range names {
+		if name == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+// buildChildInput passes only requested task/context and the definition body.
+func buildChildInput(definition agents.Definition, task tools.RunAgentTask) string {
+	var parts []string
+	if definition.Instructions != "" {
+		parts = append(parts, "[AGENT INSTRUCTIONS]\n"+definition.Instructions)
+	}
+	parts = append(parts, "[TASK]\n"+strings.TrimSpace(task.Task))
+	if strings.TrimSpace(task.Context) != "" {
+		parts = append(parts, "[CONTEXT]\n"+strings.TrimSpace(task.Context))
+	}
+	parts = append(parts, "Call agent_done with a concise non-empty final answer when complete.")
+	return strings.Join(parts, "\n\n")
+}
+
+// boundAnswer limits child output before inserting it into parent context.
+func boundAnswer(answer string) string {
+	runes := []rune(strings.TrimSpace(answer))
+	if len(runes) <= maxChildAnswerRunes {
+		return string(runes)
+	}
+	return string(runes[:maxChildAnswerRunes-3]) + "..."
+}
+
+// formatOrderedResults preserves requested task order in the parent tool result.
+func formatOrderedResults(results []string) string {
+	var b strings.Builder
+	for i, result := range results {
+		fmt.Fprintf(&b, "[%d]\n%s", i+1, result)
+		if i+1 < len(results) {
+			b.WriteString("\n\n")
+		}
+	}
+	return b.String()
+}

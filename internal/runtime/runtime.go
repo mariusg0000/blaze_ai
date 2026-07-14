@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"blazeai/internal/agents"
 	"blazeai/internal/compaction"
 	"blazeai/internal/config"
 	"blazeai/internal/llmcall"
@@ -69,6 +70,20 @@ type StreamPhaseHandler interface {
 	OnStreamPhase(phase provider.StreamPhase)
 }
 
+// AgentActivity describes one ephemeral child-agent lifecycle event.
+type AgentActivity struct {
+	Agent  string
+	Kind   string
+	Tool   string
+	Status string
+	Text   string
+}
+
+// AgentActivityHandler is an optional transport extension for child activity.
+type AgentActivityHandler interface {
+	OnAgentActivity(activity AgentActivity)
+}
+
 // Agent is the core runtime that ties all packages together and drives the conversation loop.
 //
 // WHAT:  Holds all runtime state and orchestrates the LLM call cycle.
@@ -79,20 +94,25 @@ type StreamPhaseHandler interface {
 //	Tools — tool registry; Provider — LLM client; Handler — transport callbacks;
 //	ModelID — current provider/model_name; WorkDir — current work folder; OS — detected platform.
 type Agent struct {
-	Config    *config.Config
-	Modes     *config.ModesConfig
-	Session   *session.Session
-	Active    *skills.ActiveList
-	Builder   *prompt.Builder
-	Tools     *tools.Registry
-	Provider  *provider.Client
-	Handler   Handler
-	Compactor *compaction.Manager
+	Config      *config.Config
+	Modes       *config.ModesConfig
+	Definitions []agents.Definition
+	Session     *session.Session
+	Active      *skills.ActiveList
+	Builder     *prompt.Builder
+	Tools       *tools.Registry
+	BaseTools   *tools.Registry
+	Provider    *provider.Client
+	Handler     Handler
+	Compactor   *compaction.Manager
 
 	ModelID     string
 	CurrentMode *config.Mode
 	WorkDir     string
 	OS          platform.OS
+
+	// Completion is set only by the internal agent_done tool in one-shot children.
+	Completion string
 }
 
 // NewAgent creates an Agent from a loaded config, session, and detected OS.
@@ -252,6 +272,27 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 	registry.Register(tools.NewReadFileTool(func() string { return agent.WorkDir }))
 	registry.Register(tools.NewWriteFileTool(func() string { return agent.WorkDir }))
 	agent.Tools = registry
+
+	agentsHome, err := platform.AppHome()
+	if err != nil {
+		return nil, fmt.Errorf("cannot resolve agents directory: %w", err)
+	}
+	definitions, err := agents.Load(filepath.Join(agentsHome, "agents"), registry)
+	if err != nil {
+		return nil, fmt.Errorf("cannot load agents: %w", err)
+	}
+	// run_agent is exposed only when the active Markdown interactive agent or compatibility mode declares it.
+	registry.Register(tools.NewRunAgentTool(agent.runAgent))
+	definitions, err = addModeAgentDefinitions(definitions, modes, registry)
+	if err != nil {
+		return nil, err
+	}
+	agent.Definitions = definitions
+	agent.Builder.Agents = definitions
+	agent.BaseTools = registry.Clone()
+	if err := agent.refreshInteractiveTools(); err != nil {
+		return nil, err
+	}
 
 	return agent, nil
 }
@@ -466,6 +507,10 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 				return fmt.Errorf("cannot persist tool result: %w", err)
 			}
 
+			if tc.Name == "agent_done" && a.Completion != "" {
+				return nil
+			}
+
 			if ctx.Err() != nil {
 				if err := a.appendAbortedToolResults(resp.ToolCalls, idx+1); err != nil {
 					return err
@@ -662,6 +707,9 @@ func (a *Agent) SetMode(name string) error {
 				return fmt.Errorf("cannot apply provider client for mode %q: %w", name, err)
 			}
 			a.CurrentMode = mode
+			if err := a.refreshInteractiveTools(); err != nil {
+				return err
+			}
 			a.Modes.LastMode = name
 			if err := a.Modes.Save(); err != nil {
 				return fmt.Errorf("cannot persist mode switch: %w", err)

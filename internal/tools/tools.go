@@ -69,6 +69,33 @@ func (r *Registry) Get(name string) Tool {
 	return r.tools[name]
 }
 
+// Filter returns a new registry containing exactly the named tools.
+// WHAT: Builds an isolated allowlist registry without inheriting undeclared tools.
+// HOW: Looks up every requested name and stops on the first unknown tool.
+func (r *Registry) Filter(names []string) (*Registry, error) {
+	filtered := NewRegistry()
+	for _, name := range names {
+		tool := r.Get(name)
+		if tool == nil {
+			return nil, fmt.Errorf("unknown tool %q", name)
+		}
+		filtered.Register(tool)
+	}
+	return filtered, nil
+}
+
+// Remove deletes one tool from the registry when assembling an explicit capability set.
+func (r *Registry) Remove(name string) { delete(r.tools, name) }
+
+// Clone returns a shallow registry copy that reuses immutable tool implementations.
+func (r *Registry) Clone() *Registry {
+	clone := NewRegistry()
+	for name, tool := range r.tools {
+		clone.tools[name] = tool
+	}
+	return clone
+}
+
 // All returns all registered tools.
 //
 // WHAT:  Returns all tools in the registry.

@@ -26,12 +26,13 @@
 ### Architecture And Runtime
 - `main.go` bootstraps app home, loads config or runs first-run setup, opens or resumes a session, and starts the selected transport.
 - `internal/runtime/` owns the handler contract and the agent loop: prompt build, streaming, tool calls, persistence, and compaction.
-- `internal/prompt/` rebuilds the runtime prompt on every LLM call from `prompts/`, skills, `specs.md`, and `AGENTS.md`.
+- `internal/agents/` discovers and strictly validates Markdown agent definitions under `app_home/agents/`.
+- `internal/prompt/` rebuilds the runtime prompt on every LLM call from `prompts/`, skills, agent definitions, `specs.md`, and `AGENTS.md`.
 - `internal/platform/` handles OS detection, shell chain selection, app-home bootstrap, and project directory resolution.
 - `internal/skills/` discovers builtin, global, and project skills; active skills live only in memory for the current session.
 - `internal/compaction/` prunes long sessions, writes summaries, and strips reasoning from the payload while preserving on-disk session JSON.
 - `internal/provider/` talks to OpenAI-compatible endpoints, streams responses, parses tool calls, and reports usage.
-- `internal/tools/` implements shell execution, skill tools, ask_a_friend, analyze_image, replace_block, and task tools.
+- `internal/tools/` implements shell execution, skill tools, ask_a_friend, analyze_image, replace_block, task tools, and filtered registries.
 - `internal/console/` is a terminal-only REPL transport with raw input, slash commands, Markdown rendering, and streaming output.
 - `internal/telegram/` is a long-polling bridge that enforces one chat, accepts text and images, and adapts runtime streaming into Telegram messages.
 - `internal/web/` is a minimal HTTP server with SSE streaming that renders the transcript as terminal-like HTML rows.
@@ -53,6 +54,9 @@
 - Summary files live under `summaries/` inside each session folder.
 - The transport boundary is `runtime.Handler` with `OnContent`, `OnToolCall`, `OnToolResult`, `OnUsage`, `OnReasoning`, and `RequestSudoApproval`.
 - Tool calls follow the OpenAI-compatible tool-calling format with multi-call support and per-call timeouts.
+- Markdown agents use `---` front matter with `name`, required `description`, `kind`, optional `model`, and explicit `tools`; the Markdown body is the behavioral prompt. One-shot children complete only through `agent_done` and run in temporary cleaned-up sessions.
+- The runtime prompt contains a separate `AGENTS` section with available-agent descriptions and run/completion instructions; existing modes are represented as in-memory interactive compatibility definitions.
+- Interactive agents receive filtered registries from their explicit allowlists; `run_agent` is available only when explicitly declared, requires a three-sentence `purpose`, displays that purpose in activity output, and falls back to the task truncated to 150 characters when missing. Child execution is bounded and ordered.
 
 ### Sensitive Areas
 - `internal/config/` and `internal/config/modes.go` control startup config, role resolution, and mode persistence.
@@ -71,7 +75,10 @@
 - `embed.go` - Embeds `prompts/` and `skills/` into the binary with `go:embed`. Keywords: embed, assets, prompts, skills, binary, startup
 - `firstrun.go` - Interactive first-run provider, API key, model, and role setup. Keywords: first-run, config, providers, API keys, models, roles
 - `go.mod` - Module root and Go toolchain declaration. Keywords: module, toolchain, dependencies, build, Go
-- `internal/runtime/` - Agent core orchestration loop and transport handler contract. Builds prompts, calls providers, handles tool calls, persists session messages, and triggers compaction. Keywords: runtime, loop, provider, tools, compaction, handler
+- `internal/runtime/` - Agent core orchestration loop and transport handler contract. Builds prompts, calls providers, handles tool calls, persists session messages, triggers compaction, and validates app-home agent definitions. Keywords: runtime, loop, provider, tools, agents, compaction, handler
+- `internal/agents/` - Strict Markdown agent discovery and validation. Supports interactive and one-shot metadata, explicit model syntax, and explicit tool allowlists. Keywords: agents, markdown, frontmatter, validation, permissions
+- `internal/runtime/agent_orchestration.go` - Ephemeral one-shot execution with model inheritance, strict `agent_done`, temporary cleanup, bounded parallelism, cancellation, timeout, ordered results, and immediately emitted scoped tool activity. Parallel activity is displayed in arrival order without timestamps or reordering. Keywords: orchestration, one-shot, parallel, cleanup, completion
+- `internal/runtime/agent_mode_compat.go` - Converts persisted quick/default/planning modes into in-memory interactive agent definitions during migration. Keywords: modes, agents, compatibility, migration, directives
 - `internal/console/` - Terminal REPL transport implementing `OnContent`, `OnToolCall`, and `OnToolResult`. Handles raw input, slash commands, and Markdown rendering. Keywords: console, REPL, ANSI, raw mode, streaming, slash-commands
 - `internal/telegram/` - Telegram bridge transport with long polling, single-chat enforcement, text/image handling, and streaming output adaptation. Keywords: telegram, bridge, polling, images, handler, transport
 - `internal/web/` - Minimal HTTP server with SSE streaming that mirrors the console output in a browser with terminal-like rendering. Keywords: web, SSE, streaming, terminal, browser, HTML
@@ -79,9 +86,9 @@
 - `internal/config/` - Loads and validates runtime config and work modes, including providers, roles, compaction settings, and first-run conditions. Keywords: config, validation, modes, roles, providers, compaction, first-run
 - `internal/session/` - File-based session persistence under project-scoped session folders. Keywords: sessions, JSON, persistence, resume, clean-close
 - `internal/compaction/` - Context compaction, pruning, summary file management, and reasoning stripping. Keywords: compaction, summaries, pruning, reasoning, token budget
-- `internal/tools/` - Native tools: shell, skill tools, ask_a_friend, analyze_image, replace_block, task tools. Keywords: tools, shell, editing, image, delegation, timeout
+- `internal/tools/` - Native tools: shell, skill tools, ask_a_friend, analyze_image, replace_block, task tools, run_agent, agent_done, and filtered registries. Keywords: tools, shell, editing, image, delegation, agents, timeout
 - `internal/skills/` - Skill discovery, parsing, validation, scoping, and active list management. Keywords: skills, discovery, parsing, scopes, active-list, runnable
-- `internal/platform/` - OS detection, shell selection, app home bootstrap, and project directory resolution. Keywords: platform, OS, app-home, shell, paths, bootstrap
+- `internal/platform/` - OS detection, shell selection, app home bootstrap (including `agents/`), and project directory resolution. Keywords: platform, OS, app-home, agents, shell, paths, bootstrap
 - `internal/provider/` - OpenAI-compatible HTTP client, streaming response parsing, tool-call decoding, and usage reporting. Keywords: provider, HTTP, SSE, OpenAI-compatible, usage, tool-calls
 - `internal/llmcall/` - One-shot secondary LLM calls routed by role. Keywords: delegation, advisor, summarization, secondary-call
 - `internal/memory/` - Reads persistent memory text into prompt builds without automatic writes. Keywords: memory, prompt-input, read-only, persistence
