@@ -44,7 +44,7 @@ func TestModesConfigSaveLoadRoundTrip(t *testing.T) {
 	mc := &ModesConfig{
 		Modes: []Mode{
 			{Name: "default", Model: "openrouter/a"},
-			{Name: "planning", Model: "openrouter/b", Directive: "read-only"},
+			{Name: "planning", Model: "openrouter/b", Directive: "read-only", DeniedTools: []string{"shell", "write_file"}, Agents: []string{"worker"}},
 		},
 		LastMode: "planning",
 	}
@@ -61,6 +61,12 @@ func TestModesConfigSaveLoadRoundTrip(t *testing.T) {
 	}
 	if loaded.Modes[1].Directive != "read-only" {
 		t.Errorf("Modes[1].Directive = %q, want 'read-only'", loaded.Modes[1].Directive)
+	}
+	if len(loaded.Modes[1].DeniedTools) != 2 || loaded.Modes[1].DeniedTools[0] != "shell" {
+		t.Errorf("Modes[1].DeniedTools = %#v", loaded.Modes[1].DeniedTools)
+	}
+	if len(loaded.Modes[1].Agents) != 1 || loaded.Modes[1].Agents[0] != "worker" {
+		t.Errorf("Modes[1].Agents = %#v", loaded.Modes[1].Agents)
 	}
 	if loaded.LastMode != "planning" {
 		t.Errorf("LastMode = %q, want 'planning'", loaded.LastMode)

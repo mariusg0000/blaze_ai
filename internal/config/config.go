@@ -85,17 +85,18 @@ type Roles struct {
 	Advisor       string `json:"advisor,omitempty"`
 }
 
-// Mode defines one work mode: a name, its assigned model, and an optional directive.
+// Mode defines one work mode: a model, direct-tool deny list, allowed sub-agents, and optional directive.
 //
-// WHAT:  Represents a named work mode with model binding and behavioral directive.
-// WHY:   Modes let the user switch between different operational styles (planning, quick, etc.)
-// and automatically assign the right model and directive for each context.
-// PARAMS: Name — unique mode identifier; Model — provider/model_name for this mode;
-// Directive — optional text injected into the last LLM message (volatile, not persisted in session).
+// WHAT:  Represents the main runtime's operational policy.
+// WHY:   A superior planning mode can remain read-only while delegating implementation to explicitly allowed child agents.
+// PARAMS: Name — unique mode identifier; Model — provider/model_name; DeniedTools — tools unavailable to the main runtime;
+// Agents — Markdown one-shot agents the main runtime may call; Directive — volatile mode instruction.
 type Mode struct {
-	Name      string `json:"name"`
-	Model     string `json:"model"`
-	Directive string `json:"directive,omitempty"`
+	Name        string   `json:"name"`
+	Model       string   `json:"model"`
+	Directive   string   `json:"directive,omitempty"`
+	DeniedTools []string `json:"denied_tools,omitempty"`
+	Agents      []string `json:"agents,omitempty"`
 }
 
 // Compaction holds context compaction thresholds.

@@ -14,13 +14,11 @@ import (
 	"blazeai/internal/tools"
 )
 
-// Kind identifies whether an agent serves interactive turns or one-shot calls.
+// Kind identifies the execution lifecycle of a Markdown sub-agent.
 type Kind string
 
 const (
-	// KindInteractive identifies an agent that can own an interactive runtime.
-	KindInteractive Kind = "interactive"
-	// KindOneShot identifies an ephemeral child agent.
+	// KindOneShot identifies an ephemeral delegated child agent.
 	KindOneShot Kind = "one-shot"
 )
 
@@ -165,8 +163,8 @@ func validateDefinition(definition Definition, registry *tools.Registry) error {
 	if strings.TrimSpace(definition.Description) == "" {
 		return fmt.Errorf("description is required")
 	}
-	if definition.Kind != KindInteractive && definition.Kind != KindOneShot {
-		return fmt.Errorf("unknown kind %q", definition.Kind)
+	if definition.Kind != KindOneShot {
+		return fmt.Errorf("agents must use kind %q; interactive agents are not supported", KindOneShot)
 	}
 	if definition.Model != "" {
 		if err := config.ValidateModelFormat(definition.Model); err != nil {
@@ -183,16 +181,10 @@ func validateDefinition(definition Definition, registry *tools.Registry) error {
 		}
 		seen[name] = true
 		if name == "agent_done" {
-			if definition.Kind != KindOneShot {
-				return fmt.Errorf("agent_done is reserved for one-shot agents")
-			}
 			continue
 		}
 		if name == "run_agent" {
-			if definition.Kind == KindOneShot {
-				return fmt.Errorf("one-shot agents cannot use run_agent")
-			}
-			continue
+			return fmt.Errorf("one-shot agents cannot use run_agent")
 		}
 		if registry == nil || registry.Get(name) == nil {
 			return fmt.Errorf("unknown tool %q", name)

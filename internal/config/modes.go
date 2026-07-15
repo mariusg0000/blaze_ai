@@ -21,7 +21,9 @@ var ErrModesMissing = errors.New("modes file missing")
 //
 // WHAT:  Self-contained modes configuration with its own file, load, and save logic.
 // WHY:   Separating modes from config.json isolates frequently-edited data from
-//        critical provider/role configuration, reducing corruption risk.
+//
+//	critical provider/role configuration, reducing corruption risk.
+//
 // PARAMS: Modes — work mode definitions; LastMode — persisted active mode name.
 type ModesConfig struct {
 	Modes    []Mode `json:"modes"`
@@ -41,7 +43,9 @@ func modesPath() (string, error) {
 //
 // WHAT:  Returns a ModesConfig with one "default" mode pointing to modelID.
 // WHY:   When no modes exist (first start, migration failure, or corruption),
-//        the runtime needs at least one mode to function.
+//
+//	the runtime needs at least one mode to function.
+//
 // PARAMS: modelID — provider/model_name for the default mode.
 // RETURNS: *ModesConfig — minimal valid modes config.
 func DefaultMode(modelID string) *ModesConfig {
@@ -59,7 +63,9 @@ func DefaultMode(modelID string) *ModesConfig {
 //
 // WHAT:  Loads modes configuration with graceful fallback on corruption.
 // WHY:   A corrupted modes.json may result from LLM editing errors; the runtime
-//        should never crash on invalid modes — it uses a safe default instead.
+//
+//	should never crash on invalid modes — it uses a safe default instead.
+//
 // PARAMS: defaultModel — provider/model_name for the fallback default mode.
 // RETURNS: *ModesConfig — loaded or fallback modes; error if app home resolution fails.
 func LoadModes(defaultModel string) (*ModesConfig, error) {
@@ -123,6 +129,27 @@ func (m *ModesConfig) validateBasic() error {
 		if err := validateModelFormat(mode.Model); err != nil {
 			return fmt.Errorf("mode %q: %w: %s", mode.Name, ErrModeModelInvalid, mode.Model)
 		}
+		if err := validateModeNames(mode.Name, "denied_tools", mode.DeniedTools); err != nil {
+			return err
+		}
+		if err := validateModeNames(mode.Name, "agents", mode.Agents); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateModeNames validates one mode list for empty and duplicate entries.
+func validateModeNames(modeName, field string, names []string) error {
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		if name == "" {
+			return fmt.Errorf("mode %q: %s contains an empty name", modeName, field)
+		}
+		if seen[name] {
+			return fmt.Errorf("mode %q: duplicate %s entry %q", modeName, field, name)
+		}
+		seen[name] = true
 	}
 	return nil
 }
@@ -131,7 +158,9 @@ func (m *ModesConfig) validateBasic() error {
 //
 // WHAT:  Persists modes atomically: write to .tmp, validate JSON, rename.
 // WHY:   An atomic write prevents corruption if the process crashes mid-write.
-//        Coupled with the fallback in LoadModes, a corrupted modes.json is never fatal.
+//
+//	Coupled with the fallback in LoadModes, a corrupted modes.json is never fatal.
+//
 // RETURNS: error if marshaling, writing, or renaming fails.
 func (m *ModesConfig) Save() error {
 	path, err := modesPath()
@@ -178,7 +207,9 @@ func (m *ModesConfig) SaveTo(path string) error {
 // WHAT:  One-time migration from config.json modes field to modes.json.
 // WHY:   Modes were previously stored in config.json; this extracts them safely.
 // HOW:   Reads the raw config JSON, extracts modes/last_mode if present, writes
-//        modes.json, strips them from config.json.
+//
+//	modes.json, strips them from config.json.
+//
 // RETURNS: error if config read, modes save, or config strip fails.
 func MigrateFromConfig() error {
 	cfgPath, err := configPath()

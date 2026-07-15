@@ -56,6 +56,11 @@ func (a *Agent) runAgent(ctx context.Context, args tools.RunAgentArgs) string {
 	if len(tasks) == 0 {
 		tasks = []tools.RunAgentTask{{Agent: args.Agent, Task: args.Task, Context: args.Context}}
 	}
+	for _, task := range tasks {
+		if !a.modeAllowsAgent(strings.TrimSpace(task.Agent)) {
+			return fmt.Sprintf("error: mode %q does not allow one-shot agent %q", a.CurrentMode.Name, strings.TrimSpace(task.Agent))
+		}
+	}
 	results := make([]string, len(tasks))
 	sem := make(chan struct{}, maxParallelChildren)
 	childCtx, cancel := context.WithCancel(ctx)

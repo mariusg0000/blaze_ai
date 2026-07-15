@@ -58,10 +58,10 @@ func TestLoadRejectsInvalidDefinitions(t *testing.T) {
 		body string
 		want string
 	}{
-		{"missing-name", "---\ndescription: Missing name\nkind: interactive\ntools:\n  - read_file\n---\n", "name is required"},
-		{"bad-kind", "---\nname: x\ndescription: Invalid kind\nkind: invalid\ntools:\n  - read_file\n---\n", "unknown kind"},
-		{"bad-model", "---\nname: x\ndescription: Invalid model\nkind: interactive\nmodel: broken\ntools:\n  - read_file\n---\n", "invalid model"},
-		{"unknown-tool", "---\nname: x\ndescription: Unknown tool\nkind: interactive\ntools:\n  - missing\n---\n", "unknown tool"},
+		{"missing-name", "---\ndescription: Missing name\nkind: one-shot\ntools:\n  - read_file\n---\n", "name is required"},
+		{"bad-kind", "---\nname: x\ndescription: Invalid kind\nkind: invalid\ntools:\n  - read_file\n---\n", "interactive agents are not supported"},
+		{"bad-model", "---\nname: x\ndescription: Invalid model\nkind: one-shot\nmodel: broken\ntools:\n  - read_file\n---\n", "invalid model"},
+		{"unknown-tool", "---\nname: x\ndescription: Unknown tool\nkind: one-shot\ntools:\n  - missing\n---\n", "unknown tool"},
 		{"missing-frontmatter", "# x\n", "opening front matter"},
 	}
 	for _, tt := range tests {
@@ -78,7 +78,7 @@ func TestLoadRejectsInvalidDefinitions(t *testing.T) {
 
 func TestLoadRejectsDuplicateNames(t *testing.T) {
 	dir := t.TempDir()
-	body := "---\nname: same\ndescription: Duplicate\nkind: interactive\ntools:\n  - read_file\n---\n"
+	body := "---\nname: same\ndescription: Duplicate\nkind: one-shot\ntools:\n  - read_file\n---\n"
 	writeAgent(t, dir, "a.md", body)
 	writeAgent(t, dir, "b.md", body)
 	_, err := Load(dir, testRegistry())

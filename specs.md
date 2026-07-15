@@ -25,7 +25,7 @@
 
 ### Architecture And Runtime
 - `main.go` bootstraps app home, loads config or runs first-run setup, opens or resumes a session, and starts the selected transport.
-- `internal/runtime/` owns the handler contract and the agent loop: prompt build, streaming, tool calls, persistence, and compaction.
+- `internal/runtime/` owns the handler contract and the agent loop: prompt build, streaming, mode tool policy, delegated tool calls, persistence, and compaction.
 - `internal/agents/` discovers and strictly validates Markdown agent definitions under `app_home/agents/`.
 - `internal/prompt/` rebuilds the runtime prompt on every LLM call from `prompts/`, skills, agent definitions, `specs.md`, and `AGENTS.md`.
 - `internal/platform/` handles OS detection, shell chain selection, app-home bootstrap, and project directory resolution.
@@ -55,8 +55,8 @@
 - The transport boundary is `runtime.Handler` with `OnContent`, `OnToolCall`, `OnToolResult`, `OnUsage`, `OnReasoning`, and `RequestSudoApproval`.
 - Tool calls follow the OpenAI-compatible tool-calling format with multi-call support and per-call timeouts.
 - Markdown agents use `---` front matter with `name`, required `description`, `kind`, optional `model`, and explicit `tools`; the Markdown body is the behavioral prompt. One-shot children complete only through `agent_done` and run in temporary cleaned-up sessions.
-- The runtime prompt contains a separate `AGENTS` section with available-agent descriptions and run/completion instructions; existing modes are represented as in-memory interactive compatibility definitions.
-- Interactive agents receive filtered registries from their explicit allowlists; `run_agent` is available only when explicitly declared, requires a three-sentence `purpose`, displays that purpose in activity output, and falls back to the task truncated to 150 characters when missing. Child execution is bounded and ordered.
+- The runtime prompt contains a separate `AGENTS` section with descriptions and run/completion instructions for agents discovered from `app_home/agents/`; work modes remain defined only by `config/modes.json`.
+- Modes define `denied_tools` for the main runtime and `agents` for explicitly callable Markdown one-shot sub-agents. Mode restrictions apply only to direct main-runtime tools; child agents use their own explicit tool allowlists. `run_agent` requires a three-sentence `purpose`, displays that purpose in activity output, and falls back to the task truncated to 150 characters when missing. Child execution is bounded and ordered.
 
 ### Sensitive Areas
 - `internal/config/` and `internal/config/modes.go` control startup config, role resolution, and mode persistence.
@@ -76,9 +76,9 @@
 - `firstrun.go` - Interactive first-run provider, API key, model, and role setup. Keywords: first-run, config, providers, API keys, models, roles
 - `go.mod` - Module root and Go toolchain declaration. Keywords: module, toolchain, dependencies, build, Go
 - `internal/runtime/` - Agent core orchestration loop and transport handler contract. Builds prompts, calls providers, handles tool calls, persists session messages, triggers compaction, and validates app-home agent definitions. Keywords: runtime, loop, provider, tools, agents, compaction, handler
-- `internal/agents/` - Strict Markdown agent discovery and validation. Supports interactive and one-shot metadata, explicit model syntax, and explicit tool allowlists. Keywords: agents, markdown, frontmatter, validation, permissions
+- `internal/agents/` - Strict Markdown one-shot sub-agent discovery and validation. Supports descriptions, explicit model syntax, and explicit tool allowlists. Keywords: agents, markdown, frontmatter, validation, permissions
 - `internal/runtime/agent_orchestration.go` - Ephemeral one-shot execution with model inheritance, strict `agent_done`, temporary cleanup, bounded parallelism, cancellation, timeout, ordered results, and immediately emitted scoped tool activity. Parallel activity is displayed in arrival order without timestamps or reordering. Keywords: orchestration, one-shot, parallel, cleanup, completion
-- `internal/runtime/agent_mode_compat.go` - Converts persisted quick/default/planning modes into in-memory interactive agent definitions during migration. Keywords: modes, agents, compatibility, migration, directives
+- `internal/runtime/mode_capabilities.go` - Applies config/modes.json denied_tools to direct runtime tools and limits run_agent to explicitly allowed one-shot agents. Keywords: modes, permissions, delegation, denied-tools, agents
 - `internal/console/` - Terminal REPL transport implementing `OnContent`, `OnToolCall`, and `OnToolResult`. Handles raw input, slash commands, and Markdown rendering. Keywords: console, REPL, ANSI, raw mode, streaming, slash-commands
 - `internal/telegram/` - Telegram bridge transport with long polling, single-chat enforcement, text/image handling, and streaming output adaptation. Keywords: telegram, bridge, polling, images, handler, transport
 - `internal/web/` - Minimal HTTP server with SSE streaming that mirrors the console output in a browser with terminal-like rendering. Keywords: web, SSE, streaming, terminal, browser, HTML

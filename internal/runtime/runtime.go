@@ -281,16 +281,13 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 	if err != nil {
 		return nil, fmt.Errorf("cannot load agents: %w", err)
 	}
-	// run_agent is exposed only when the active Markdown interactive agent or compatibility mode declares it.
-	registry.Register(tools.NewRunAgentTool(agent.runAgent))
-	definitions, err = addModeAgentDefinitions(definitions, modes, registry)
-	if err != nil {
-		return nil, err
+	// run_agent is available only when a Markdown definition explicitly needs it or a one-shot agent exists.
+	if definitionsNeedRunAgent(definitions) {
+		registry.Register(tools.NewRunAgentTool(agent.runAgent))
 	}
 	agent.Definitions = definitions
-	agent.Builder.Agents = definitions
 	agent.BaseTools = registry.Clone()
-	if err := agent.refreshInteractiveTools(); err != nil {
+	if err := agent.refreshModeCapabilities(); err != nil {
 		return nil, err
 	}
 
@@ -707,7 +704,7 @@ func (a *Agent) SetMode(name string) error {
 				return fmt.Errorf("cannot apply provider client for mode %q: %w", name, err)
 			}
 			a.CurrentMode = mode
-			if err := a.refreshInteractiveTools(); err != nil {
+			if err := a.refreshModeCapabilities(); err != nil {
 				return err
 			}
 			a.Modes.LastMode = name
