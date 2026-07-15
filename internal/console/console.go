@@ -85,30 +85,31 @@ type Console struct {
 
 	outMu sync.Mutex
 
-	contentStarted          bool
-	contentBuffer           string
-	inCodeBlock             bool
-	lastPromptTokens        int
-	lastCachedTokens        int
-	lastUncachedInputTokens int
-	lineOpen                bool
-	toolsStarted            bool
-	turnAborting            atomic.Bool
-	lastToolArgs            string
-	reasoningStarted        bool
-	reasoningLines          int
-	spinnerActive           bool
-	spinnerVisible          bool
-	spinnerFrame            int
-	spinnerWidth            int
-	spinnerInterval         time.Duration
-	spinnerLabel            string
-	spinnerStop             chan struct{}
-	spinnerDone             chan struct{}
-	turnStatusBarVisible    bool
-	statusPhase             string
-	statusTool              string
-	statusDeadline          time.Time
+	contentStarted           bool
+	assistantContentRendered bool
+	contentBuffer            string
+	inCodeBlock              bool
+	lastPromptTokens         int
+	lastCachedTokens         int
+	lastUncachedInputTokens  int
+	lineOpen                 bool
+	toolsStarted             bool
+	turnAborting             atomic.Bool
+	lastToolArgs             string
+	reasoningStarted         bool
+	reasoningLines           int
+	spinnerActive            bool
+	spinnerVisible           bool
+	spinnerFrame             int
+	spinnerWidth             int
+	spinnerInterval          time.Duration
+	spinnerLabel             string
+	spinnerStop              chan struct{}
+	spinnerDone              chan struct{}
+	turnStatusBarVisible     bool
+	statusPhase              string
+	statusTool               string
+	statusDeadline           time.Time
 
 	switchLineActive bool // true when a mode/model status line is present and can be overwritten
 	switchLineWidth  int  // visible width of the current status line for reliable space-padding
@@ -305,45 +306,23 @@ func (c *Console) bold(text string) string {
 	return colorBold + text + colorReset
 }
 
-// responseSeparator prints the separator shown after the assistant finishes responding.
-// Renders a boxed table with CTX tokens, current model, and work directory (tail-truncated).
+// responseSeparator prints a divider after a completed assistant response.
 //
-// WHAT:  Prints a boxed table separator after the response.
+// WHAT:  Prints up to 80 hyphens using the current terminal width.
+// WHY:   Keeps turns visually separated without exceeding the available console width.
 func (c *Console) responseSeparator() {
-	if c.lastPromptTokens <= 0 {
+	if !c.assistantContentRendered {
 		return
 	}
 	c.ensureLineBreakBeforeBlock()
-
-	ctxText := "CTX: " + formatCompactInt(c.lastPromptTokens) +
-		" | CH: " + formatCompactInt(c.lastCachedTokens) +
-		" | CM: " + formatCompactInt(c.lastUncachedInputTokens)
-	model := c.Agent.ModelID
-	workDir := truncatePathTail(c.Agent.WorkDir, 30)
-
-	cell1 := " " + ctxText + " "
-	cell2 := " " + model + " "
-	cell3 := " " + workDir + " "
-
-	w1 := len(cell1)
-	w2 := len(cell2)
-	w3 := len(cell3)
-
-	char := "─"
-	vChar := "│"
-	mChar := "┬"
-
-	topLine := "┌" + strings.Repeat(char, w1) + mChar + strings.Repeat(char, w2) + mChar + strings.Repeat(char, w3) + "┐"
-	botLine := "└" + strings.Repeat(char, w1) + "┴" + strings.Repeat(char, w2) + "┴" + strings.Repeat(char, w3) + "┘"
-
-	blue := c.color(colorBrightBlue, vChar)
-	styles := func(s string) string { return c.color(colorOrange, c.bold(s)) }
-
-	fmt.Fprint(c.Out, c.color(colorBrightBlue, topLine))
-	fmt.Fprintln(c.Out)
-	fmt.Fprint(c.Out, blue, styles(cell1), blue, styles(cell2), blue, styles(cell3), blue)
-	fmt.Fprintln(c.Out)
-	fmt.Fprintln(c.Out, c.color(colorBrightBlue, botLine))
+	width := c.terminalWidth()
+	if width > 80 {
+		width = 80
+	}
+	if width < 1 {
+		width = 1
+	}
+	fmt.Fprintln(c.Out, strings.Repeat("-", width))
 }
 
 // terminalWidth returns the current terminal column count, falling back to 80.
@@ -389,7 +368,13 @@ func (c *Console) buildStatusBar() string {
 	workDir := truncatePathTail(c.Agent.WorkDir, 30)
 
 	ctx := formatStatusTokens(c.lastPromptTokens)
-	cache := formatStatusTokens(c.lastCachedTokens)
+	cacheHit := formatStatusTokens(c.lastCachedTokens)
+	cacheMiss := formatStatusTokens(c.lastUncachedInputTokens)
+	summaryTokens := 0
+	if c.Agent.Compactor != nil && c.Agent.Session != nil {
+		summaryTokens = c.Agent.Compactor.SummaryTokens(c.Agent.Session.Folder)
+	}
+	summaries := formatStatusTokens(summaryTokens)
 	phase := c.statusPhase
 	if phase == "" {
 		phase = "Ready"
@@ -414,7 +399,7 @@ func (c *Console) buildStatusBar() string {
 	const reasoningLevel = "medium"
 
 	// Visible text (ASCII only) for width calculation.
-	vis := " " + phase + " | " + modeName + " | " + model + " | " + reasoningLevel + " | " + workDir + " | CTX " + ctx + "(" + cache + ") "
+	vis := " " + phase + " | " + modeName + " | " + model + " | " + reasoningLevel + " | " + workDir + " | CTX " + ctx + "(H:" + cacheHit + "|M:" + cacheMiss + "|S:" + summaries + ") "
 	visLen := len(vis)
 
 	// Build ANSI-colored text.
@@ -453,8 +438,18 @@ func (c *Console) buildStatusBar() string {
 	b.WriteString(val)
 	b.WriteString(ctx)
 	b.WriteString("(")
+	b.WriteString(dim)
+	b.WriteString("H:")
 	b.WriteString("\033[38;5;114m")
-	b.WriteString(cache)
+	b.WriteString(cacheHit)
+	b.WriteString(dim)
+	b.WriteString("|M:")
+	b.WriteString("\033[38;5;114m")
+	b.WriteString(cacheMiss)
+	b.WriteString(dim)
+	b.WriteString("|S:")
+	b.WriteString("\033[38;5;114m")
+	b.WriteString(summaries)
 	b.WriteString(val)
 	b.WriteString(")")
 	b.WriteString(" ")
@@ -583,17 +578,17 @@ func formatCompactInt(n int) string {
 	return fmt.Sprintf("%dk", n/1000)
 }
 
-// formatStatusTokens formats statusbar token counts with an uppercase K suffix.
+// formatStatusTokens formats statusbar token counts with a lowercase k suffix.
 //
-// WHAT: Produces compact values such as 12K or 12.3K.
+// WHAT: Produces compact values such as 12k or 12.3k.
 func formatStatusTokens(n int) string {
 	if n < 1000 {
 		return strconv.Itoa(n)
 	}
 	if n < 10000 {
-		return fmt.Sprintf("%.1fK", float64(n)/1000)
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
 	}
-	return fmt.Sprintf("%dK", n/1000)
+	return fmt.Sprintf("%dk", n/1000)
 }
 
 // truncatePathTail returns the last maxLen characters of an absolute path.
@@ -899,6 +894,7 @@ func (c *Console) OnContent(delta string) {
 		c.reasoningStarted = false
 		c.reasoningLines = 0
 	}
+	c.assistantContentRendered = true
 	if !c.contentStarted {
 		// Blank line after tool group before resuming content.
 		if c.toolsStarted {
@@ -1630,6 +1626,9 @@ func (c *Console) runTTY() error {
 		}
 		c.finishTurnStatusBar()
 		c.flushPendingContent()
+		if turnErr == nil {
+			c.responseSeparator()
+		}
 		fmt.Fprintln(c.Out)
 		c.lineOpen = false
 		c.updateStatusBar()
@@ -1687,6 +1686,7 @@ func (c *Console) writeSwitchStatus(status string) {
 
 func (c *Console) resetTurnState() {
 	c.contentStarted = false
+	c.assistantContentRendered = false
 	c.contentBuffer = ""
 	c.inCodeBlock = false
 	c.lastPromptTokens = 0

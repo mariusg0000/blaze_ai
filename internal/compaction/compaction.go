@@ -531,6 +531,19 @@ func (m *Manager) LoadSummariesText(sessionFolder string) string {
 	return m.loadSummaries(sessionFolder)
 }
 
+// SummaryTokens estimates the token cost of the synthetic summary message.
+//
+// WHAT:  Estimates the prompt tokens occupied by historical summaries.
+// WHY:   Provider prompt usage includes summaries, so status and compaction accounting need the same local estimate.
+// PARAMS: sessionFolder — path to the session folder containing summary files.
+// RETURNS: int — estimated summary-message tokens, or zero when no summaries exist.
+func (m *Manager) SummaryTokens(sessionFolder string) int {
+	if strings.TrimSpace(m.loadSummaries(sessionFolder)) == "" {
+		return 0
+	}
+	return m.estimateTokens(m.buildSyntheticMessage(sessionFolder), false)
+}
+
 // trimSummaries deletes the oldest summary files beyond maxSummaryFiles.
 //
 // WHAT:  Enforces the maxSummaryFiles limit by deleting oldest files.

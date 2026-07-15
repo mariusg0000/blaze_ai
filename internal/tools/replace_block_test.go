@@ -102,8 +102,15 @@ func TestReplaceBlockDuplicateMatch(t *testing.T) {
 	tool := NewReplaceBlockTool(func() string { return filepath.Dir(path) })
 	args := json.RawMessage(`{"file_path":"` + path + `","old_block":"target","new_block":"replaced"}`)
 	result := tool.Execute(context.Background(), args)
-	if !strings.Contains(result, "ambiguous") {
-		t.Errorf("Execute() = %q, want ambiguous-match error", result)
+	for _, marker := range []string{
+		"ambiguous",
+		"no changes were written",
+		"AUTHORITATIVE LIVE FILE CONTENT",
+		"target\ntarget\ntarget",
+	} {
+		if !strings.Contains(result, marker) {
+			t.Errorf("Execute() = %q, missing duplicate diagnostic marker %q", result, marker)
+		}
 	}
 	data, _ := os.ReadFile(path)
 	if string(data) != "target\ntarget\ntarget" {
@@ -111,8 +118,8 @@ func TestReplaceBlockDuplicateMatch(t *testing.T) {
 	}
 }
 
-// TestReplaceBlockMultiplePartialSuccess verifies successful blocks persist while failed blocks are reported.
-func TestReplaceBlockMultiplePartialSuccess(t *testing.T) {
+// TestReplaceBlockMultipleAllOrNothing verifies no blocks persist when one validation fails.
+func TestReplaceBlockMultipleAllOrNothing(t *testing.T) {
 	path := writeTestFile(t, "first old\nsecond old\nfooter")
 	tool := NewReplaceBlockTool(func() string { return filepath.Dir(path) })
 	args, err := json.Marshal(map[string]any{
@@ -126,23 +133,24 @@ func TestReplaceBlockMultiplePartialSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := tool.Execute(context.Background(), args)
-	if !strings.Contains(result, "1 block(s) failed") || !strings.Contains(result, "first new") || !strings.Contains(result, "missing old") {
-		t.Errorf("Execute() = %q, want partial result with failed block and live file", result)
-	}
 	for _, marker := range []string{
-		"applied_blocks: [1]",
-		"successful blocks are already on disk; do not resend them",
+		"1 block(s) failed",
+		"no changes were written",
+		"[block 2] exact match not found",
 		"AUTHORITATIVE LIVE FILE CONTENT",
-		"supersedes the old file content in the conversation context",
+		"first old\nsecond old\nfooter",
 		"MANDATORY RETRY RULE",
 	} {
 		if !strings.Contains(result, marker) {
-			t.Errorf("Execute() = %q, missing authoritative retry marker %q", result, marker)
+			t.Errorf("Execute() = %q, missing all-or-nothing marker %q", result, marker)
 		}
 	}
+	if strings.Contains(result, "first new") {
+		t.Errorf("Execute() = %q, diagnostic should not contain an applied replacement", result)
+	}
 	data, _ := os.ReadFile(path)
-	if string(data) != "first new\nsecond old\nfooter" {
-		t.Errorf("file content = %q, want successful replacement only", string(data))
+	if string(data) != "first old\nsecond old\nfooter" {
+		t.Errorf("file content = %q, want unchanged file", string(data))
 	}
 }
 

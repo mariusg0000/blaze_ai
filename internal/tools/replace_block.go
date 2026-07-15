@@ -12,8 +12,6 @@ import (
 	"strings"
 )
 
-const replaceBlockFileContentLimit = 500000
-
 // ReplaceBlock is one exact text replacement requested for a file.
 //
 // WHAT:  Describes the source text and its replacement.
@@ -37,8 +35,8 @@ type ReplaceBlockArgs struct {
 
 // ReplaceBlockTool replaces exact blocks of text in one file.
 //
-// WHAT:  Applies every uniquely matching block and reports unmatched blocks.
-// WHY:   Enables one atomic edit request for several related changes.
+// WHAT:  Validates every block, then applies all uniquely matching blocks together.
+// WHY:   Prevents partial edits when one requested replacement is invalid.
 // PARAMS: workDir — function returning the current working directory for relative paths.
 type ReplaceBlockTool struct {
 	workDir func() string
@@ -79,7 +77,7 @@ func (t *ReplaceBlockTool) FormatArgs(args json.RawMessage) string {
 
 // Description returns the human-readable description for the LLM.
 func (t *ReplaceBlockTool) Description() string {
-	return "file_path + blocks → replace every uniquely matching exact block in one file; MUST batch all independent edits to the same file into one call; prefer blocks; after partial success, applied blocks are already on disk and must never be resent; failed blocks are returned with authoritative live file content when under 500000 bytes, and retries must rebuild exact old_block text from that live version"
+	return "file_path + blocks → validate and replace every uniquely matching exact block in one file; MUST batch all independent edits to the same file into one call; if any block is missing or ambiguous, no changes are written and the complete live file plus compact diagnostics are returned"
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -97,7 +95,7 @@ func (t *ReplaceBlockTool) Parameters() json.RawMessage {
 			},
 			"blocks": {
 				"type": "array",
-				"description": "MANDATORY: Put all independent edits for this file in one blocks array and send one call. Each old_block must match exactly once, including whitespace, indentation, and newlines. Do not split independent same-file edits into sequential calls. If partial success occurs, successful blocks are already on disk: retry only failed block indices, rebuild old_block exactly from the AUTHORITATIVE LIVE FILE CONTENT returned by the tool, and never reuse stale text from the original context.",
+				"description": "MANDATORY: Put all independent edits for this file in one blocks array and send one call. Each old_block must match exactly once, including whitespace, indentation, and newlines. Do not split independent same-file edits into sequential calls. If any block is missing or ambiguous, no block is applied; rebuild every old_block from the AUTHORITATIVE LIVE FILE CONTENT returned by the tool.",
 				"items": {
 					"type": "object",
 					"properties": {
@@ -178,50 +176,45 @@ func countMatches(content, block string) []int {
 	return offsets
 }
 
-// formatFailedBlock formats one failed replacement exactly as received.
+// formatFailedBlock formats a compact diagnostic for one failed replacement.
 //
-// WHAT:  Returns the failure reason and both original block fields.
-// HOW:   Keeps old_block and new_block available for a direct retry.
-func formatFailedBlock(index int, reason string, block ReplaceBlock) string {
-	return fmt.Sprintf("[block %d] reason: %s\nold_block:\n%s\nnew_block:\n%s", index, reason, block.OldBlock, block.NewBlock)
+// WHAT:  Identifies the failed block and exact-match reason.
+// WHY:   The complete live file below is the authoritative retry source; repeating block text is redundant.
+func formatFailedBlock(index int, reason string) string {
+	return fmt.Sprintf("[block %d] %s", index, reason)
 }
 
-// failedBlockReport formats failed blocks and the current file content for the LLM.
+// failedBlockReport formats failed validation and the complete live file for the LLM.
 //
-// WHAT:  Returns exact failed input and the live file state.
-// HOW:   Includes the full file only below the configured byte limit.
-func failedBlockReport(path, content string, applied []int, failures []string) string {
+// WHAT:  Reports that no changes were written, then includes diagnostics and live content.
+// WHY:   All-or-nothing validation makes every retry start from one authoritative file version.
+func failedBlockReport(path, content string, failures []string) string {
 	var builder strings.Builder
 	builder.WriteString(fmt.Sprintf("error: %d block(s) failed in %s\n", len(failures), path))
-	builder.WriteString(fmt.Sprintf("applied_blocks: %v\n", applied))
-	builder.WriteString("successful blocks are already on disk; do not resend them.\n\nFailed blocks:\n")
+	builder.WriteString("no changes were written.\n\nDiagnostics:\n")
 	for _, failure := range failures {
 		builder.WriteString(failure)
-		builder.WriteString("\n")
+		builder.WriteByte('\n')
 	}
-	if len([]byte(content)) < replaceBlockFileContentLimit {
-		builder.WriteString("\nAUTHORITATIVE LIVE FILE CONTENT — READ THIS VERSION FOR RETRY\n")
-		builder.WriteString("The following content was read directly from disk after the successful replacements. It supersedes the old file content in the conversation context. Rebuild old_block values from this version only.\n")
-		builder.WriteString("--- LIVE FILE START ---\n")
-		builder.WriteString(content)
-		if !strings.HasSuffix(content, "\n") {
-			builder.WriteByte('\n')
-		}
-		builder.WriteString("--- LIVE FILE END ---\n")
-		builder.WriteString("MANDATORY RETRY RULE: retry only the failed block indices above, using exact text copied from the authoritative live file; never resend applied blocks or reuse stale old_block text.")
-	} else {
-		builder.WriteString(fmt.Sprintf("\nAUTHORITATIVE LIVE FILE CONTENT OMITTED: file is %d bytes and exceeds the 500000-byte limit. Inspect the current file before retrying. Retry only the failed block indices above.", len([]byte(content))))
+	builder.WriteString("\nAUTHORITATIVE LIVE FILE CONTENT — READ THIS VERSION FOR RETRY\n")
+	builder.WriteString("The following complete content was read directly from disk. Rebuild every old_block from this version only.\n")
+	builder.WriteString("--- LIVE FILE START ---\n")
+	builder.WriteString(content)
+	if !strings.HasSuffix(content, "\n") {
+		builder.WriteByte('\n')
 	}
+	builder.WriteString("--- LIVE FILE END ---\n")
+	builder.WriteString("MANDATORY RETRY RULE: no block was applied; rebuild all blocks from the authoritative live file.")
 	return builder.String()
 }
 
 // Execute reads, validates, and applies all requested replacements.
 //
-// WHAT:  Applies uniquely matching exact blocks and reports only failures.
-// WHY:   Allows partial progress while keeping matching explicit and error-free.
-// HOW:   Processes blocks against the evolving in-memory content, writes successful changes once, then reads the live file for failure reports.
+// WHAT:  Validates every exact block before applying any replacement.
+// WHY:   Prevents partial edits when a block is missing or ambiguous.
+// HOW:   Checks all blocks against the same file snapshot, then writes one transformed result only when validation succeeds.
 // PARAMS: ctx — turn cancellation context; args — raw JSON with one file path and blocks.
-// RETURNS: string — success message or detailed failure report.
+// RETURNS: string — success message or complete live-file failure report.
 func (t *ReplaceBlockTool) Execute(ctx context.Context, args json.RawMessage) string {
 	if ctx != nil && ctx.Err() != nil {
 		return "aborted before execution by user"
@@ -265,37 +258,34 @@ func (t *ReplaceBlockTool) Execute(ctx context.Context, args json.RawMessage) st
 	}
 
 	failures := make([]string, 0)
-	applied := make([]int, 0, len(blocks))
-	replaced := 0
 	for index, block := range blocks {
 		if ctx != nil && ctx.Err() != nil {
 			return "aborted before writing by user"
 		}
 		matches := countMatches(content, block.OldBlock)
-		if len(matches) == 0 {
-			failures = append(failures, formatFailedBlock(index+1, "exact match not found", block))
+		switch len(matches) {
+		case 0:
+			failures = append(failures, formatFailedBlock(index+1, "exact match not found"))
+		case 1:
 			continue
+		default:
+			failures = append(failures, formatFailedBlock(index+1, fmt.Sprintf("exact match is ambiguous (%d matches)", len(matches))))
 		}
-		if len(matches) != 1 {
-			failures = append(failures, formatFailedBlock(index+1, fmt.Sprintf("exact match is ambiguous (%d matches)", len(matches)), block))
-			continue
+	}
+	if len(failures) > 0 {
+		live, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Sprintf("error: cannot read live file %s after validation failure: %v", path, err)
 		}
-		content = content[:matches[0]] + block.NewBlock + content[matches[0]+len(block.OldBlock):]
-		applied = append(applied, index+1)
-		replaced++
+		return failedBlockReport(path, string(live), failures)
 	}
 
-	if replaced > 0 {
-		if err := os.WriteFile(path, []byte(content), originalInfo.Mode().Perm()); err != nil {
-			return fmt.Sprintf("error: cannot write file %s: %v", path, err)
-		}
+	for _, block := range blocks {
+		matches := countMatches(content, block.OldBlock)
+		content = content[:matches[0]] + block.NewBlock + content[matches[0]+len(block.OldBlock):]
 	}
-	if len(failures) == 0 {
-		return fmt.Sprintf("ok: block replaced %d block(s) in %s", replaced, path)
+	if err := os.WriteFile(path, []byte(content), originalInfo.Mode().Perm()); err != nil {
+		return fmt.Sprintf("error: cannot write file %s: %v", path, err)
 	}
-	live, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Sprintf("error: replacements applied but cannot read live file %s: %v", path, err)
-	}
-	return failedBlockReport(path, string(live), applied, failures)
+	return fmt.Sprintf("ok: block replaced %d block(s) in %s", len(blocks), path)
 }

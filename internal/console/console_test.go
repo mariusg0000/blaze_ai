@@ -585,28 +585,36 @@ func TestToolEmojiMapping(t *testing.T) {
 	}
 }
 
-// TestOnUsage verifies context usage is stored and rendered in the separator.
-func TestOnUsage(t *testing.T) {
-	c, out := newConsole(mockAgent(t))
-	c.OnUsage(11186, 0, 11186)
-	c.responseSeparator()
-	output := out.String()
-	if !strings.Contains(output, "CTX: 11k") {
-		t.Errorf("output missing context size: %q", output)
-	}
-	if !strings.Contains(output, "test/test-model") {
-		t.Errorf("output missing model: %q", output)
+// TestBuildStatusBarContextBreakdown verifies CTX shows total, cache hit, cache miss, and summary tokens.
+func TestBuildStatusBarContextBreakdown(t *testing.T) {
+	c, _ := newConsole(mockAgent(t))
+	c.lastPromptTokens = 12345
+	c.lastCachedTokens = 2345
+	c.lastUncachedInputTokens = 10000
+
+	plain := stripANSICodes(c.buildStatusBar())
+	if !strings.Contains(plain, "CTX 12k(H:2.3k|M:10k|S:0)") {
+		t.Fatalf("status bar context = %q, want CTX breakdown", plain)
 	}
 }
 
-// TestOnUsageZero verifies no context shown when prompt tokens are zero.
-func TestOnUsageZero(t *testing.T) {
+// TestResponseSeparator verifies a completed response gets a plain divider.
+func TestResponseSeparator(t *testing.T) {
 	c, out := newConsole(mockAgent(t))
-	c.OnUsage(0, 0, 0)
+	c.OnContent("response")
 	c.responseSeparator()
-	output := out.String()
-	if output != "" {
-		t.Errorf("output should be empty when no usage: %q", output)
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if got := lines[len(lines)-1]; got != strings.Repeat("-", 80) {
+		t.Errorf("separator = %q, want 80 hyphens", got)
+	}
+}
+
+// TestResponseSeparatorWithoutContent verifies empty turns do not get a divider.
+func TestResponseSeparatorWithoutContent(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.responseSeparator()
+	if output := out.String(); output != "" {
+		t.Errorf("output should be empty without assistant content: %q", output)
 	}
 }
 
