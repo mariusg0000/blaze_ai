@@ -270,6 +270,8 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 	registry.Register(tools.NewTaskWriteTool(func() string { return agent.WorkDir }))
 	registry.Register(tools.NewTaskReadTool(func() string { return agent.WorkDir }))
 	registry.Register(tools.NewReadFileTool(func() string { return agent.WorkDir }))
+	registry.Register(tools.NewListFilesTool(func() string { return agent.WorkDir }))
+	registry.Register(tools.NewSearchFilesTool(func() string { return agent.WorkDir }))
 	registry.Register(tools.NewWriteFileTool(func() string { return agent.WorkDir }))
 	agent.Tools = registry
 

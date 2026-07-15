@@ -1054,3 +1054,17 @@ func TestStartupSplashSkillsEmpty(t *testing.T) {
 		t.Errorf("expected (none) for empty skills, got: %q", output)
 	}
 }
+
+// TestReadLineSafelyConvertsPanic verifies readline panics become diagnostic errors.
+func TestReadLineSafelyConvertsPanic(t *testing.T) {
+	_, err := readLineSafely(nil)
+	if err == nil {
+		t.Fatal("expected readline panic to become an error")
+	}
+	if !strings.Contains(err.Error(), "readline panic") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "readLineSafely") {
+		t.Fatalf("error does not include a useful stack trace: %v", err)
+	}
+}

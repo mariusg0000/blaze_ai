@@ -566,6 +566,13 @@ func (rl *Shell) transposeChars() {
 // line. If a numeric argument is given, the word to transpose
 // is chosen backward.
 func (rl *Shell) transposeWords() {
+	// A cancelled or incomplete key sequence can leave no valid word
+	// selection. Treat that state as a no-op instead of slicing with -1.
+	if rl.line.Len() == 0 {
+		rl.History.SkipSave()
+		return
+	}
+
 	rl.History.Save()
 
 	startPos := rl.cursor.Pos()
@@ -576,6 +583,10 @@ func (rl *Shell) transposeWords() {
 	rl.viSelectInWord()
 	rl.selection.Visual(false)
 	toTranspose, tbpos, tepos, _ := rl.selection.Pop()
+	if tbpos < 0 || tepos < tbpos || tepos > rl.line.Len() || tbpos == tepos {
+		rl.cursor.Set(startPos)
+		return
+	}
 
 	// Then move some number of words.
 	// Either use words backward (if we are at end of line) or forward.
@@ -591,6 +602,10 @@ func (rl *Shell) transposeWords() {
 	rl.viSelectInWord()
 	rl.selection.Visual(false)
 	transposeWith, wbpos, wepos, _ := rl.selection.Pop()
+	if wbpos < 0 || wepos < wbpos || wepos > rl.line.Len() || wbpos == wepos {
+		rl.cursor.Set(startPos)
+		return
+	}
 
 	// We might be on the first word of the line,
 	// in which case we don't do anything.
@@ -604,6 +619,12 @@ func (rl *Shell) transposeWords() {
 		wbpos, tbpos = tbpos, wbpos
 		wepos, tepos = tepos, wepos
 		transposeWith, toTranspose = toTranspose, transposeWith
+	}
+
+	// Validate the final ordering before every slice operation.
+	if wbpos < 0 || wbpos > wepos || wepos > tbpos || tbpos > tepos || tepos > rl.line.Len() {
+		rl.cursor.Set(startPos)
+		return
 	}
 
 	// Assemble the newline
@@ -623,6 +644,13 @@ func (rl *Shell) transposeWords() {
 // end of the line, this transposes the last two words on the line.
 // If a numeric argument is given, the word to transpose is chosen backward.
 func (rl *Shell) shellTransposeWords() {
+	// A cancelled or incomplete key sequence can leave no valid shell-word
+	// selection. Treat that state as a no-op instead of slicing with -1.
+	if rl.line.Len() == 0 {
+		rl.History.SkipSave()
+		return
+	}
+
 	rl.History.Save()
 
 	startPos := rl.cursor.Pos()
@@ -630,6 +658,10 @@ func (rl *Shell) shellTransposeWords() {
 	// Save the current word
 	rl.viSelectAShellWord()
 	toTranspose, tbpos, tepos, _ := rl.selection.Pop()
+	if tbpos < 0 || tepos < tbpos || tepos > rl.line.Len() || tbpos == tepos {
+		rl.cursor.Set(startPos)
+		return
+	}
 
 	// First move back the number of words
 	rl.cursor.Set(tbpos)
@@ -638,10 +670,18 @@ func (rl *Shell) shellTransposeWords() {
 	// Save the word to transpose with
 	rl.viSelectAShellWord()
 	transposeWith, wbpos, wepos, _ := rl.selection.Pop()
+	if wbpos < 0 || wepos < wbpos || wepos > rl.line.Len() || wbpos == wepos {
+		rl.cursor.Set(startPos)
+		return
+	}
 
 	// We might be on the first word of the line,
 	// in which case we don't do anything.
 	if wepos > tbpos {
+		rl.cursor.Set(startPos)
+		return
+	}
+	if wbpos < 0 || wbpos > wepos || wepos > tbpos || tbpos > tepos || tepos > rl.line.Len() {
 		rl.cursor.Set(startPos)
 		return
 	}

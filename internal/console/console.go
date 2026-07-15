@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -1581,7 +1582,7 @@ func (c *Console) runTTY() error {
 	c.updateStatusBar()
 
 	for {
-		line, err := rl.Readline()
+		line, err := readLineSafely(rl)
 		if errors.Is(err, readline.ErrInterrupt) {
 			fmt.Fprintln(c.Out)
 			continue
@@ -1633,6 +1634,21 @@ func (c *Console) runTTY() error {
 		c.lineOpen = false
 		c.updateStatusBar()
 	}
+}
+
+// readLineSafely reads one prompt line and converts an unexpected readline panic
+// into an ordinary error with the original stack trace.
+//
+// WHAT: Protects the console boundary from third-party editor panics.
+// WHY: Keeps the process from terminating abruptly while preserving diagnostics.
+// HOW: Recovers only around the synchronous Readline call; callers still stop on error.
+func readLineSafely(rl *readline.Shell) (line string, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("readline panic: %v\n%s", recovered, debug.Stack())
+		}
+	}()
+	return rl.Readline()
 }
 
 // writeSwitchStatus prints the mode/model status line, overwriting any
