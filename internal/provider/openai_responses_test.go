@@ -203,8 +203,8 @@ func TestStreamChatGPTAddsResponsesLiteHeaderForGPT56(t *testing.T) {
 	if requestBody.Reasoning.Effort != "" {
 		t.Errorf("Reasoning.Effort = %q, want empty for no-suffix lite model", requestBody.Reasoning.Effort)
 	}
-	if requestBody.Reasoning.Context != "" {
-		t.Errorf("Reasoning.Context = %q, want empty for no-suffix lite model", requestBody.Reasoning.Context)
+	if requestBody.Reasoning.Context != "all_turns" {
+		t.Errorf("Reasoning.Context = %q, want all_turns for no-suffix lite model", requestBody.Reasoning.Context)
 	}
 	if requested.Header.Get(chatGPTCodexLiteHeader) != "true" {
 		t.Errorf("%s = %q, want true", chatGPTCodexLiteHeader, requested.Header.Get(chatGPTCodexLiteHeader))
@@ -270,7 +270,7 @@ func TestBuildChatGPTRequestNoSuffixOmitsReasoning(t *testing.T) {
 	}
 }
 
-func TestBuildChatGPTLiteRequestNoSuffixOmitsReasoning(t *testing.T) {
+func TestBuildChatGPTLiteRequestNoSuffixUsesAllTurnsContext(t *testing.T) {
 	request, err := buildChatGPTRequest("gpt-5.6-luna", []session.Message{
 		{Role: "user", Content: "hello"},
 	}, nil, "")
@@ -283,8 +283,8 @@ func TestBuildChatGPTLiteRequestNoSuffixOmitsReasoning(t *testing.T) {
 	if request.Reasoning.Summary != "" {
 		t.Errorf("Reasoning.Summary = %q, want empty for no-suffix model", request.Reasoning.Summary)
 	}
-	if request.Reasoning.Context != "" {
-		t.Errorf("Reasoning.Context = %q, want empty for no-suffix lite model", request.Reasoning.Context)
+	if request.Reasoning.Context != "all_turns" {
+		t.Errorf("Reasoning.Context = %q, want all_turns for no-suffix lite model", request.Reasoning.Context)
 	}
 }
 

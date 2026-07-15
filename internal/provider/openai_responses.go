@@ -235,9 +235,11 @@ func buildChatGPTLiteRequest(model string, messages []session.Message, toolDefs 
 		Stream:            true,
 		Include:           []string{"reasoning.encrypted_content"},
 		Text:              chatGPTText{Verbosity: "low"},
+		Reasoning:         chatGPTReasoning{Context: "all_turns"},
 	}
 	if effort != "" {
-		req.Reasoning = chatGPTReasoning{Effort: effort, Summary: "auto", Context: "all_turns"}
+		req.Reasoning.Effort = effort
+		req.Reasoning.Summary = "auto"
 	}
 	return req, nil
 }
