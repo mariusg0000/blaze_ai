@@ -89,6 +89,40 @@ func TestAppend(t *testing.T) {
 	}
 }
 
+// TestAppendReadFileResultClearsOlderSamePath verifies stale snapshots are removed from memory and disk.
+func TestAppendReadFileResultClearsOlderSamePath(t *testing.T) {
+	dir := t.TempDir()
+	s, err := CreateInDir(dir)
+	if err != nil {
+		t.Fatalf("CreateInDir() failed: %v", err)
+	}
+	old := Message{Role: "tool", Name: "read_file", Content: "<file_content config.json>\nold\n</file_content>"}
+	other := Message{Role: "tool", Name: "read_file", Content: "<file_content other.json>\nkeep\n</file_content>"}
+	if err := s.AppendAll([]Message{old, other}); err != nil {
+		t.Fatalf("AppendAll() failed: %v", err)
+	}
+	current := Message{Role: "tool", Name: "read_file", Content: "<file_content config.json>\nnew\n<file_content fake>\ninside\n</file_content>\n</file_content>"}
+	if err := s.AppendReadFileResult(current); err != nil {
+		t.Fatalf("AppendReadFileResult() failed: %v", err)
+	}
+	if s.Messages[0].Content != "" {
+		t.Errorf("old same-path content = %q, want empty", s.Messages[0].Content)
+	}
+	if s.Messages[1].Content != other.Content {
+		t.Errorf("other-path content changed: %q", s.Messages[1].Content)
+	}
+	if s.Messages[2].Content != current.Content {
+		t.Errorf("current content = %q, want unchanged", s.Messages[2].Content)
+	}
+	loaded, err := Load(s.Folder)
+	if err != nil {
+		t.Fatalf("Load() after AppendReadFileResult failed: %v", err)
+	}
+	if loaded.Messages[0].Content != "" {
+		t.Errorf("persisted old content = %q, want empty", loaded.Messages[0].Content)
+	}
+}
+
 // TestSaveWritesReasoningContent verifies session.json uses reasoning_content on disk.
 func TestSaveWritesReasoningContent(t *testing.T) {
 	dir := t.TempDir()

@@ -105,8 +105,7 @@ func TestReplaceBlockDuplicateMatch(t *testing.T) {
 	for _, marker := range []string{
 		"ambiguous",
 		"no changes were written",
-		"AUTHORITATIVE LIVE FILE CONTENT",
-		"target\ntarget\ntarget",
+		"Suggestion: reload the file from disk with read_file",
 	} {
 		if !strings.Contains(result, marker) {
 			t.Errorf("Execute() = %q, missing duplicate diagnostic marker %q", result, marker)
@@ -137,16 +136,20 @@ func TestReplaceBlockMultipleAllOrNothing(t *testing.T) {
 		"1 block(s) failed",
 		"no changes were written",
 		"[block 2] exact match not found",
-		"AUTHORITATIVE LIVE FILE CONTENT",
-		"first old\nsecond old\nfooter",
-		"MANDATORY RETRY RULE",
+		"Suggestion: reload the file from disk with read_file",
 	} {
 		if !strings.Contains(result, marker) {
 			t.Errorf("Execute() = %q, missing all-or-nothing marker %q", result, marker)
 		}
 	}
-	if strings.Contains(result, "first new") {
-		t.Errorf("Execute() = %q, diagnostic should not contain an applied replacement", result)
+	for _, unexpected := range []string{
+		"<file_content " + path + ">",
+		"first old\nsecond old\nfooter",
+		"MANDATORY RETRY RULE",
+	} {
+		if strings.Contains(result, unexpected) {
+			t.Errorf("Execute() = %q, diagnostic should not contain %q", result, unexpected)
+		}
 	}
 	data, _ := os.ReadFile(path)
 	if string(data) != "first old\nsecond old\nfooter" {

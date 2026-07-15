@@ -495,13 +495,20 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 			result := tool.Execute(ctx, tc.Arguments)
 			a.Handler.OnToolResult(tc.Name, result)
 
-			if err := a.Session.Append(session.Message{
+			toolMessage := session.Message{
 				Role:       "tool",
 				Content:    result,
 				ToolCallID: tc.ID,
 				Name:       tc.Name,
-			}); err != nil {
-				return fmt.Errorf("cannot persist tool result: %w", err)
+			}
+			var persistErr error
+			if tc.Name == "read_file" {
+				persistErr = a.Session.AppendReadFileResult(toolMessage)
+			} else {
+				persistErr = a.Session.Append(toolMessage)
+			}
+			if persistErr != nil {
+				return fmt.Errorf("cannot persist tool result: %w", persistErr)
 			}
 
 			if tc.Name == "agent_done" && a.Completion != "" {

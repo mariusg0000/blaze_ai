@@ -406,8 +406,7 @@ func (c *Console) buildStatusBar() string {
 	var b strings.Builder
 	b.Grow(visLen + 200)
 	b.WriteString(bg)
-	b.WriteString(colorBold)
-	b.WriteString("\033[38;5;220m")
+	b.WriteString(colorOrange)
 	b.WriteString(" ")
 	b.WriteString(phase)
 	// Reset phase styling, then restore the footer background for the remaining fields.
@@ -415,7 +414,8 @@ func (c *Console) buildStatusBar() string {
 	b.WriteString(bg)
 	b.WriteString(sep)
 	b.WriteString(" | ")
-	b.WriteString(colorOrange)
+	b.WriteString(colorBold)
+	b.WriteString("\033[38;5;220m")
 	b.WriteString(modeName)
 	b.WriteString("\033[22m\033[39m")
 	b.WriteString(bg)
@@ -444,11 +444,11 @@ func (c *Console) buildStatusBar() string {
 	b.WriteString(cacheHit)
 	b.WriteString(dim)
 	b.WriteString("|M:")
-	b.WriteString("\033[38;5;114m")
+	b.WriteString("\033[38;5;196m")
 	b.WriteString(cacheMiss)
 	b.WriteString(dim)
 	b.WriteString("|S:")
-	b.WriteString("\033[38;5;114m")
+	b.WriteString("\033[38;5;220m")
 	b.WriteString(summaries)
 	b.WriteString(val)
 	b.WriteString(")")
@@ -582,8 +582,8 @@ func formatCompactInt(n int) string {
 //
 // WHAT: Produces compact values such as 12k or 12.3k.
 func formatStatusTokens(n int) string {
-	if n < 1000 {
-		return strconv.Itoa(n)
+	if n == 0 {
+		return "0"
 	}
 	if n < 10000 {
 		return fmt.Sprintf("%.1fk", float64(n)/1000)

@@ -1,5 +1,5 @@
 // replace_block.go — replace_block tool implementation.
-// Replaces exact text blocks in one file and reports failed blocks with live content.
+// Replaces exact text blocks in one file and reports detailed failures without live content.
 // Layer: tool execution. Dependencies: file IO only.
 package tools
 
@@ -77,7 +77,7 @@ func (t *ReplaceBlockTool) FormatArgs(args json.RawMessage) string {
 
 // Description returns the human-readable description for the LLM.
 func (t *ReplaceBlockTool) Description() string {
-	return "file_path + blocks → validate and replace every uniquely matching exact block in one file; MUST batch all independent edits to the same file into one call; if any block is missing or ambiguous, no changes are written and the complete live file plus compact diagnostics are returned"
+	return "file_path + blocks → validate and replace every uniquely matching exact block in one file; MUST batch all independent edits to the same file into one call; if any block is missing or ambiguous, no changes are written and detailed diagnostics with read_file reload guidance are returned"
 }
 
 // Parameters returns the JSON schema for the tool's parameters.
@@ -95,7 +95,7 @@ func (t *ReplaceBlockTool) Parameters() json.RawMessage {
 			},
 			"blocks": {
 				"type": "array",
-				"description": "MANDATORY: Put all independent edits for this file in one blocks array and send one call. Each old_block must match exactly once, including whitespace, indentation, and newlines. Do not split independent same-file edits into sequential calls. If any block is missing or ambiguous, no block is applied; rebuild every old_block from the AUTHORITATIVE LIVE FILE CONTENT returned by the tool.",
+				"description": "MANDATORY: Put all independent edits for this file in one blocks array and send one call. Each old_block must match exactly once, including whitespace, indentation, and newlines. Do not split independent same-file edits into sequential calls. If any block is missing or ambiguous, no block is applied; reload the file with read_file and rebuild every old_block from the latest content.",
 				"items": {
 					"type": "object",
 					"properties": {
@@ -179,16 +179,16 @@ func countMatches(content, block string) []int {
 // formatFailedBlock formats a compact diagnostic for one failed replacement.
 //
 // WHAT:  Identifies the failed block and exact-match reason.
-// WHY:   The complete live file below is the authoritative retry source; repeating block text is redundant.
+// WHY:   The retry should reload the latest file through read_file instead of using stale tool output.
 func formatFailedBlock(index int, reason string) string {
 	return fmt.Sprintf("[block %d] %s", index, reason)
 }
 
-// failedBlockReport formats failed validation and the complete live file for the LLM.
+// failedBlockReport formats failed validation for the LLM.
 //
-// WHAT:  Reports that no changes were written, then includes diagnostics and live content.
-// WHY:   All-or-nothing validation makes every retry start from one authoritative file version.
-func failedBlockReport(path, content string, failures []string) string {
+// WHAT:  Reports that no changes were written and includes detailed diagnostics.
+// WHY:   The caller can reload the latest file through read_file before retrying.
+func failedBlockReport(path string, failures []string) string {
 	var builder strings.Builder
 	builder.WriteString(fmt.Sprintf("error: %d block(s) failed in %s\n", len(failures), path))
 	builder.WriteString("no changes were written.\n\nDiagnostics:\n")
@@ -196,15 +196,7 @@ func failedBlockReport(path, content string, failures []string) string {
 		builder.WriteString(failure)
 		builder.WriteByte('\n')
 	}
-	builder.WriteString("\nAUTHORITATIVE LIVE FILE CONTENT — READ THIS VERSION FOR RETRY\n")
-	builder.WriteString("The following complete content was read directly from disk. Rebuild every old_block from this version only.\n")
-	builder.WriteString("--- LIVE FILE START ---\n")
-	builder.WriteString(content)
-	if !strings.HasSuffix(content, "\n") {
-		builder.WriteByte('\n')
-	}
-	builder.WriteString("--- LIVE FILE END ---\n")
-	builder.WriteString("MANDATORY RETRY RULE: no block was applied; rebuild all blocks from the authoritative live file.")
+	builder.WriteString("\nSuggestion: reload the file from disk with read_file, then rebuild all old_block values from the latest content.")
 	return builder.String()
 }
 
@@ -214,7 +206,7 @@ func failedBlockReport(path, content string, failures []string) string {
 // WHY:   Prevents partial edits when a block is missing or ambiguous.
 // HOW:   Checks all blocks against the same file snapshot, then writes one transformed result only when validation succeeds.
 // PARAMS: ctx — turn cancellation context; args — raw JSON with one file path and blocks.
-// RETURNS: string — success message or complete live-file failure report.
+// RETURNS: string — success message or detailed failure report with reload guidance.
 func (t *ReplaceBlockTool) Execute(ctx context.Context, args json.RawMessage) string {
 	if ctx != nil && ctx.Err() != nil {
 		return "aborted before execution by user"
@@ -273,11 +265,7 @@ func (t *ReplaceBlockTool) Execute(ctx context.Context, args json.RawMessage) st
 		}
 	}
 	if len(failures) > 0 {
-		live, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Sprintf("error: cannot read live file %s after validation failure: %v", path, err)
-		}
-		return failedBlockReport(path, string(live), failures)
+		return failedBlockReport(path, failures)
 	}
 
 	for _, block := range blocks {

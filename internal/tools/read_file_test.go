@@ -15,11 +15,14 @@ func TestReadFileSuccess(t *testing.T) {
 	tool := NewReadFileTool(func() string { return filepath.Dir(abs) })
 	args, _ := json.Marshal(map[string]string{"file_path": abs})
 	result := tool.Execute(context.Background(), args)
-	if !strings.Contains(result, "ok") {
-		t.Errorf("Execute() = %q, want 'ok'", result)
+	if !strings.Contains(result, "<file_content "+abs+">") {
+		t.Errorf("Execute() = %q, want <file_content> tag", result)
 	}
 	if !strings.Contains(result, "hello world") {
 		t.Errorf("Execute() = %q, want file content", result)
+	}
+	if !strings.Contains(result, "</file_content>") {
+		t.Errorf("Execute() = %q, want </file_content> tag", result)
 	}
 }
 
@@ -31,6 +34,9 @@ func TestReadFileRelativePath(t *testing.T) {
 	result := tool.Execute(context.Background(), args)
 	if !strings.Contains(result, "relative content") {
 		t.Errorf("Execute() = %q, want file content", result)
+	}
+	if !strings.Contains(result, "<file_content "+rel+">") {
+		t.Errorf("Execute() = %q, want requested relative path in tag", result)
 	}
 }
 
@@ -57,8 +63,11 @@ func TestReadFileEmpty(t *testing.T) {
 	tool := NewReadFileTool(func() string { return filepath.Dir(abs) })
 	args, _ := json.Marshal(map[string]string{"file_path": abs})
 	result := tool.Execute(context.Background(), args)
-	if !strings.Contains(result, "empty") {
-		t.Errorf("Execute() = %q, want (empty)", result)
+	if !strings.Contains(result, "<file_content "+abs+">") {
+		t.Errorf("Execute() = %q, want <file_content> tag", result)
+	}
+	if !strings.Contains(result, "</file_content>") {
+		t.Errorf("Execute() = %q, want </file_content> tag", result)
 	}
 }
 
@@ -139,8 +148,8 @@ func TestReadFileBinaryOk(t *testing.T) {
 	tool := NewReadFileTool(func() string { return filepath.Dir(abs) })
 	args, _ := json.Marshal(map[string]string{"file_path": abs})
 	result := tool.Execute(context.Background(), args)
-	if !strings.Contains(result, "ok") {
-		t.Errorf("Execute() = %q, want 'ok' for binary file", result)
+	if !strings.Contains(result, "<file_content "+abs+">") {
+		t.Errorf("Execute() = %q, want <file_content> tag for binary file", result)
 	}
 }
 

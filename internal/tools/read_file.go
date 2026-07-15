@@ -139,8 +139,6 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) string
 		}
 		return fmt.Sprintf("error: cannot read file %s: %v", path, err)
 	}
-	if len(data) == 0 {
-		return "ok (empty)"
-	}
-	return "ok\n" + string(data)
+	content := string(data)
+	return fmt.Sprintf("<file_content %s>\n%s\n</file_content>", parsed.FilePath, content)
 }

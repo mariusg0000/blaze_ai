@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"blazeai/internal/platform"
@@ -276,6 +277,58 @@ func (s *Session) Append(msg Message) error {
 func (s *Session) AppendAll(msgs []Message) error {
 	s.Messages = append(s.Messages, msgs...)
 	return s.save()
+}
+
+// AppendReadFileResult appends a read_file result and clears older results for the same requested path.
+//
+// WHAT:  Persists the newest read_file content while removing redundant historical copies.
+// WHY:   Repeated file reads otherwise consume session context with stale snapshots.
+// HOW:   Extracts the path from the outermost tags, clears matching older tool messages, then saves once.
+func (s *Session) AppendReadFileResult(msg Message) error {
+	s.Messages = append(s.Messages, msg)
+	currentIndex := len(s.Messages) - 1
+	path, ok := fileContentPath(msg.Content)
+	if ok {
+		for i := 0; i < currentIndex; i++ {
+			candidate := &s.Messages[i]
+			if candidate.Role != "tool" || candidate.Name != "read_file" || candidate.Content == "" {
+				continue
+			}
+			candidatePath, candidateOK := fileContentPath(candidate.Content)
+			if candidateOK && candidatePath == path {
+				candidate.Content = ""
+			}
+		}
+	}
+	return s.save()
+}
+
+// fileContentPath extracts the requested path from one read_file result.
+//
+// WHAT:  Parses only the outer file-content envelope and returns its path.
+// WHY:   File contents may contain similar tags that must not affect matching.
+// HOW:   Uses the first opening tag and the last closing tag, treating the enclosed text as opaque.
+func fileContentPath(content interface{}) (string, bool) {
+	text, ok := content.(string)
+	if !ok {
+		return "", false
+	}
+	const opening = "<file_content "
+	const closing = "</file_content>"
+	start := strings.Index(text, opening)
+	if start < 0 {
+		return "", false
+	}
+	tagEnd := strings.IndexByte(text[start+len(opening):], '>')
+	if tagEnd < 0 {
+		return "", false
+	}
+	path := strings.TrimSpace(text[start+len(opening) : start+len(opening)+tagEnd])
+	contentStart := start + len(opening) + tagEnd + 1
+	if path == "" || strings.LastIndex(text[contentStart:], closing) < 0 {
+		return "", false
+	}
+	return path, true
 }
 
 // Reset clears the session history and marks it as open.
