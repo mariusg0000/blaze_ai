@@ -991,3 +991,147 @@ func TestListProviderModelsNotFound(t *testing.T) {
 		t.Fatal("ListProviderModels() expected error for unknown provider")
 	}
 }
+
+// --- Reasoning level tests ---
+
+// TestNewAgentLoadsStoredReasoningLevel verifies the agent loads a stored reasoning level from modes.
+func TestNewAgentLoadsStoredReasoningLevel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Providers:      []config.Provider{{Name: "test", Endpoint: server.URL, APIKey: "sk-test"}},
+		Roles:          config.Roles{Default: "test/test-model"},
+		Compaction:     config.DefaultCompaction(),
+		StripReasoning: config.DefaultStripReasoning(),
+	}
+
+	modes := &config.ModesConfig{
+		Modes:           []config.Mode{{Name: "default", Model: "test/test-model"}},
+		LastMode:        "default",
+		ReasoningLevels: map[string]string{"test/test-model": "high"},
+	}
+	if err := modes.Save(); err != nil {
+		t.Fatalf("Save() modes failed: %v", err)
+	}
+
+	dir := t.TempDir()
+	sess, _ := session.CreateInDir(dir)
+	promptsDir := filepath.Join(dir, "prompts")
+	os.MkdirAll(promptsDir, 0755)
+	writePromptFixtures(t, promptsDir)
+
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{}, "console")
+	if err != nil {
+		t.Fatalf("NewAgent() error: %v", err)
+	}
+	if agent.Provider.ReasoningLevel != "high" {
+		t.Errorf("Provider.ReasoningLevel = %q, want 'high'", agent.Provider.ReasoningLevel)
+	}
+}
+
+// TestActiveReasoningLevel verifies the getter returns the provider's level.
+func TestActiveReasoningLevel(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	// Empty by default.
+	if got := agent.ActiveReasoningLevel(); got != "" {
+		t.Errorf("ActiveReasoningLevel() = %q, want empty", got)
+	}
+
+	agent.Provider.ReasoningLevel = "xhigh"
+	if got := agent.ActiveReasoningLevel(); got != "xhigh" {
+		t.Errorf("ActiveReasoningLevel() = %q, want 'xhigh'", got)
+	}
+}
+
+// TestSetActiveReasoningLevel validates, sets, and persists the level.
+func TestSetActiveReasoningLevel(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	// The test model "test/test-model" is NOT a reasoning-capable model (no o1/o3/o4/gpt-5/codex prefix).
+	// So SetActiveReasoningLevel should fail for it.
+	err := agent.SetActiveReasoningLevel("high")
+	if err == nil {
+		t.Fatal("SetActiveReasoningLevel() expected error for non-reasoning model, got nil")
+	}
+}
+
+// TestSetActiveReasoningLevelInvalidLevel verifies error for invalid level string.
+func TestSetActiveReasoningLevelInvalidLevel(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	// Set a reasoning-capable model ID.
+	agent.ModelID = "test/o3"
+
+	err := agent.SetActiveReasoningLevel("ultra")
+	if err == nil {
+		t.Fatal("SetActiveReasoningLevel(ultra) expected error, got nil")
+	}
+}
+
+// TestApplyModelLoadsReasoningLevel verifies model switching loads the new model's stored level.
+func TestApplyModelLoadsReasoningLevel(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	agent.Modes.ReasoningLevels = map[string]string{"test/test-model": "low"}
+
+	err := agent.applyModel("test/test-model")
+	if err != nil {
+		t.Fatalf("applyModel() error: %v", err)
+	}
+	if agent.Provider.ReasoningLevel != "low" {
+		t.Errorf("Provider.ReasoningLevel = %q, want 'low'", agent.Provider.ReasoningLevel)
+	}
+}
+
+// TestApplyModelClearsLevelWhenNoneStored verifies no leftover level from previous model.
+func TestApplyModelClearsLevelWhenNoneStored(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	agent.Provider.ReasoningLevel = "high"
+	agent.Modes.ReasoningLevels = map[string]string{} // empty
+
+	err := agent.applyModel("test/test-model")
+	if err != nil {
+		t.Fatalf("applyModel() error: %v", err)
+	}
+	if agent.Provider.ReasoningLevel != "" {
+		t.Errorf("Provider.ReasoningLevel = %q, want empty after switch to model with no stored level", agent.Provider.ReasoningLevel)
+	}
+}
+
+// TestSetModelLoadsReasoningLevel verifies SetModel loads the new model's level.
+func TestSetModelLoadsReasoningLevel(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	// Persist modes to the file so reloadModesForPersistence finds them.
+	modes := &config.ModesConfig{
+		Modes: []config.Mode{{Name: "default", Model: "test/test-model"}},
+		LastMode:         "default",
+		ReasoningLevels:  map[string]string{"test/test-model": "min"},
+	}
+	if err := modes.Save(); err != nil {
+		t.Fatalf("Save() modes failed: %v", err)
+	}
+
+	// Reload into agent so in-memory state matches file.
+	agent.Modes = modes
+	agent.CurrentMode = &agent.Modes.Modes[0]
+
+	err := agent.SetModel("test/test-model")
+	if err != nil {
+		t.Fatalf("SetModel() error: %v", err)
+	}
+	if agent.Provider.ReasoningLevel != "min" {
+		t.Errorf("Provider.ReasoningLevel = %q, want 'min'", agent.Provider.ReasoningLevel)
+	}
+}

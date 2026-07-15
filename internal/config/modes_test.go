@@ -212,3 +212,114 @@ func TestMigrateFromConfigNoModes(t *testing.T) {
 		t.Fatalf("Modes = %d, want 1 (fallback)", len(mc.Modes))
 	}
 }
+
+// TestReasoningLevelsSaveLoadRoundTrip verifies reasoning_levels survive a save/load cycle.
+func TestReasoningLevelsSaveLoadRoundTrip(t *testing.T) {
+	mc := &ModesConfig{
+		Modes:    []Mode{{Name: "default", Model: "openrouter/a"}},
+		LastMode: "default",
+		ReasoningLevels: map[string]string{
+			"openrouter/o3":    "high",
+			"openrouter/gpt-5": "med",
+		},
+	}
+	path := writeModes(t, mc)
+	loaded, err := LoadModesFrom(path, "openrouter/fallback")
+	if err != nil {
+		t.Fatalf("LoadModesFrom() failed: %v", err)
+	}
+	if loaded.ReasoningLevels == nil {
+		t.Fatal("ReasoningLevels is nil after load")
+	}
+	if loaded.ReasoningLevels["openrouter/o3"] != "high" {
+		t.Errorf("ReasoningLevels[openrouter/o3] = %q, want high", loaded.ReasoningLevels["openrouter/o3"])
+	}
+	if loaded.ReasoningLevels["openrouter/gpt-5"] != "med" {
+		t.Errorf("ReasoningLevels[openrouter/gpt-5] = %q, want med", loaded.ReasoningLevels["openrouter/gpt-5"])
+	}
+}
+
+// TestReasoningLevelsMissing returns empty string when key is absent.
+func TestReasoningLevelsMissing(t *testing.T) {
+	mc := &ModesConfig{
+		Modes:    []Mode{{Name: "default", Model: "openrouter/a"}},
+		LastMode: "default",
+	}
+	level := mc.ReasoningLevelFor("openrouter/o3")
+	if level != "" {
+		t.Errorf("ReasoningLevelFor() = %q, want empty", level)
+	}
+}
+
+// TestReasoningLevelsNilMap returns empty string on nil map.
+func TestReasoningLevelsNilMap(t *testing.T) {
+	mc := &ModesConfig{}
+	level := mc.ReasoningLevelFor("openrouter/o3")
+	if level != "" {
+		t.Errorf("ReasoningLevelFor() = %q, want empty", level)
+	}
+}
+
+// TestSetReasoningLevel updates the map and persists via SaveTo.
+func TestSetReasoningLevel(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config", "modes.json")
+	mc := &ModesConfig{
+		Modes:    []Mode{{Name: "default", Model: "openrouter/a"}},
+		LastMode: "default",
+	}
+	if err := mc.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo() failed: %v", err)
+	}
+	// Initialize the map and update the reasoning level.
+	mc.ReasoningLevels = make(map[string]string)
+	mc.ReasoningLevels["openrouter/o3"] = "high"
+	if err := mc.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo() after update failed: %v", err)
+	}
+	// Reload from disk.
+	loaded, err := LoadModesFrom(path, "openrouter/fallback")
+	if err != nil {
+		t.Fatalf("LoadModesFrom() failed: %v", err)
+	}
+	if loaded.ReasoningLevels["openrouter/o3"] != "high" {
+		t.Errorf("persisted level = %q, want high", loaded.ReasoningLevels["openrouter/o3"])
+	}
+}
+
+// TestReasoningLevelsNotInJSON verifies modes without reasoning_levels load cleanly.
+func TestReasoningLevelsNotInJSON(t *testing.T) {
+	mc := &ModesConfig{
+		Modes:    []Mode{{Name: "default", Model: "openrouter/a"}},
+		LastMode: "default",
+	}
+	path := writeModes(t, mc)
+	loaded, err := LoadModesFrom(path, "openrouter/fallback")
+	if err != nil {
+		t.Fatalf("LoadModesFrom() failed: %v", err)
+	}
+	if loaded.ReasoningLevels != nil {
+		t.Errorf("ReasoningLevels = %v, want nil for absent key", loaded.ReasoningLevels)
+	}
+}
+
+// TestReasoningLevelsPerModelIsolation verifies models are isolated.
+func TestReasoningLevelsPerModelIsolation(t *testing.T) {
+	mc := &ModesConfig{
+		Modes:    []Mode{{Name: "default", Model: "openrouter/a"}},
+		LastMode: "default",
+		ReasoningLevels: map[string]string{
+			"openrouter/o3":    "high",
+			"openrouter/gpt-5": "low",
+		},
+	}
+	if mc.ReasoningLevelFor("openrouter/o3") != "high" {
+		t.Errorf("o3 level wrong")
+	}
+	if mc.ReasoningLevelFor("openrouter/gpt-5") != "low" {
+		t.Errorf("gpt-5 level wrong")
+	}
+	if mc.ReasoningLevelFor("openrouter/other") != "" {
+		t.Errorf("unknown model should return empty")
+	}
+}

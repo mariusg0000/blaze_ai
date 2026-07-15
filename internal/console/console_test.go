@@ -1076,3 +1076,118 @@ func TestReadLineSafelyConvertsPanic(t *testing.T) {
 		t.Fatalf("error does not include a useful stack trace: %v", err)
 	}
 }
+
+// TestOnAgentActivityResultShowsCTX verifies child tool_result lines display
+// CTX when LastPromptTokens is set, matching main-runtime tool result behavior.
+// WHAT: CTX suffix must appear on DONE tool_result lines with token data.
+// HOW: Sends tool_call then tool_result with LastPromptTokens and checks output.
+func TestOnAgentActivityResultShowsCTX(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnAgentActivity(runtime.AgentActivity{
+		Agent:            "[code_abc]",
+		Kind:             "tool_call",
+		Tool:             "shell",
+		Status:           "running",
+		Text:             "list files",
+		LastPromptTokens: 0,
+	})
+	c.OnAgentActivity(runtime.AgentActivity{
+		Agent:            "[code_abc]",
+		Kind:             "tool_result",
+		Tool:             "shell",
+		Status:           "ok",
+		Text:             "ok",
+		LastPromptTokens: 12500,
+	})
+	plain := stripANSICodes(out.String())
+	// formatCompactInt(12500) = "12k" (>=10000 range)
+	if !strings.Contains(plain, "CTX: 12k") {
+		t.Errorf("output missing CTX on agent tool_result: %q", plain)
+	}
+	if !strings.Contains(plain, "✔️") {
+		t.Errorf("output missing checkmark on agent tool_result: %q", plain)
+	}
+}
+
+// TestOnAgentActivityResultNoCTXWhenZeroTokens verifies that CTX is not shown
+// when LastPromptTokens is zero (no usage data available).
+// WHAT: No CTX suffix when token count is zero.
+// HOW: Sends tool_result with zero tokens and checks output lacks CTX.
+func TestOnAgentActivityResultNoCTXWhenZeroTokens(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnAgentActivity(runtime.AgentActivity{
+		Agent:            "[code_abc]",
+		Kind:             "tool_call",
+		Tool:             "shell",
+		Status:           "running",
+		Text:             "list files",
+		LastPromptTokens: 0,
+	})
+	c.OnAgentActivity(runtime.AgentActivity{
+		Agent:            "[code_abc]",
+		Kind:             "tool_result",
+		Tool:             "shell",
+		Status:           "ok",
+		Text:             "ok",
+		LastPromptTokens: 0,
+	})
+	plain := stripANSICodes(out.String())
+	if strings.Contains(plain, "CTX:") {
+		t.Errorf("output should not contain CTX when tokens are zero: %q", plain)
+	}
+}
+
+// TestOnAgentActivityResultErrorNoCTX verifies that ERROR tool_result lines
+// display the error content without CTX, matching main-runtime error formatting.
+// WHAT: Error badge with content, no CTX suffix.
+// HOW: Sends error tool_result and checks for error content without CTX.
+func TestOnAgentActivityResultErrorNoCTX(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnAgentActivity(runtime.AgentActivity{
+		Agent:            "[code_abc]",
+		Kind:             "tool_call",
+		Tool:             "shell",
+		Status:           "running",
+		Text:             "run command",
+		LastPromptTokens: 0,
+	})
+	c.OnAgentActivity(runtime.AgentActivity{
+		Agent:            "[code_abc]",
+		Kind:             "tool_result",
+		Tool:             "shell",
+		Status:           "ok",
+		Text:             "error: command failed",
+		LastPromptTokens: 10000,
+	})
+	plain := stripANSICodes(out.String())
+	// parseToolResult returns badge="ERROR" which renders as literal text.
+	if !strings.Contains(plain, "command failed") {
+		t.Errorf("output missing error content: %q", plain)
+	}
+	if strings.Contains(plain, "CTX:") {
+		t.Errorf("error output should not contain CTX: %q", plain)
+	}
+}
+
+// TestOnAgentActivityResultStandaloneCTX verifies CTX shows when tool_result
+// arrives without a matching prior tool_call (e.g. after clear).
+// WHAT: Standalone tool_result with CTX renders correctly.
+// HOW: Sends only tool_result without preceding tool_call.
+func TestOnAgentActivityResultStandaloneCTX(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	c.OnAgentActivity(runtime.AgentActivity{
+		Agent:            "[code_abc]",
+		Kind:             "tool_result",
+		Tool:             "shell",
+		Status:           "ok",
+		Text:             "ok",
+		LastPromptTokens: 8500,
+	})
+	plain := stripANSICodes(out.String())
+	if !strings.Contains(plain, "CTX: 8.5k") {
+		t.Errorf("standalone tool_result missing CTX: %q", plain)
+	}
+	if !strings.Contains(plain, "✔️") {
+		t.Errorf("standalone tool_result missing checkmark: %q", plain)
+	}
+}

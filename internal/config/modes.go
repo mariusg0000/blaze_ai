@@ -24,10 +24,13 @@ var ErrModesMissing = errors.New("modes file missing")
 //
 //	critical provider/role configuration, reducing corruption risk.
 //
-// PARAMS: Modes — work mode definitions; LastMode — persisted active mode name.
+// PARAMS: Modes — work mode definitions; LastMode — persisted active mode name;
+//
+//	ReasoningLevels — per-model reasoning level (e.g., {"openai/o3": "high"}).
 type ModesConfig struct {
-	Modes    []Mode `json:"modes"`
-	LastMode string `json:"last_mode,omitempty"`
+	Modes           []Mode            `json:"modes"`
+	LastMode        string            `json:"last_mode,omitempty"`
+	ReasoningLevels map[string]string `json:"reasoning_levels,omitempty"`
 }
 
 // modesPath resolves the full path to modes.json under app home.
@@ -199,6 +202,35 @@ func (m *ModesConfig) SaveTo(path string) error {
 		return fmt.Errorf("cannot commit modes file: %w", err)
 	}
 	return nil
+}
+
+// ReasoningLevelFor returns the stored reasoning level for a provider/model identifier.
+//
+// WHAT:  Looks up the per-model reasoning level from the modes config.
+// WHY:   The runtime and provider need the active reasoning level for request construction.
+// HOW:   Returns the stored value if present; empty string if not configured.
+// PARAMS: modelID — full provider/model_name identifier.
+// RETURNS: string — stored level (e.g., "high"), or "" if not configured.
+func (m *ModesConfig) ReasoningLevelFor(modelID string) string {
+	if m.ReasoningLevels == nil {
+		return ""
+	}
+	return m.ReasoningLevels[modelID]
+}
+
+// SetReasoningLevel stores the reasoning level for a model and persists immediately.
+//
+// WHAT:  Updates the per-model reasoning level and saves to disk.
+// WHY:   Level changes must survive restarts.
+// HOW:   Initializes the map if nil, sets the value, and saves.
+// PARAMS: modelID — full provider/model_name identifier; level — standard reasoning level.
+// RETURNS: error if save fails.
+func (m *ModesConfig) SetReasoningLevel(modelID, level string) error {
+	if m.ReasoningLevels == nil {
+		m.ReasoningLevels = make(map[string]string)
+	}
+	m.ReasoningLevels[modelID] = level
+	return m.Save()
 }
 
 // MigrateFromConfig reads legacy modes from config.json, saves them to modes.json,

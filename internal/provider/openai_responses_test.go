@@ -41,7 +41,7 @@ func TestBuildChatGPTRequestConvertsHistoryAndTools(t *testing.T) {
 	}, []tools.OpenAITool{{
 		Type:     "function",
 		Function: tools.FunctionDef{Name: "shell", Description: "Run a command", Parameters: json.RawMessage(`{"type":"object"}`)},
-	}})
+	}}, "")
 	if err != nil {
 		t.Fatalf("buildChatGPTRequest() error: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestBuildChatGPTLiteRequestAddsAllTurnsReasoningAndStripsImageDetail(t *tes
 	}, {
 		Type:     "function",
 		Function: tools.FunctionDef{Name: "load_skill", Description: "Load a skill", Parameters: json.RawMessage(`{"type":"object"}`)},
-	}})
+	}}, "")
 	if err != nil {
 		t.Fatalf("buildChatGPTRequest() error: %v", err)
 	}

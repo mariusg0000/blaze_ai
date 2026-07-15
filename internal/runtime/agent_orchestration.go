@@ -27,9 +27,14 @@ const (
 )
 
 // childHandler suppresses child transcript text but forwards scoped tool activity immediately.
+// WHAT:  Bridges child runtime handler events to the parent's agent-activity emitter.
+// HOW:   OnUsage tracks the latest prompt token count so that OnToolResult can attach CTX
+//
+//	data matching main-runtime tool result behavior.
 type childHandler struct {
-	agentID string
-	emit    func(AgentActivity)
+	agentID          string
+	emit             func(AgentActivity)
+	lastPromptTokens int
 }
 
 func (h childHandler) OnContent(string) {}
@@ -37,10 +42,12 @@ func (h childHandler) OnToolCall(name, args string) {
 	h.emit(AgentActivity{Agent: h.agentID, Kind: "tool_call", Tool: name, Status: "running", Text: args})
 }
 func (h childHandler) OnToolResult(name, result string) {
-	h.emit(AgentActivity{Agent: h.agentID, Kind: "tool_result", Tool: name, Status: "ok", Text: result})
+	h.emit(AgentActivity{Agent: h.agentID, Kind: "tool_result", Tool: name, Status: "ok", Text: result, LastPromptTokens: h.lastPromptTokens})
 }
-func (h childHandler) OnUsage(int, int, int) {}
-func (h childHandler) OnReasoning(string)    {}
+func (h *childHandler) OnUsage(promptTokens, cachedTokens, uncachedTokens int) {
+	h.lastPromptTokens = promptTokens
+}
+func (h childHandler) OnReasoning(string) {}
 func (h childHandler) OnSystem(message string) {
 	h.emit(AgentActivity{Agent: h.agentID, Kind: "system", Status: "info", Text: message})
 }
@@ -209,7 +216,7 @@ func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, 
 	if err := os.WriteFile(taskPath, []byte(strings.TrimSpace(task.Task)+"\n"), 0644); err != nil {
 		return "", fmt.Errorf("cannot write child task file: %w", err)
 	}
-	child, err := newChildAgent(a.Config, childSession, a.OS, a.Builder.PromptsFS, a.WorkDir, childHandler{agentID: displayID, emit: a.emitAgentActivity}, a.Builder.TransportName, model)
+	child, err := newChildAgent(a.Config, childSession, a.OS, a.Builder.PromptsFS, a.WorkDir, &childHandler{agentID: displayID, emit: a.emitAgentActivity}, a.Builder.TransportName, model)
 	if err != nil {
 		return "", fmt.Errorf("cannot initialize child agent %q: %w", definition.Name, err)
 	}

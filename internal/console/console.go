@@ -23,6 +23,7 @@ import (
 	"blazeai/internal/config"
 	"blazeai/internal/helpers"
 	"blazeai/internal/provider"
+	"blazeai/internal/reasoning"
 	"blazeai/internal/runtime"
 	"blazeai/internal/skills"
 
@@ -397,10 +398,20 @@ func (c *Console) buildStatusBar() string {
 	}
 	phase = fmt.Sprintf("%-*s", phaseWidth, phase)
 
-	const reasoningLevel = "medium"
+	// Dynamic reasoning level: only show for reasoning-capable models.
+	reasoningSeg := ""
+	if reasoning.IsReasoningCapableForModel(c.Agent.ModelID) {
+		level := c.Agent.ActiveReasoningLevel()
+		if level == "" {
+			level = reasoning.DefaultForModel(c.Agent.ModelID)
+		}
+		if level != "" {
+			reasoningSeg = " | " + level
+		}
+	}
 
 	// Visible text (ASCII only) for width calculation.
-	vis := " " + phase + " | " + modeName + " | " + model + " | " + reasoningLevel + " | " + workDir + " | CTX " + ctx + "(H:" + cacheHit + "|M:" + cacheMiss + "|S:" + summaries + ") "
+	vis := " " + phase + " | " + modeName + " | " + model + reasoningSeg + " | " + workDir + " | CTX " + ctx + "(H:" + cacheHit + "|M:" + cacheMiss + "|S:" + summaries + ") "
 	visLen := len(vis)
 
 	// Build ANSI-colored text.
@@ -424,10 +435,12 @@ func (c *Console) buildStatusBar() string {
 	b.WriteString(" | ")
 	b.WriteString(acc)
 	b.WriteString(model)
-	b.WriteString(sep)
-	b.WriteString(" | ")
-	b.WriteString(val)
-	b.WriteString(reasoningLevel)
+	if reasoningSeg != "" {
+		b.WriteString(sep)
+		b.WriteString(" | ")
+		b.WriteString(val)
+		b.WriteString(reasoningSeg[3:]) // skip " | " prefix
+	}
 	b.WriteString(sep)
 	b.WriteString(" | ")
 	b.WriteString(dir)
@@ -769,7 +782,8 @@ func (c *Console) OnSystem(message string) {
 }
 
 // OnAgentActivity renders child-agent lifecycle and tool events in the console transport.
-// Child tool calls use the main tool-line format with an Agent scope prefix.
+// WHAT:  Displays child tool calls and results with Agent-scope prefix, matching main-tool styling.
+// HOW:   tool_result lines append CTX from LastPromptTokens, consistent with main OnToolResult.
 func (c *Console) OnAgentActivity(activity runtime.AgentActivity) {
 	if c.turnAborting.Load() {
 		return
@@ -795,7 +809,11 @@ func (c *Console) OnAgentActivity(activity runtime.AgentActivity) {
 			c.agentToolAgent = ""
 		}
 		if badge == "DONE" {
-			fmt.Fprintf(c.Out, " %s\n", c.color(colorBrightGreen, "✔️"))
+			ctx := ""
+			if activity.LastPromptTokens > 0 {
+				ctx = "  " + c.color(colorCtx, "CTX: "+formatCompactInt(activity.LastPromptTokens))
+			}
+			fmt.Fprintf(c.Out, " %s%s\n", c.color(colorBrightGreen, "✔️"), ctx)
 		} else {
 			fmt.Fprintf(c.Out, " %s %s\n", c.color(colorCode, badge), c.color(colorCode, content))
 		}

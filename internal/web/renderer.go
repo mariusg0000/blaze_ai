@@ -298,8 +298,17 @@ func parseToolResult(result string) (badge, content, colorClass string) {
 }
 
 // agentToolLineHTML renders a child tool line with Agent identity and main tool styling.
-func agentToolLineHTML(agent, name, args, badge string) string {
-	return `<span class="orange">Agent [` + escapeHTML(agent) + `]</span> ` + toolLineHTML(name, args, badge)
+// WHAT:  Produces HTML for child tool activity with optional CTX token count.
+// HOW:   Prepends Agent scope prefix and delegates to toolLineHTML for emoji/args/badge.
+// PARAMS: agent — child agent display ID; name — tool name; args — tool arguments;
+//
+//	badge — status symbol or empty; ctxTokens — prompt token count for CTX display.
+func agentToolLineHTML(agent, name, args, badge string, ctxTokens int) string {
+	base := `<span class="orange">Agent [` + escapeHTML(agent) + `]</span> ` + toolLineHTML(name, args, badge)
+	if ctxTokens > 0 {
+		base += ` <span class="ctx">CTX: ` + escapeHTML(formatCompactInt(ctxTokens)) + `</span>`
+	}
+	return base
 }
 
 // toolLineHTML renders a single tool activity line with emoji, args, and badge.

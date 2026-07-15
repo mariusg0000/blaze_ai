@@ -24,6 +24,7 @@ import (
 	"blazeai/internal/platform"
 	"blazeai/internal/prompt"
 	"blazeai/internal/provider"
+	"blazeai/internal/reasoning"
 	"blazeai/internal/session"
 	"blazeai/internal/skills"
 	"blazeai/internal/tools"
@@ -71,12 +72,19 @@ type StreamPhaseHandler interface {
 }
 
 // AgentActivity describes one ephemeral child-agent lifecycle event.
+//
+// WHAT:  Carries child-agent lifecycle and tool activity to transports.
+// WHY:   Transports render child activity independently from the main handler.
+// HOW:   LastPromptTokens carries the latest provider-reported prompt token count
+//
+//	for CTX display on tool_result lines, matching main-runtime tool result behavior.
 type AgentActivity struct {
-	Agent  string
-	Kind   string
-	Tool   string
-	Status string
-	Text   string
+	Agent            string
+	Kind             string
+	Tool             string
+	Status           string
+	Text             string
+	LastPromptTokens int
 }
 
 // AgentActivityHandler is an optional transport extension for child activity.
@@ -301,6 +309,13 @@ func newAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 	if currentMode != nil {
 		if err := agent.refreshModeCapabilities(); err != nil {
 			return nil, err
+		}
+	}
+
+	// Load stored reasoning level for the active model from modes.json.
+	if modes != nil {
+		if storedLevel := modes.ReasoningLevelFor(modelID); storedLevel != "" {
+			agent.Provider.ReasoningLevel = storedLevel
 		}
 	}
 
@@ -661,6 +676,14 @@ func (a *Agent) applyModel(modelID string) error {
 	if a.Compactor != nil {
 		a.Compactor.Provider = client
 	}
+
+	// Load stored reasoning level for the new model from modes.json.
+	if a.Modes != nil {
+		if storedLevel := a.Modes.ReasoningLevelFor(modelID); storedLevel != "" {
+			a.Provider.ReasoningLevel = storedLevel
+		}
+	}
+
 	return nil
 }
 
@@ -696,6 +719,52 @@ func (a *Agent) SetModel(modelID string) error {
 // RETURNS: error if model validation or provider client creation fails.
 func (a *Agent) SetModelLocal(modelID string) error {
 	return a.applyModel(modelID)
+}
+
+// ActiveReasoningLevel returns the current reasoning level for the active model.
+//
+// WHAT:  Exposes the provider client's reasoning level to transports.
+// WHY:   The console status bar needs to display the active level.
+// HOW:   Reads directly from the provider client; empty string means no level set.
+//
+// RETURNS: the current reasoning level string, or "" if unset.
+func (a *Agent) ActiveReasoningLevel() string {
+	if a.Provider == nil {
+		return ""
+	}
+	return a.Provider.ReasoningLevel
+}
+
+// SetActiveReasoningLevel validates, sets, and persists the reasoning level
+// for the active model.
+//
+// WHAT:  User-facing setter with strict validation and immediate persistence.
+// WHY:   Transports need to change the level and persist it without delay.
+// HOW:   Validates the level string, checks model capability, sets the provider
+//
+//	level, and persists to modes.json via SetReasoningLevel.
+//
+// PARAMS: level — abstract reasoning level (e.g., "high", "max").
+// RETURNS: error if the level is invalid, the model does not support reasoning,
+//
+//	or persistence fails.
+func (a *Agent) SetActiveReasoningLevel(level string) error {
+	if a.Provider == nil {
+		return fmt.Errorf("provider is not initialized")
+	}
+	if !reasoning.IsReasoningCapableForModel(a.ModelID) {
+		return fmt.Errorf("model %q does not support reasoning levels", a.ModelID)
+	}
+	if err := reasoning.ValidateLevel(level); err != nil {
+		return err
+	}
+	a.Provider.ReasoningLevel = level
+	if a.Modes != nil {
+		if err := a.Modes.SetReasoningLevel(a.ModelID, level); err != nil {
+			return fmt.Errorf("cannot persist reasoning level: %w", err)
+		}
+	}
+	return nil
 }
 
 // SetWorkDir changes the current work folder and updates the prompt builder.

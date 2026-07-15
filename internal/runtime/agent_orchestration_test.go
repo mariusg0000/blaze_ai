@@ -1,5 +1,5 @@
 // agent_orchestration_test.go — tests for persistent child-agent result handling.
-// Purpose: Verify fallback completion and resume metadata formatting.
+// Purpose: Verify fallback completion, resume metadata formatting, and childHandler CTX propagation.
 // Layer: runtime orchestration tests. Direct dependency: internal/session.
 package runtime
 
@@ -57,5 +57,97 @@ func TestFormatChildResultIncludesResumeMetadata(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("formatChildResult() missing %q in %q", want, got)
 		}
+	}
+}
+
+// TestChildHandlerOnUsageStoresPromptTokens verifies that childHandler tracks
+// the latest prompt token count from OnUsage for CTX propagation.
+// WHAT: OnUsage must update internal state that OnToolResult reads.
+// HOW: Calls OnUsage then OnToolResult and checks LastPromptTokens in emitted activity.
+func TestChildHandlerOnUsageStoresPromptTokens(t *testing.T) {
+	var emitted []AgentActivity
+	h := &childHandler{
+		agentID: "[test_abc]",
+		emit: func(a AgentActivity) {
+			emitted = append(emitted, a)
+		},
+	}
+	h.OnUsage(15000, 3000, 12000)
+	h.OnToolResult("shell", "ok")
+
+	if len(emitted) != 1 {
+		t.Fatalf("expected 1 emitted activity, got %d", len(emitted))
+	}
+	if emitted[0].LastPromptTokens != 15000 {
+		t.Errorf("LastPromptTokens = %d, want 15000", emitted[0].LastPromptTokens)
+	}
+}
+
+// TestChildHandlerToolResultWithoutUsageShowsZeroTokens verifies that when no
+// OnUsage was called, the tool_result activity carries zero tokens.
+// WHAT: OnToolResult must carry LastPromptTokens=0 by default.
+// HOW: Calls only OnToolResult without preceding OnUsage.
+func TestChildHandlerToolResultWithoutUsageShowsZeroTokens(t *testing.T) {
+	var emitted []AgentActivity
+	h := &childHandler{
+		agentID: "[test_abc]",
+		emit: func(a AgentActivity) {
+			emitted = append(emitted, a)
+		},
+	}
+	h.OnToolResult("shell", "ok")
+
+	if len(emitted) != 1 {
+		t.Fatalf("expected 1 emitted activity, got %d", len(emitted))
+	}
+	if emitted[0].LastPromptTokens != 0 {
+		t.Errorf("LastPromptTokens = %d, want 0", emitted[0].LastPromptTokens)
+	}
+}
+
+// TestChildHandlerOnUsageUpdatesAcrossCalls verifies that OnUsage tracks the
+// most recent token count, not the first.
+// WHAT: Each OnUsage call must overwrite the previous token count.
+// HOW: Calls OnUsage twice with different values, then checks the final activity.
+func TestChildHandlerOnUsageUpdatesAcrossCalls(t *testing.T) {
+	var emitted []AgentActivity
+	h := &childHandler{
+		agentID: "[test_abc]",
+		emit: func(a AgentActivity) {
+			emitted = append(emitted, a)
+		},
+	}
+	h.OnUsage(10000, 0, 10000)
+	h.OnUsage(20000, 5000, 15000)
+	h.OnToolResult("shell", "ok")
+
+	if len(emitted) != 1 {
+		t.Fatalf("expected 1 emitted activity, got %d", len(emitted))
+	}
+	if emitted[0].LastPromptTokens != 20000 {
+		t.Errorf("LastPromptTokens = %d, want 20000", emitted[0].LastPromptTokens)
+	}
+}
+
+// TestChildHandlerToolCallDoesNotCarryTokens verifies that tool_call activities
+// never include prompt token data (CTX belongs only on result lines).
+// WHAT: tool_call Kind must have zero LastPromptTokens.
+// HOW: Emits a tool_call and verifies the field is zero.
+func TestChildHandlerToolCallDoesNotCarryTokens(t *testing.T) {
+	var emitted []AgentActivity
+	h := &childHandler{
+		agentID: "[test_abc]",
+		emit: func(a AgentActivity) {
+			emitted = append(emitted, a)
+		},
+	}
+	h.OnUsage(15000, 0, 15000)
+	h.OnToolCall("shell", "ls -la")
+
+	if len(emitted) != 1 {
+		t.Fatalf("expected 1 emitted activity, got %d", len(emitted))
+	}
+	if emitted[0].LastPromptTokens != 0 {
+		t.Errorf("tool_call LastPromptTokens = %d, want 0", emitted[0].LastPromptTokens)
 	}
 }

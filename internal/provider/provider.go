@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"blazeai/internal/config"
+	"blazeai/internal/reasoning"
 	"blazeai/internal/session"
 	"blazeai/internal/tools"
 	usagepkg "blazeai/internal/usage"
@@ -86,7 +87,9 @@ func StreamPhaseTimeout(phase StreamPhase) time.Duration {
 //
 // WHAT:  HTTP client for a single provider endpoint.
 // WHY:   The runtime uses one client per provider to send chat completion requests.
-// PARAMS: Endpoint — base API URL; APIKey — secret key; Model — bare model name; HTTP — HTTP client.
+// PARAMS: Endpoint — base API URL; APIKey — secret key; Model — bare model name;
+//
+//	HTTP — HTTP client; ReasoningLevel — active reasoning level for reasoning-capable models.
 type Client struct {
 	Endpoint         string
 	APIKey           string
@@ -101,6 +104,7 @@ type Client struct {
 	ThreadID         string
 	WindowID         string
 	InstallationID   string
+	ReasoningLevel   string
 	oauthMu          sync.Mutex
 }
 
@@ -334,12 +338,14 @@ func (c *Client) listChatGPTModels() ([]string, error) {
 // chatRequest is the request body sent to the chat completions endpoint.
 //
 // WHAT:  OpenAI-compatible chat completion request with streaming and tools.
+// PARAMS: ReasoningEffort — optional reasoning level ("", "low", "medium", etc.).
 type chatRequest struct {
-	Model         string             `json:"model"`
-	Messages      []session.Message  `json:"messages"`
-	Tools         []tools.OpenAITool `json:"tools,omitempty"`
-	Stream        bool               `json:"stream"`
-	StreamOptions *streamOptions     `json:"stream_options,omitempty"`
+	Model           string             `json:"model"`
+	Messages        []session.Message  `json:"messages"`
+	Tools           []tools.OpenAITool `json:"tools,omitempty"`
+	Stream          bool               `json:"stream"`
+	StreamOptions   *streamOptions     `json:"stream_options,omitempty"`
+	ReasoningEffort string             `json:"reasoning_effort,omitempty"`
 }
 
 // streamOptions controls what additional data is included in the streaming response.
@@ -445,6 +451,16 @@ func (c *Client) StreamWithPhase(ctx context.Context, messages []session.Message
 		Tools:         toolDefs,
 		Stream:        true,
 		StreamOptions: &streamOptions{IncludeUsage: true},
+	}
+	// Apply reasoning level if configured for this model.
+	if c.ReasoningLevel != "" {
+		fragment, err := reasoning.Normalize("openai_chat", c.Model, c.ReasoningLevel)
+		if err != nil {
+			return nil, fmt.Errorf("reasoning level error: %w", err)
+		}
+		if effort, ok := fragment["reasoning_effort"].(string); ok {
+			reqBody.ReasoningEffort = effort
+		}
 	}
 	bodyData, err := json.Marshal(reqBody)
 	if err != nil {

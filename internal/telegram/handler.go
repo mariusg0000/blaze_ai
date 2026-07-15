@@ -113,6 +113,8 @@ func (h *Handler) OnSystem(message string) {
 }
 
 // OnAgentActivity renders compact child-agent status in Telegram.
+// WHAT:  Displays child tool events with CTX token count on tool_result lines.
+// HOW:   Appends CTX suffix when LastPromptTokens > 0, consistent with main tool results.
 func (h *Handler) OnAgentActivity(activity runtime.AgentActivity) {
 	text := "[" + activity.Agent + "]"
 	switch activity.Kind {
@@ -120,6 +122,9 @@ func (h *Handler) OnAgentActivity(activity runtime.AgentActivity) {
 		text += " " + activity.Text
 	case "tool_result":
 		text += " ✔ " + activity.Tool
+		if activity.LastPromptTokens > 0 {
+			text += " CTX:" + strconv.Itoa(activity.LastPromptTokens)
+		}
 		if activity.Text != "" {
 			text += ": " + activity.Text
 		}

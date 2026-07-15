@@ -221,13 +221,16 @@ func (h *Handler) OnSystem(message string) {
 }
 
 // OnAgentActivity renders child activity as Agent-scoped transcript blocks.
-// Child tool events reuse the main tool-line renderer and add the child identity prefix.
+// WHAT:  Displays child tool events with Agent-scope prefix and CTX on tool_result lines.
+// HOW:   Passes LastPromptTokens to agentToolLineHTML only for DONE results, matching
+//
+//	main-runtime behavior where CTX appears only on successful tool completions.
 func (h *Handler) OnAgentActivity(activity runtime.AgentActivity) {
 	if h.server == nil {
 		return
 	}
 	if activity.Kind == "tool_call" {
-		h.server.sendBlock("tool", agentToolLineHTML(activity.Agent, activity.Tool, activity.Text, ""))
+		h.server.sendBlock("tool", agentToolLineHTML(activity.Agent, activity.Tool, activity.Text, "", 0))
 		h.server.mu.Lock()
 		h.agentToolBlocks[activity.Agent] = len(h.server.blocks) - 1
 		h.server.mu.Unlock()
@@ -236,9 +239,11 @@ func (h *Handler) OnAgentActivity(activity runtime.AgentActivity) {
 	if activity.Kind == "tool_result" {
 		badge, _, _ := parseToolResult(activity.Text)
 		badgeSymbol := ""
+		ctxTokens := 0
 		switch badge {
 		case "DONE":
 			badgeSymbol = "✔️"
+			ctxTokens = activity.LastPromptTokens
 		case "ERROR":
 			badgeSymbol = "✖️"
 		case "TIMEOUT":
@@ -249,9 +254,9 @@ func (h *Handler) OnAgentActivity(activity runtime.AgentActivity) {
 		delete(h.agentToolBlocks, activity.Agent)
 		h.mu.Unlock()
 		if ok {
-			h.server.replaceBlock(idx, "tool", agentToolLineHTML(activity.Agent, activity.Tool, "", badgeSymbol))
+			h.server.replaceBlock(idx, "tool", agentToolLineHTML(activity.Agent, activity.Tool, "", badgeSymbol, ctxTokens))
 		} else {
-			h.server.sendBlock("tool", agentToolLineHTML(activity.Agent, activity.Tool, "", badgeSymbol))
+			h.server.sendBlock("tool", agentToolLineHTML(activity.Agent, activity.Tool, "", badgeSymbol, ctxTokens))
 		}
 		return
 	}
