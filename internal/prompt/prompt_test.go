@@ -738,3 +738,26 @@ func TestBuildRuntimePartHelperNoHelpers(t *testing.T) {
 		t.Error("runtime part should render NULL for missing optional host helpers")
 	}
 }
+
+// TestReadProjectFilesCaseInsensitive verifies mixed-case project context lookup.
+func TestReadProjectFilesCaseInsensitive(t *testing.T) {
+	workDir := t.TempDir()
+	writeFile(t, filepath.Join(workDir, "SpEcS.MD"), "spec content")
+	writeFile(t, filepath.Join(workDir, "aGeNtS.mD"), "agent rules")
+
+	specs, err := readProjectFileOptional(workDir, "specs.md")
+	if err != nil {
+		t.Fatalf("specs lookup error: %v", err)
+	}
+	if specs != "spec content" {
+		t.Fatalf("specs lookup = %q, want %q", specs, "spec content")
+	}
+
+	agents, err := readProjectFileOptional(workDir, "AGENTS.md")
+	if err != nil {
+		t.Fatalf("AGENTS lookup error: %v", err)
+	}
+	if agents != "agent rules" {
+		t.Fatalf("AGENTS lookup = %q, want %q", agents, "agent rules")
+	}
+}

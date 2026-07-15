@@ -201,7 +201,9 @@ func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, 
 	if err := child.SetModelLocal(model); err != nil {
 		return "", fmt.Errorf("cannot select model for child %q: %w", definition.Name, err)
 	}
-	child.Builder.Agents = []agents.Definition{definition}
+	child.Builder.SystemPromptName = "sysprompt.agent.md"
+	child.Builder.AgentInstructions = definition.Instructions
+	child.Builder.Agents = nil
 
 	completion := ""
 	child.BaseTools.Register(tools.NewAgentDoneTool(func(answer string) { completion = boundAnswer(answer) }))
@@ -288,11 +290,8 @@ func containsToolName(names []string, wanted string) bool {
 }
 
 // buildChildInput passes only requested task/context and the definition body.
-func buildChildInput(definition agents.Definition, task tools.RunAgentTask) string {
+func buildChildInput(_ agents.Definition, task tools.RunAgentTask) string {
 	var parts []string
-	if definition.Instructions != "" {
-		parts = append(parts, "[AGENT INSTRUCTIONS]\n"+definition.Instructions)
-	}
 	parts = append(parts, "[TASK]\n"+strings.TrimSpace(task.Task))
 	if strings.TrimSpace(task.Context) != "" {
 		parts = append(parts, "[CONTEXT]\n"+strings.TrimSpace(task.Context))

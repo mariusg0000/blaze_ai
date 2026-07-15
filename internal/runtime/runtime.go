@@ -182,12 +182,13 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 	active := skills.NewActiveList()
 
 	builder := &prompt.Builder{
-		PromptsFS:     promptsFS,
-		WorkDir:       workDir,
-		OS:            os,
-		OSInfo:        platform.OSInfo(),
-		TransportName: transportName,
-		HelperSetup:   cfg.HelperSetup,
+		PromptsFS:        promptsFS,
+		WorkDir:          workDir,
+		OS:               os,
+		OSInfo:           platform.OSInfo(),
+		SystemPromptName: "sysprompt.md",
+		TransportName:    transportName,
+		HelperSetup:      cfg.HelperSetup,
 	}
 
 	agent := &Agent{

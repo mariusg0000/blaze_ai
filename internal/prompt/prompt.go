@@ -56,8 +56,10 @@ type Builder struct {
 	WorkDir          string
 	OS               platform.OS
 	OSInfo           string
+	SystemPromptName string
 	TransportName    string
 	TransportContext string
+	AgentInstructions string
 	HelperSetup      config.HelperSetup
 	HelperLookup     helpers.LookupFunc
 	Agents           []agents.Definition
@@ -162,6 +164,8 @@ func allowsEmptyTemplateValue(name string) bool {
 		return true
 	case "AGENTS_CONTENT":
 		return true
+	case "AGENT_INSTRUCTIONS":
+		return true
 	default:
 		return false
 	}
@@ -189,6 +193,33 @@ func readFileOptional(path string) (string, error) {
 		return "", fmt.Errorf("cannot read %s: %w", path, err)
 	}
 	return string(data), nil
+}
+
+// readProjectFileOptional reads one project file without treating its name casing as significant.
+// WHAT: Finds and reads a case-insensitive filename in the target directory.
+// HOW: Lists the directory, matches names with EqualFold, and rejects ambiguous duplicates.
+func readProjectFileOptional(dir, filename string) (string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("cannot inspect project directory %s: %w", dir, err)
+	}
+	var matches []string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(entry.Name(), filename) {
+			continue
+		}
+		matches = append(matches, entry.Name())
+	}
+	if len(matches) == 0 {
+		return "", nil
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("ambiguous project file %q: matches %s", filename, strings.Join(matches, ", "))
+	}
+	return readFileOptional(filepath.Join(dir, matches[0]))
 }
 
 // buildSkillsSection assembles loadable skills, runnable skill prompt section, and active skill content.
@@ -356,7 +387,11 @@ func (b *Builder) buildAgentsSection() string {
 // Order: universal → OS → transport → helpers → skills → agents → specs.md → AGENTS.md.
 func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, error) {
 	// 1. Universal system prompt (required).
-	universal, err := readFileRequiredFS(b.PromptsFS, "sysprompt.md", ErrUniversalPromptMissing)
+	systemPromptName := strings.TrimSpace(b.SystemPromptName)
+	if systemPromptName == "" {
+		systemPromptName = "sysprompt.md"
+	}
+	universal, err := readFileRequiredFS(b.PromptsFS, systemPromptName, ErrUniversalPromptMissing)
 	if err != nil {
 		return "", err
 	}
@@ -368,15 +403,18 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 		return "", err
 	}
 
-	// 3. Transport-specific prompt (required for the active transport).
-	transportName := strings.TrimSpace(b.TransportName)
-	if transportName == "" {
-		return "", ErrTransportNameMissing
-	}
-	transportPromptName := fmt.Sprintf("transport.%s.md", transportName)
-	transportPrompt, err := readFileRequiredFS(b.PromptsFS, transportPromptName, ErrTransportPromptMissing)
-	if err != nil {
-		return "", err
+	// 3. Transport-specific prompt (required for the main runtime only).
+	transportPrompt := ""
+	if systemPromptName != "sysprompt.agent.md" {
+		transportName := strings.TrimSpace(b.TransportName)
+		if transportName == "" {
+			return "", ErrTransportNameMissing
+		}
+		transportPromptName := fmt.Sprintf("transport.%s.md", transportName)
+		transportPrompt, err = readFileRequiredFS(b.PromptsFS, transportPromptName, ErrTransportPromptMissing)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	// 4. Host helpers (optional).
@@ -398,7 +436,7 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 	}
 
 	// 6. specs.md from work folder (optional).
-	projectContext, err := readFileOptional(filepath.Join(b.WorkDir, "specs.md"))
+	projectContext, err := readProjectFileOptional(b.WorkDir, "specs.md")
 	if err != nil {
 		return "", err
 	}
@@ -407,7 +445,7 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 	}
 
 	// 7. AGENTS.md from work folder (optional).
-	agents, err := readFileOptional(filepath.Join(b.WorkDir, "AGENTS.md"))
+	agents, err := readProjectFileOptional(b.WorkDir, "AGENTS.md")
 	if err != nil {
 		return "", err
 	}
@@ -427,6 +465,7 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 		"RUNNABLE_SKILLS_SECTION": strings.TrimSpace(runnableSkillsAvailable),
 		"SKILLS_ACTIVE":           strings.TrimSpace(skillsActive),
 		"AGENTS_AVAILABLE":        strings.TrimSpace(b.buildAgentsSection()),
+		"AGENT_INSTRUCTIONS":     strings.TrimSpace(b.AgentInstructions),
 		"PROJECT_CONTENT":         strings.TrimSpace(projectContext),
 		"AGENTS_CONTENT":          strings.TrimSpace(agents),
 	}
