@@ -21,6 +21,9 @@ import (
 // MaxShellOutputBytes is the absolute cap for combined stdout and stderr returned by shell.
 const MaxShellOutputBytes = 150 * 1024
 
+// MaxShellErrorChars limits individual shell execution errors returned to the model.
+const MaxShellErrorChars = 100
+
 // ShellArgs are the arguments for the shell tool.
 //
 // WHAT:  Parsed arguments from the LLM tool call.
@@ -110,7 +113,7 @@ func (s *ShellTool) Parameters() json.RawMessage {
 func (s *ShellTool) Execute(ctx context.Context, args json.RawMessage) string {
 	parsed, err := ParseToolCallArgs[ShellArgs](args)
 	if err != nil {
-		return fmt.Sprintf("error: invalid arguments: %v", err)
+		return formatShellError("invalid arguments: %v", err)
 	}
 	if parsed.Command == "" {
 		return "error: command is required"
@@ -131,6 +134,13 @@ func (s *ShellTool) currentWorkDir() string {
 	return s.workDir()
 }
 
+// formatShellError formats and bounds one shell execution error.
+// WHAT: Produces a compact error line for tool results.
+// HOW: Adds the error prefix and truncates by runes to preserve Unicode.
+func formatShellError(format string, args ...any) string {
+	return truncateDisplay(fmt.Sprintf("error: "+format, args...), MaxShellErrorChars)
+}
+
 // executeShell runs shell input with the shared timeout, output, and cancellation rules.
 func executeShell(ctx context.Context, osName platform.OS, command, workDir string, extraEnv map[string]string, timeoutSec int) string {
 	if strings.TrimSpace(command) == "" {
@@ -139,7 +149,7 @@ func executeShell(ctx context.Context, osName platform.OS, command, workDir stri
 
 	shellPath, err := platform.SelectShell(osName)
 	if err != nil {
-		return fmt.Sprintf("error: cannot find shell: %v", err)
+		return formatShellError("cannot find shell: %v", err)
 	}
 
 	if ctx == nil {
@@ -185,7 +195,7 @@ func executeShell(ctx context.Context, osName platform.OS, command, workDir stri
 	cmd.Stderr = &limitedStreamWriter{buffer: &stderr, limiter: limiter}
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Sprintf("error: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		return formatShellError("%v", err) + fmt.Sprintf("\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
 	}
 	limiter.onExceeded = func() {
 		killShellCommand(cmd)
@@ -216,7 +226,7 @@ func executeShell(ctx context.Context, osName platform.OS, command, workDir stri
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
-			return fmt.Sprintf("error: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+			return formatShellError("%v", err) + fmt.Sprintf("\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
 		}
 	}
 

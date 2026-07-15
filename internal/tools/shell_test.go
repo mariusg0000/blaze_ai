@@ -122,6 +122,18 @@ func TestShellExecuteEmptyCommand(t *testing.T) {
 	}
 }
 
+// TestShellErrorIsLimitedTo100Characters verifies individual shell errors are bounded.
+func TestShellErrorIsLimitedTo100Characters(t *testing.T) {
+	long := strings.Repeat("x", 200)
+	got := formatShellError("%s", long)
+	if len([]rune(got)) > MaxShellErrorChars {
+		t.Fatalf("formatShellError() length = %d, want <= %d", len([]rune(got)), MaxShellErrorChars)
+	}
+	if !strings.HasPrefix(got, "error: ") {
+		t.Fatalf("formatShellError() = %q, want error prefix", got)
+	}
+}
+
 // TestShellExecuteInvalidArgs verifies error on invalid JSON.
 func TestShellExecuteInvalidArgs(t *testing.T) {
 	tool := NewShellTool(platform.Linux, nil)

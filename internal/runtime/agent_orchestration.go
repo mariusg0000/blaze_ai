@@ -276,10 +276,40 @@ func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, 
 		}
 		return "", fmt.Errorf("child %q failed: %w", definition.Name, err)
 	}
+	warning := ""
 	if completion == "" {
-		return "", fmt.Errorf("child %q incomplete: agent_done was not called", definition.Name)
+		completion = lastAssistantAnswer(childSession)
+		if completion == "" {
+			return "", fmt.Errorf("child %q incomplete: agent_done was not called and no final assistant answer was available", definition.Name)
+		}
+		warning = "status: completed-with-warning\nagent_done was not called; the last assistant message was used.\n\n"
 	}
-	return fmt.Sprintf("child session id: %s\n\n%s", childID, completion), nil
+	return formatChildResult(definition.Name, childID, warning, completion), nil
+}
+
+// lastAssistantAnswer returns a final assistant text answer when no agent_done callback ran.
+// WHAT: Extracts only a plain assistant message, never a tool-call message.
+// HOW: Inspects the child session backwards and accepts the last assistant string without tool calls.
+func lastAssistantAnswer(child *session.Session) string {
+	for i := len(child.Messages) - 1; i >= 0; i-- {
+		message := child.Messages[i]
+		if message.Role != "assistant" || message.ToolCalls != nil {
+			continue
+		}
+		answer, ok := message.Content.(string)
+		if ok && strings.TrimSpace(answer) != "" {
+			return boundAnswer(answer)
+		}
+		return ""
+	}
+	return ""
+}
+
+// formatChildResult adds identity and optional resume metadata to every child result.
+// WHAT: Makes the child identity available to the parent for optional future resume.
+// HOW: Returns the agent name, exact id, and neutral resume possibility before the answer.
+func formatChildResult(agentName, childID, warning, answer string) string {
+	return fmt.Sprintf("%sagent: %s\nchild session id: %s\nThis child session can be resumed later with the same agent name, this id, and a new task, if needed.\n\n%s", warning, agentName, childID, answer)
 }
 
 // shortChildID generates a compact 5-character hex identifier for child sessions.

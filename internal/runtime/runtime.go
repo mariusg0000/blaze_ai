@@ -666,6 +666,11 @@ func (a *Agent) applyModel(modelID string) error {
 
 // SetModel changes the current model, recreates the provider client, and persists the selection globally.
 func (a *Agent) SetModel(modelID string) error {
+	if a.CurrentMode != nil {
+		if err := a.reloadModesForPersistence(a.CurrentMode.Name); err != nil {
+			return err
+		}
+	}
 	if err := a.applyModel(modelID); err != nil {
 		return err
 	}
@@ -717,24 +722,40 @@ func (a *Agent) ListProviderModels(providerName string) ([]string, error) {
 
 // SetMode switches the active work mode by name.
 func (a *Agent) SetMode(name string) error {
-	for i := range a.Modes.Modes {
-		if a.Modes.Modes[i].Name == name {
-			mode := &a.Modes.Modes[i]
-			if err := a.applyModel(mode.Model); err != nil {
-				return fmt.Errorf("cannot apply provider client for mode %q: %w", name, err)
-			}
-			a.CurrentMode = mode
-			if err := a.refreshModeCapabilities(); err != nil {
-				return err
-			}
-			a.Modes.LastMode = name
-			if err := a.Modes.Save(); err != nil {
-				return fmt.Errorf("cannot persist mode switch: %w", err)
-			}
+	if err := a.reloadModesForPersistence(name); err != nil {
+		return err
+	}
+	mode := a.CurrentMode
+	if err := a.applyModel(mode.Model); err != nil {
+		return fmt.Errorf("cannot apply provider client for mode %q: %w", name, err)
+	}
+	if err := a.refreshModeCapabilities(); err != nil {
+		return err
+	}
+	a.Modes.LastMode = name
+	if err := a.Modes.Save(); err != nil {
+		return fmt.Errorf("cannot persist mode switch: %w", err)
+	}
+	return nil
+}
+
+// reloadModesForPersistence refreshes the mode list before a write.
+// WHAT: Replaces stale in-memory modes with the current modes.json contents.
+// HOW: Loads the file, resolves the requested mode, and updates CurrentMode.
+// WHY: Prevents an older running instance from deleting modes added by another instance.
+func (a *Agent) reloadModesForPersistence(modeName string) error {
+	modes, err := config.LoadModes(a.Config.Roles.Default)
+	if err != nil {
+		return fmt.Errorf("cannot reload modes before persistence: %w", err)
+	}
+	for i := range modes.Modes {
+		if modes.Modes[i].Name == modeName {
+			a.Modes = modes
+			a.CurrentMode = &a.Modes.Modes[i]
 			return nil
 		}
 	}
-	return fmt.Errorf("mode not found: %s", name)
+	return fmt.Errorf("mode not found in current modes.json: %s", modeName)
 }
 
 // NextFavoriteModel cycles to the next model in FavoriteModels and applies it.
