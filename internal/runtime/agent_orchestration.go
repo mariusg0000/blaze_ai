@@ -17,10 +17,10 @@ import (
 )
 
 const (
-	maxParallelChildren       = 4
-	childInactivityTimeout    = 2 * time.Minute
+	maxParallelChildren        = 4
+	childInactivityTimeout     = 2 * time.Minute
 	defaultChildOverallTimeout = 20 * time.Minute
-	maxChildAnswerRunes       = 12000
+	maxChildAnswerRunes        = 12000
 )
 
 // childHandler suppresses child transcript text but forwards scoped tool activity immediately.
@@ -59,14 +59,23 @@ type activityForwarder struct {
 	activity chan<- struct{}
 }
 
-func (f *activityForwarder) OnContent(delta string)                       { f.inner.OnContent(delta) }
-func (f *activityForwarder) OnReasoning(delta string)                     { f.inner.OnReasoning(delta) }
-func (f *activityForwarder) OnUsage(p, c, u int)                          { f.inner.OnUsage(p, c, u) }
-func (f *activityForwarder) OnToolResult(name, result string)             { f.inner.OnToolResult(name, result); f.signal() }
-func (f *activityForwarder) OnSystem(message string)                      { f.inner.OnSystem(message) }
-func (f *activityForwarder) OnMaintenanceCall(name, args string)          { f.inner.OnMaintenanceCall(name, args) }
-func (f *activityForwarder) OnMaintenanceResult(name, result string)      { f.inner.OnMaintenanceResult(name, result) }
-func (f *activityForwarder) RequestSudoApproval(cmd string) (bool, string) { return f.inner.RequestSudoApproval(cmd) }
+func (f *activityForwarder) OnContent(delta string)   { f.inner.OnContent(delta) }
+func (f *activityForwarder) OnReasoning(delta string) { f.inner.OnReasoning(delta) }
+func (f *activityForwarder) OnUsage(p, c, u int)      { f.inner.OnUsage(p, c, u) }
+func (f *activityForwarder) OnToolResult(name, result string) {
+	f.inner.OnToolResult(name, result)
+	f.signal()
+}
+func (f *activityForwarder) OnSystem(message string) { f.inner.OnSystem(message) }
+func (f *activityForwarder) OnMaintenanceCall(name, args string) {
+	f.inner.OnMaintenanceCall(name, args)
+}
+func (f *activityForwarder) OnMaintenanceResult(name, result string) {
+	f.inner.OnMaintenanceResult(name, result)
+}
+func (f *activityForwarder) RequestSudoApproval(cmd string) (bool, string) {
+	return f.inner.RequestSudoApproval(cmd)
+}
 
 func (f *activityForwarder) OnToolCall(name, args string) {
 	f.inner.OnToolCall(name, args)
@@ -190,16 +199,13 @@ func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, 
 		return "", fmt.Errorf("cannot initialize temporary child session: %w", err)
 	}
 
-	child, err := NewAgent(a.Config, childSession, a.OS, a.Builder.PromptsFS, a.WorkDir, childHandler{agentID: displayID, emit: a.emitAgentActivity}, a.Builder.TransportName)
-	if err != nil {
-		return "", fmt.Errorf("cannot initialize child agent %q: %w", definition.Name, err)
-	}
 	model := strings.TrimSpace(definition.Model)
 	if model == "" {
 		model = a.ModelID
 	}
-	if err := child.SetModelLocal(model); err != nil {
-		return "", fmt.Errorf("cannot select model for child %q: %w", definition.Name, err)
+	child, err := newChildAgent(a.Config, childSession, a.OS, a.Builder.PromptsFS, a.WorkDir, childHandler{agentID: displayID, emit: a.emitAgentActivity}, a.Builder.TransportName, model)
+	if err != nil {
+		return "", fmt.Errorf("cannot initialize child agent %q: %w", definition.Name, err)
 	}
 	child.Builder.SystemPromptName = "sysprompt.agent.md"
 	child.Builder.AgentInstructions = definition.Instructions

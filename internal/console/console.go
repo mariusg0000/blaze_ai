@@ -96,6 +96,7 @@ type Console struct {
 	toolsStarted             bool
 	turnAborting             atomic.Bool
 	lastToolArgs             string
+	agentToolAgent           string
 	reasoningStarted         bool
 	reasoningLines           int
 	spinnerActive            bool
@@ -767,24 +768,46 @@ func (c *Console) OnSystem(message string) {
 	fmt.Fprintln(c.Out, c.color(colorOrange, "⚡ System: "+message))
 }
 
-// OnAgentActivity renders transient child-agent activity using the agent name as scope.
+// OnAgentActivity renders child-agent lifecycle and tool events in the console transport.
+// Child tool calls use the main tool-line format with an Agent scope prefix.
 func (c *Console) OnAgentActivity(activity runtime.AgentActivity) {
-	text := "[" + activity.Agent + "]"
-	switch activity.Kind {
-	case "tool_call":
-		text += " " + activity.Text
-	case "tool_result":
-		text += " ✔ " + activity.Tool
-		if activity.Text != "" {
-			text += ": " + activity.Text
-		}
-	default:
-		text += " " + activity.Kind
-		if activity.Text != "" {
-			text += ": " + activity.Text
-		}
+	if c.turnAborting.Load() {
+		return
 	}
-	c.OnSystem(text)
+	c.lockOutput()
+	defer c.unlockOutput()
+
+	if activity.Kind == "tool_call" {
+		c.ensureLineBreakBeforeBlock()
+		c.toolsStarted = true
+		c.agentToolAgent = activity.Agent
+		c.lastToolArgs = activity.Text
+		fmt.Fprintf(c.Out, "%s %s %s …", c.color(colorOrange, "Agent ["+activity.Agent+"]"), c.color(colorGreen, toolEmoji(activity.Tool)), c.color(colorCtx, activity.Text))
+		return
+	}
+	if activity.Kind == "tool_result" {
+		badge, content, colorCode := parseToolResult(activity.Text)
+		if c.agentToolAgent != activity.Agent || c.lastToolArgs == "" {
+			c.ensureLineBreakBeforeBlock()
+			fmt.Fprintf(c.Out, "%s %s %s", c.color(colorOrange, "Agent ["+activity.Agent+"]"), c.color(colorGreen, toolEmoji(activity.Tool)), c.color(colorCtx, activity.Tool))
+		} else {
+			c.lastToolArgs = ""
+			c.agentToolAgent = ""
+		}
+		if badge == "DONE" {
+			fmt.Fprintf(c.Out, " %s\n", c.color(colorBrightGreen, "✔️"))
+		} else {
+			fmt.Fprintf(c.Out, " %s %s\n", c.color(colorCode, badge), c.color(colorCode, content))
+		}
+		return
+	}
+
+	c.ensureLineBreakBeforeBlock()
+	text := "Agent [" + activity.Agent + "] " + activity.Kind
+	if activity.Text != "" {
+		text += ": " + activity.Text
+	}
+	fmt.Fprintln(c.Out, c.color(colorOrange, "⚡ "+text))
 }
 
 // OnMaintenanceCall renders an internal runtime operation using tool-style inline output.
@@ -948,7 +971,14 @@ func (c *Console) OnToolCall(name string, args string) {
 	c.lastToolArgs = args
 
 	if args != "" {
-		fmt.Fprintf(c.Out, "%s %s …", c.color(colorGreen, toolEmoji(name)), c.color(colorCtx, args))
+		fmt.Fprintf(c.Out, "%s %s", c.color(colorGreen, toolEmoji(name)), c.color(colorCtx, args))
+		if name != "run_agent" {
+			fmt.Fprint(c.Out, " …")
+		} else {
+			// Child activity follows the delegation call, so it must start on a fresh line.
+			fmt.Fprintln(c.Out)
+			c.lastToolArgs = ""
+		}
 	}
 }
 
@@ -1692,6 +1722,8 @@ func (c *Console) resetTurnState() {
 	c.lastPromptTokens = 0
 	c.lineOpen = false
 	c.toolsStarted = false
+	c.lastToolArgs = ""
+	c.agentToolAgent = ""
 	c.reasoningStarted = false
 	c.reasoningLines = 0
 }

@@ -42,7 +42,7 @@ func TestRunAgentFormatArgsPurposeAndFallback(t *testing.T) {
 	}
 	longTask := strings.Repeat("x", 200)
 	got := tool.FormatArgs(json.RawMessage(`{"task":"` + longTask + `"}`))
-	if len([]rune(got)) != 150 || !strings.HasSuffix(got, "...") {
+	if len([]rune(got)) != 80 || !strings.HasSuffix(got, "...") {
 		t.Fatalf("fallback display length/content = %d %q", len([]rune(got)), got)
 	}
 }

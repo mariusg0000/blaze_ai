@@ -297,6 +297,11 @@ func parseToolResult(result string) (badge, content, colorClass string) {
 	return "DONE", "", "bright-green"
 }
 
+// agentToolLineHTML renders a child tool line with Agent identity and main tool styling.
+func agentToolLineHTML(agent, name, args, badge string) string {
+	return `<span class="orange">Agent [` + escapeHTML(agent) + `]</span> ` + toolLineHTML(name, args, badge)
+}
+
 // toolLineHTML renders a single tool activity line with emoji, args, and badge.
 func toolLineHTML(name, args, badge string) string {
 	emoji := toolEmoji(name)

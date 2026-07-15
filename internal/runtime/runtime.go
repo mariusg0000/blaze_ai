@@ -132,19 +132,17 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 	// Try migration first: extract modes from config.json if they exist there.
 	_ = config.MigrateFromConfig()
 
-	// Load modes from modes.json with fallback to the configured default role model.
+	// Load modes only for the main runtime. Child agents use an explicit or inherited model,
+	// not the parent's mode or its tool/prompt policy.
 	modes, err := config.LoadModes(modelID)
 	if err != nil {
 		return nil, fmt.Errorf("cannot load modes: %w", err)
 	}
-
-	// Auto-create default mode if no modes exist after load/migration.
 	if len(modes.Modes) == 0 {
 		modes = config.DefaultMode(modelID)
 		_ = modes.Save()
 	}
 
-	// Resolve active mode: mode model takes priority over LastModel.
 	var currentMode *config.Mode
 	if modes.LastMode != "" {
 		for i := range modes.Modes {
@@ -160,6 +158,18 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 		currentMode = &modes.Modes[0]
 		modelID = currentMode.Model
 	}
+	return newAgent(cfg, sess, os, promptsFS, workDir, handler, transportName, modelID, modes, currentMode)
+}
+
+// newChildAgent creates a one-shot agent with only its selected model and explicit tools.
+// WHAT: Constructs a child runtime without mode configuration.
+// HOW: Reuses common runtime wiring while leaving mode state nil.
+func newChildAgent(cfg *config.Config, sess *session.Session, os platform.OS, promptsFS fs.FS, workDir string, handler Handler, transportName, modelID string) (*Agent, error) {
+	return newAgent(cfg, sess, os, promptsFS, workDir, handler, transportName, modelID, nil, nil)
+}
+
+// newAgent wires common runtime dependencies for main and child agents.
+func newAgent(cfg *config.Config, sess *session.Session, os platform.OS, promptsFS fs.FS, workDir string, handler Handler, transportName, modelID string, modes *config.ModesConfig, currentMode *config.Mode) (*Agent, error) {
 
 	client, err := provider.NewClient(cfg, modelID)
 	if err != nil {
@@ -288,8 +298,10 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 	}
 	agent.Definitions = definitions
 	agent.BaseTools = registry.Clone()
-	if err := agent.refreshModeCapabilities(); err != nil {
-		return nil, err
+	if currentMode != nil {
+		if err := agent.refreshModeCapabilities(); err != nil {
+			return nil, err
+		}
 	}
 
 	return agent, nil

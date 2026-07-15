@@ -25,6 +25,7 @@ type Handler struct {
 	reasoningBuffer   string
 	lastPromptTokens  int
 	lastToolArgs      string
+	agentToolBlocks   map[string]int
 	turnErr           error
 }
 
@@ -34,6 +35,7 @@ func NewHandler(server *Server) *Handler {
 		server:            server,
 		assistantBlockIdx: -1,
 		reasoningBlockIdx: -1,
+		agentToolBlocks:   make(map[string]int),
 	}
 }
 
@@ -48,6 +50,7 @@ func (h *Handler) BeginTurn() {
 	h.reasoningBuffer = ""
 	h.lastPromptTokens = 0
 	h.lastToolArgs = ""
+	h.agentToolBlocks = make(map[string]int)
 	h.turnErr = nil
 	h.mu.Unlock()
 	if h.server != nil {
@@ -217,24 +220,46 @@ func (h *Handler) OnSystem(message string) {
 	}
 }
 
-// OnAgentActivity renders child activity in a separate SSE system block.
+// OnAgentActivity renders child activity as Agent-scoped transcript blocks.
+// Child tool events reuse the main tool-line renderer and add the child identity prefix.
 func (h *Handler) OnAgentActivity(activity runtime.AgentActivity) {
-	text := "[" + activity.Agent + "]"
-	switch activity.Kind {
-	case "tool_call":
-		text += " " + activity.Text
-	case "tool_result":
-		text += " ✔ " + activity.Tool
-		if activity.Text != "" {
-			text += ": " + activity.Text
-		}
-	default:
-		text += " " + activity.Kind
-		if activity.Text != "" {
-			text += ": " + activity.Text
-		}
+	if h.server == nil {
+		return
 	}
-	h.OnSystem(text)
+	if activity.Kind == "tool_call" {
+		h.server.sendBlock("tool", agentToolLineHTML(activity.Agent, activity.Tool, activity.Text, ""))
+		h.server.mu.Lock()
+		h.agentToolBlocks[activity.Agent] = len(h.server.blocks) - 1
+		h.server.mu.Unlock()
+		return
+	}
+	if activity.Kind == "tool_result" {
+		badge, _, _ := parseToolResult(activity.Text)
+		badgeSymbol := ""
+		switch badge {
+		case "DONE":
+			badgeSymbol = "✔️"
+		case "ERROR":
+			badgeSymbol = "✖️"
+		case "TIMEOUT":
+			badgeSymbol = "⏱"
+		}
+		h.mu.Lock()
+		idx, ok := h.agentToolBlocks[activity.Agent]
+		delete(h.agentToolBlocks, activity.Agent)
+		h.mu.Unlock()
+		if ok {
+			h.server.replaceBlock(idx, "tool", agentToolLineHTML(activity.Agent, activity.Tool, "", badgeSymbol))
+		} else {
+			h.server.sendBlock("tool", agentToolLineHTML(activity.Agent, activity.Tool, "", badgeSymbol))
+		}
+		return
+	}
+	text := "Agent [" + activity.Agent + "] " + activity.Kind
+	if activity.Text != "" {
+		text += ": " + activity.Text
+	}
+	h.server.sendBlock("system", `<span class="orange">⚡ `+escapeHTML(text)+`</span>`)
 }
 
 // OnMaintenanceCall renders an internal runtime operation as a tool block.

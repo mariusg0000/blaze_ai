@@ -87,7 +87,7 @@ func (t *RunAgentTool) FormatArgs(raw json.RawMessage) string {
 	if task == "" {
 		return "Running agent"
 	}
-	return truncateDisplay(task, 150)
+	return truncateDisplay(task, 80)
 }
 
 // AgentDoneArgs is the mandatory child completion payload.
