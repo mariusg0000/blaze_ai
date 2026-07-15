@@ -43,7 +43,7 @@ func (t *RunAgentTool) Name() string { return "run_agent" }
 
 // Description explains single and parallel child execution.
 func (t *RunAgentTool) Description() string {
-	return "Run one child agent, or multiple child agents in parallel by supplying tasks in order."
+	return "Run one child agent, or multiple child agents in parallel by supplying tasks in order. Each result includes a child session id that can be passed as id to resume that agent later with a new task."
 }
 
 // Parameters returns the JSON schema accepted by the tool.

@@ -5,6 +5,8 @@ package runtime
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -122,11 +124,12 @@ func (a *Agent) runAgent(ctx context.Context, args tools.RunAgentArgs) string {
 				return
 			}
 			defer func() { <-sem }()
-			displayID := strings.TrimSpace(task.ID)
-			if displayID == "" {
-				displayID = fmt.Sprintf("%s_%02d_%d", task.Agent, index+1, time.Now().UnixNano())
+			childID := strings.TrimSpace(task.ID)
+			if childID == "" {
+				childID = shortChildID()
 			}
-			result, err := a.runOneChild(childCtx, task, displayID)
+			displayID := fmt.Sprintf("[%s_%s]", task.Agent, childID)
+			result, err := a.runOneChild(childCtx, task, displayID, childID)
 			if err != nil {
 				setFirstError(&errMu, &firstErr, err)
 				cancel()
@@ -169,17 +172,22 @@ func (a *Agent) emitAgentActivity(activity AgentActivity) {
 // HOW: Overall timeout (per-agent or 20min default) never resets. Inactivity timeout (2min)
 //
 //	resets on every tool call or result forwarded by the activity handler.
-func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, displayID string) (result string, err error) {
+func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, displayID, childID string) (result string, err error) {
 	definition, ok := a.oneShotDefinition(task.Agent)
 	if !ok {
 		a.emitAgentActivity(AgentActivity{Agent: task.Agent, Kind: "failed", Status: "error", Text: "one-shot agent not found"})
 		return "", fmt.Errorf("one-shot agent not found: %s", task.Agent)
 	}
-	a.emitAgentActivity(AgentActivity{Agent: displayID, Kind: "started", Status: "running", Text: "child agent started"})
-	folder, childSession, err := openChildSession(a.Session.Folder, displayID)
+	folder, childSession, err := openChildSession(a.Session.Folder, childID)
 	if err != nil {
 		return "", err
 	}
+
+	model := strings.TrimSpace(definition.Model)
+	if model == "" {
+		model = a.ModelID
+	}
+	a.emitAgentActivity(AgentActivity{Agent: displayID, Kind: "started", Status: "running", Text: fmt.Sprintf("child agent started — model: %s", model)})
 	defer func() {
 		if err != nil {
 			kind := "failed"
@@ -200,11 +208,6 @@ func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, 
 	}
 	if err := os.WriteFile(taskPath, []byte(strings.TrimSpace(task.Task)+"\n"), 0644); err != nil {
 		return "", fmt.Errorf("cannot write child task file: %w", err)
-	}
-
-	model := strings.TrimSpace(definition.Model)
-	if model == "" {
-		model = a.ModelID
 	}
 	child, err := newChildAgent(a.Config, childSession, a.OS, a.Builder.PromptsFS, a.WorkDir, childHandler{agentID: displayID, emit: a.emitAgentActivity}, a.Builder.TransportName, model)
 	if err != nil {
@@ -276,7 +279,14 @@ func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, 
 	if completion == "" {
 		return "", fmt.Errorf("child %q incomplete: agent_done was not called", definition.Name)
 	}
-	return fmt.Sprintf("child session id: %s\n\n%s", displayID, completion), nil
+	return fmt.Sprintf("child session id: %s\n\n%s", childID, completion), nil
+}
+
+// shortChildID generates a compact 5-character hex identifier for child sessions.
+func shortChildID() string {
+	b := make([]byte, 3)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // oneShotDefinition resolves only one-shot definitions and never falls back to modes.

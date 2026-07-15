@@ -67,12 +67,6 @@ Already verified — no need to check availability. Prefer these helpers over cl
 **Optional host helpers:**
 {HOST_HELPERS_OPTIONAL}
 
-[PROJECT RULES]
-
-Read and follow the project rules below. They are authoritative for this task.
-
-{AGENTS_CONTENT}
-
 [PROJECT CONTENT]
 
 {PROJECT_CONTENT}
