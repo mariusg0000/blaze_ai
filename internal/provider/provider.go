@@ -112,15 +112,28 @@ type Client struct {
 //
 // WHAT:  Builds a provider client from config.
 // WHY:   The runtime resolves the provider and model from config to make API calls.
-// PARAMS: cfg — the loaded config; modelID — full provider/model_name identifier.
+// HOW:   Parses the full modelID with reasoning.ParseModelSpec to extract the bare
+//
+//	model ID and optional reasoning level suffix. Sets client.Model to the bare
+//	model name and client.ReasoningLevel to the parsed level.
+//
+// PARAMS: cfg — the loaded config; modelID — full provider/model_name identifier,
+//
+//	optionally suffixed with |reasoning_level.
+//
 // RETURNS: *Client — configured client; error if provider not found or model invalid.
 func NewClient(cfg *config.Config, modelID string) (*Client, error) {
-	providerName, modelName := config.SplitModelID(modelID)
+	spec, err := reasoning.ParseModelSpec(modelID)
+	if err != nil {
+		return nil, err
+	}
+	providerName, modelName := config.SplitModelID(spec.ModelID)
 	client, err := NewClientForProvider(cfg, providerName)
 	if err != nil {
 		return nil, err
 	}
 	client.Model = modelName
+	client.ReasoningLevel = spec.ReasoningLevel
 	return client, nil
 }
 

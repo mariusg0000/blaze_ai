@@ -994,7 +994,7 @@ func TestListProviderModelsNotFound(t *testing.T) {
 
 // --- Reasoning level tests ---
 
-// TestNewAgentLoadsStoredReasoningLevel verifies the agent loads a stored reasoning level from modes.
+// TestNewAgentLoadsStoredReasoningLevel verifies the agent loads a reasoning level from the model suffix.
 func TestNewAgentLoadsStoredReasoningLevel(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
@@ -1003,15 +1003,14 @@ func TestNewAgentLoadsStoredReasoningLevel(t *testing.T) {
 
 	cfg := &config.Config{
 		Providers:      []config.Provider{{Name: "test", Endpoint: server.URL, APIKey: "sk-test"}},
-		Roles:          config.Roles{Default: "test/test-model"},
+		Roles:          config.Roles{Default: "test/test-model|high"},
 		Compaction:     config.DefaultCompaction(),
 		StripReasoning: config.DefaultStripReasoning(),
 	}
 
 	modes := &config.ModesConfig{
-		Modes:           []config.Mode{{Name: "default", Model: "test/test-model"}},
-		LastMode:        "default",
-		ReasoningLevels: map[string]string{"test/test-model": "high"},
+		Modes:    []config.Mode{{Name: "default", Model: "test/test-model|high"}},
+		LastMode: "default",
 	}
 	if err := modes.Save(); err != nil {
 		t.Fatalf("Save() modes failed: %v", err)
@@ -1030,6 +1029,12 @@ func TestNewAgentLoadsStoredReasoningLevel(t *testing.T) {
 	if agent.Provider.ReasoningLevel != "high" {
 		t.Errorf("Provider.ReasoningLevel = %q, want 'high'", agent.Provider.ReasoningLevel)
 	}
+	if agent.ModelID != "test/test-model|high" {
+		t.Errorf("ModelID = %q, want 'test/test-model|high'", agent.ModelID)
+	}
+	if agent.Provider.Model != "test-model" {
+		t.Errorf("Provider.Model = %q, want 'test-model' (bare)", agent.Provider.Model)
+	}
 }
 
 // TestActiveReasoningLevel verifies the getter returns the provider's level.
@@ -1037,11 +1042,12 @@ func TestActiveReasoningLevel(t *testing.T) {
 	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
 	defer server.Close()
 
-	// Empty by default.
+	// Empty by default (no suffix in the model string).
 	if got := agent.ActiveReasoningLevel(); got != "" {
 		t.Errorf("ActiveReasoningLevel() = %q, want empty", got)
 	}
 
+	// Set via Provider directly (simulating what NewClient does with suffix).
 	agent.Provider.ReasoningLevel = "xhigh"
 	if got := agent.ActiveReasoningLevel(); got != "xhigh" {
 		t.Errorf("ActiveReasoningLevel() = %q, want 'xhigh'", got)
@@ -1075,19 +1081,21 @@ func TestSetActiveReasoningLevelInvalidLevel(t *testing.T) {
 	}
 }
 
-// TestApplyModelLoadsReasoningLevel verifies model switching loads the new model's stored level.
+// TestApplyModelLoadsReasoningLevel verifies model switching loads the level from the suffix.
 func TestApplyModelLoadsReasoningLevel(t *testing.T) {
 	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
 	defer server.Close()
 
-	agent.Modes.ReasoningLevels = map[string]string{"test/test-model": "low"}
-
-	err := agent.applyModel("test/test-model")
+	// Apply a model with |low suffix; NewClient parses the suffix.
+	err := agent.applyModel("test/test-model|low")
 	if err != nil {
 		t.Fatalf("applyModel() error: %v", err)
 	}
 	if agent.Provider.ReasoningLevel != "low" {
 		t.Errorf("Provider.ReasoningLevel = %q, want 'low'", agent.Provider.ReasoningLevel)
+	}
+	if agent.Provider.Model != "test-model" {
+		t.Errorf("Provider.Model = %q, want 'test-model' (bare)", agent.Provider.Model)
 	}
 }
 
@@ -1097,27 +1105,26 @@ func TestApplyModelClearsLevelWhenNoneStored(t *testing.T) {
 	defer server.Close()
 
 	agent.Provider.ReasoningLevel = "high"
-	agent.Modes.ReasoningLevels = map[string]string{} // empty
 
+	// Apply a model without suffix; NewClient should clear ReasoningLevel.
 	err := agent.applyModel("test/test-model")
 	if err != nil {
 		t.Fatalf("applyModel() error: %v", err)
 	}
 	if agent.Provider.ReasoningLevel != "" {
-		t.Errorf("Provider.ReasoningLevel = %q, want empty after switch to model with no stored level", agent.Provider.ReasoningLevel)
+		t.Errorf("Provider.ReasoningLevel = %q, want empty after switch to model with no suffix", agent.Provider.ReasoningLevel)
 	}
 }
 
-// TestSetModelLoadsReasoningLevel verifies SetModel loads the new model's level.
+// TestSetModelLoadsReasoningLevel verifies SetModel loads the level from the model suffix.
 func TestSetModelLoadsReasoningLevel(t *testing.T) {
 	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
 	defer server.Close()
 
-	// Persist modes to the file so reloadModesForPersistence finds them.
+	// Persist modes with a suffixed model.
 	modes := &config.ModesConfig{
-		Modes:           []config.Mode{{Name: "default", Model: "test/test-model"}},
-		LastMode:        "default",
-		ReasoningLevels: map[string]string{"test/test-model": "min"},
+		Modes:    []config.Mode{{Name: "default", Model: "test/test-model|min"}},
+		LastMode: "default",
 	}
 	if err := modes.Save(); err != nil {
 		t.Fatalf("Save() modes failed: %v", err)
@@ -1127,11 +1134,14 @@ func TestSetModelLoadsReasoningLevel(t *testing.T) {
 	agent.Modes = modes
 	agent.CurrentMode = &agent.Modes.Modes[0]
 
-	err := agent.SetModel("test/test-model")
+	err := agent.SetModel("test/test-model|min")
 	if err != nil {
 		t.Fatalf("SetModel() error: %v", err)
 	}
 	if agent.Provider.ReasoningLevel != "min" {
 		t.Errorf("Provider.ReasoningLevel = %q, want 'min'", agent.Provider.ReasoningLevel)
+	}
+	if agent.ModelID != "test/test-model|min" {
+		t.Errorf("ModelID = %q, want 'test/test-model|min'", agent.ModelID)
 	}
 }

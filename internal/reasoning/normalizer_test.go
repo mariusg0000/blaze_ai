@@ -17,11 +17,7 @@ func TestNormalizeValidChatLevels(t *testing.T) {
 		if !ok {
 			t.Fatalf("Normalize(openai_chat, o3, %q) missing reasoning_effort key", level)
 		}
-		wantLevel := level
-		if level == LevelMax {
-			wantLevel = LevelXHigh // max clamped to xhigh for Chat wire
-		}
-		want := openaiWireLevel(wantLevel)
+		want := openaiWireLevel(level)
 		if got != want {
 			t.Errorf("Normalize(openai_chat, o3, %q) reasoning_effort = %v, want %q (wire)", level, got, want)
 		}
@@ -47,12 +43,7 @@ func TestNormalizeValidResponsesLevels(t *testing.T) {
 		if !ok {
 			t.Fatalf("Normalize(openai_responses, o3, %q) missing effort key", level)
 		}
-		// max is clamped to xhigh, then mapped to wire value
-		wantLevel := level
-		if level == LevelMax {
-			wantLevel = LevelXHigh
-		}
-		want := openaiWireLevel(wantLevel)
+		want := openaiWireLevel(level)
 		if effort != want {
 			t.Errorf("Normalize(openai_responses, o3, %q) effort = %v, want %q (wire)", level, effort, want)
 		}
@@ -97,34 +88,39 @@ func TestNormalizeMinAndMedWireValues(t *testing.T) {
 	}
 }
 
-// TestNormalizeMaxClamping verifies max is clamped to xhigh wire value for Responses.
-func TestNormalizeMaxClamping(t *testing.T) {
-	fragment, err := Normalize("openai_responses", "o3", LevelMax)
-	if err != nil {
-		t.Fatalf("Normalize() error: %v", err)
-	}
-	reasoning := fragment["reasoning"].(map[string]any)
-	// xhigh maps to wire "xhigh"
-	want := openaiWireLevel(LevelXHigh)
-	if reasoning["effort"] != want {
-		t.Errorf("max clamping: effort = %v, want %q", reasoning["effort"], want)
-	}
-}
-
-// TestNormalizeMaxClampedChat verifies max is clamped to xhigh for Chat Completions.
-func TestNormalizeMaxClampedChat(t *testing.T) {
+// TestNormalizeMaxAndXHigh verifies max maps to "max" and xhigh maps to "xhigh" on both paths.
+func TestNormalizeMaxAndXHigh(t *testing.T) {
+	// Chat: max → "max"
 	fragment, err := Normalize("openai_chat", "o3", LevelMax)
 	if err != nil {
 		t.Fatalf("Normalize(openai_chat, o3, max) error: %v", err)
 	}
-	got, ok := fragment["reasoning_effort"]
-	if !ok {
-		t.Fatal("Normalize(openai_chat, o3, max) missing reasoning_effort key")
+	if got := fragment["reasoning_effort"]; got != "max" {
+		t.Errorf("Chat max wire value = %v, want max", got)
 	}
-	// max clamps to xhigh, then maps to wire "xhigh".
-	want := openaiWireLevel(LevelXHigh)
-	if got != want {
-		t.Errorf("Normalize(openai_chat, o3, max) reasoning_effort = %v, want %q", got, want)
+	// Chat: xhigh → "xhigh"
+	fragment, err = Normalize("openai_chat", "o3", LevelXHigh)
+	if err != nil {
+		t.Fatalf("Normalize(openai_chat, o3, xhigh) error: %v", err)
+	}
+	if got := fragment["reasoning_effort"]; got != "xhigh" {
+		t.Errorf("Chat xhigh wire value = %v, want xhigh", got)
+	}
+	// Responses: max → "max"
+	fragment, err = Normalize("openai_responses", "o3", LevelMax)
+	if err != nil {
+		t.Fatalf("Normalize(openai_responses, o3, max) error: %v", err)
+	}
+	if got := fragment["reasoning"].(map[string]any)["effort"]; got != "max" {
+		t.Errorf("Responses max wire value = %v, want max", got)
+	}
+	// Responses: xhigh → "xhigh"
+	fragment, err = Normalize("openai_responses", "o3", LevelXHigh)
+	if err != nil {
+		t.Fatalf("Normalize(openai_responses, o3, xhigh) error: %v", err)
+	}
+	if got := fragment["reasoning"].(map[string]any)["effort"]; got != "xhigh" {
+		t.Errorf("Responses xhigh wire value = %v, want xhigh", got)
 	}
 }
 
@@ -400,6 +396,25 @@ func TestSplitModelID(t *testing.T) {
 		{"openrouter/openai/o3", "openrouter", "openai/o3"},
 		{"openai/o3", "openai", "o3"},
 		{"o3", "", "o3"},
+	}
+	for _, tc := range cases {
+		prov, model := splitModelID(tc.input)
+		if prov != tc.wantProv || model != tc.wantModel {
+			t.Errorf("splitModelID(%q) = (%q, %q), want (%q, %q)", tc.input, prov, model, tc.wantProv, tc.wantModel)
+		}
+	}
+}
+
+// TestSplitModelIDWithSuffix verifies the model ID split helper strips suffix.
+func TestSplitModelIDWithSuffix(t *testing.T) {
+	cases := []struct {
+		input     string
+		wantProv  string
+		wantModel string
+	}{
+		{"openrouter/openai/o3|max", "openrouter", "openai/o3"},
+		{"openai/o3|high", "openai", "o3"},
+		{"o3|med", "", "o3"},
 	}
 	for _, tc := range cases {
 		prov, model := splitModelID(tc.input)

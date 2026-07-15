@@ -312,13 +312,6 @@ func newAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 		}
 	}
 
-	// Load stored reasoning level for the active model from modes.json.
-	if modes != nil {
-		if storedLevel := modes.ReasoningLevelFor(modelID); storedLevel != "" {
-			agent.Provider.ReasoningLevel = storedLevel
-		}
-	}
-
 	return agent, nil
 }
 
@@ -677,13 +670,6 @@ func (a *Agent) applyModel(modelID string) error {
 		a.Compactor.Provider = client
 	}
 
-	// Load stored reasoning level for the new model from modes.json.
-	if a.Modes != nil {
-		if storedLevel := a.Modes.ReasoningLevelFor(modelID); storedLevel != "" {
-			a.Provider.ReasoningLevel = storedLevel
-		}
-	}
-
 	return nil
 }
 
@@ -736,15 +722,17 @@ func (a *Agent) ActiveReasoningLevel() string {
 }
 
 // SetActiveReasoningLevel validates, sets, and persists the reasoning level
-// for the active model.
+// for the active model by replacing the suffix on the model string.
 //
 // WHAT:  User-facing setter with strict validation and immediate persistence.
 // WHY:   Transports need to change the level and persist it without delay.
-// HOW:   Validates the level string, checks model capability, sets the provider
+// HOW:   Validates the level string, checks model capability, constructs a new
 //
-//	level, and persists to modes.json via SetReasoningLevel.
+//	model ID with the suffix replaced (or removed when level is empty), and
+//	calls SetModel to apply and persist the complete model string through the
+//	current mode or config model field. Never creates a separate reasoning map.
 //
-// PARAMS: level — abstract reasoning level (e.g., "high", "max").
+// PARAMS: level — abstract reasoning level (e.g., "high", "max"), or "" to clear.
 // RETURNS: error if the level is invalid, the model does not support reasoning,
 //
 //	or persistence fails.
@@ -752,19 +740,25 @@ func (a *Agent) SetActiveReasoningLevel(level string) error {
 	if a.Provider == nil {
 		return fmt.Errorf("provider is not initialized")
 	}
-	if !reasoning.IsReasoningCapableForModel(a.ModelID) {
-		return fmt.Errorf("model %q does not support reasoning levels", a.ModelID)
-	}
-	if err := reasoning.ValidateLevel(level); err != nil {
-		return err
-	}
-	a.Provider.ReasoningLevel = level
-	if a.Modes != nil {
-		if err := a.Modes.SetReasoningLevel(a.ModelID, level); err != nil {
-			return fmt.Errorf("cannot persist reasoning level: %w", err)
+	if level != "" {
+		if !reasoning.IsReasoningCapableForModel(a.ModelID) {
+			return fmt.Errorf("model %q does not support reasoning levels", a.ModelID)
+		}
+		if err := reasoning.ValidateLevel(level); err != nil {
+			return err
 		}
 	}
-	return nil
+	spec, err := reasoning.ParseModelSpec(a.ModelID)
+	if err != nil {
+		return err
+	}
+	var newModelID string
+	if level == "" {
+		newModelID = spec.ModelID
+	} else {
+		newModelID = spec.ModelID + "|" + level
+	}
+	return a.SetModel(newModelID)
 }
 
 // SetWorkDir changes the current work folder and updates the prompt builder.
@@ -926,13 +920,14 @@ func validateModelInConfig(cfg *config.Config, modelID string) error {
 	return nil
 }
 
-// validateModelFormat checks the provider/model_name format.
+// validateModelFormat checks the provider/model_name format, stripping any suffix.
 func validateModelFormat(model string) error {
-	idx := strings.Index(model, "/")
-	if idx <= 0 || idx == len(model)-1 {
-		return fmt.Errorf("model must be in provider/model_name format")
+	spec, err := reasoning.ParseModelSpec(model)
+	if err != nil {
+		return err
 	}
-	if strings.Contains(model[idx+1:], "/") {
+	idx := strings.Index(spec.ModelID, "/")
+	if idx <= 0 || idx == len(spec.ModelID)-1 {
 		return fmt.Errorf("model must be in provider/model_name format")
 	}
 	return nil

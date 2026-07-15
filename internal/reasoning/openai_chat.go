@@ -23,11 +23,8 @@ var openaiChatSupportedModels = []string{
 // openaiChatSupportedLevels defines the reasoning levels accepted by the
 // Chat Completions API.
 //
-// WHAT:  The Chat Completions API accepts none through max; max is clamped
-//
-//	to xhigh in the transform because OpenAI does not define a "max" wire value.
-//
-// WHY:   max is always a valid abstract level; the provider clamps it internally.
+// WHAT:  The Chat Completions API accepts none through max.
+// WHY:   Each standard level maps directly to its OpenAI wire value.
 var openaiChatSupportedLevels = []string{
 	LevelNone, LevelMin, LevelLow, LevelMed, LevelHigh, LevelXHigh, LevelMax,
 }
@@ -79,6 +76,7 @@ var openaiWireMapping = map[string]string{
 	LevelMed:   "medium",
 	LevelHigh:  "high",
 	LevelXHigh: "xhigh",
+	LevelMax:   "max",
 }
 
 // openaiWireLevel translates a standard reasoning level to its OpenAI wire value.
@@ -106,11 +104,5 @@ func openaiWireLevel(level string) string {
 // PARAMS: level — a validated standard reasoning level.
 // RETURNS: map[string]any with a single "reasoning_effort" key.
 func transformOpenAIChat(level string) (map[string]any, error) {
-	wireLevel := level
-	if level == LevelMax {
-		// Chat Completions does not define a "max" wire value;
-		// clamp to the highest supported wire value.
-		wireLevel = LevelXHigh
-	}
-	return map[string]any{"reasoning_effort": openaiWireLevel(wireLevel)}, nil
+	return map[string]any{"reasoning_effort": openaiWireLevel(level)}, nil
 }

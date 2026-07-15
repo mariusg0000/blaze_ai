@@ -198,7 +198,7 @@ func buildChatGPTRequest(model string, messages []session.Message, toolDefs []to
 	if err != nil {
 		return chatGPTResponsesRequest{}, err
 	}
-	return chatGPTResponsesRequest{
+	req := chatGPTResponsesRequest{
 		Model:             model,
 		Input:             input,
 		Instructions:      instructions,
@@ -208,10 +208,13 @@ func buildChatGPTRequest(model string, messages []session.Message, toolDefs []to
 		Store:             false,
 		Stream:            true,
 		Include:           []string{"reasoning.encrypted_content"},
-		Reasoning:         chatGPTReasoning{Effort: effort, Summary: "auto"},
 		Text:              chatGPTText{Verbosity: "low"},
 		PromptCacheKey:    "",
-	}, nil
+	}
+	if effort != "" {
+		req.Reasoning = chatGPTReasoning{Effort: effort, Summary: "auto"}
+	}
+	return req, nil
 }
 
 func buildChatGPTLiteRequest(model string, messages []session.Message, toolDefs []tools.OpenAITool, reasoningLevel string) (chatGPTResponsesRequest, error) {
@@ -223,7 +226,7 @@ func buildChatGPTLiteRequest(model string, messages []session.Message, toolDefs 
 	if err != nil {
 		return chatGPTResponsesRequest{}, err
 	}
-	return chatGPTResponsesRequest{
+	req := chatGPTResponsesRequest{
 		Model:             model,
 		Input:             input,
 		ToolChoice:        "auto",
@@ -231,9 +234,12 @@ func buildChatGPTLiteRequest(model string, messages []session.Message, toolDefs 
 		Store:             false,
 		Stream:            true,
 		Include:           []string{"reasoning.encrypted_content"},
-		Reasoning:         chatGPTReasoning{Effort: effort, Summary: "auto", Context: "all_turns"},
 		Text:              chatGPTText{Verbosity: "low"},
-	}, nil
+	}
+	if effort != "" {
+		req.Reasoning = chatGPTReasoning{Effort: effort, Summary: "auto", Context: "all_turns"}
+	}
+	return req, nil
 }
 
 func buildChatGPTLiteInput(messages []session.Message, toolDefs []tools.OpenAITool) ([]json.RawMessage, error) {
@@ -388,17 +394,21 @@ func ptr(b bool) *bool {
 // effort string using the Responses API descriptor.
 //
 // WHAT:  Transforms the user-facing standard level to the API parameter value.
-// WHY:   The Responses API descriptor handles max-to-xhigh clamping and validation.
+// WHY:   The Responses API descriptor maps each standard level to its OpenAI
+//
+//	wire value (min→minimal, med→medium, max→max, etc.).
+//
 // HOW:   Calls reasoning.Normalize for the openai_responses descriptor.
 //
-//	When level is empty, returns "medium" to preserve current default behavior.
+//	When level is empty, returns empty string so the caller can omit the
+//	entire reasoning field from the request.
 //	When level is set but normalization fails, returns an error (no fallback).
 //
 // PARAMS: modelID — bare model name for capability check; level — standard reasoning level.
 // RETURNS: wire-level effort string; error if normalization fails for a non-empty level.
 func resolveReasoningEffort(modelID, level string) (string, error) {
 	if level == "" {
-		return "medium", nil
+		return "", nil
 	}
 	fragment, err := reasoning.Normalize("openai_responses", modelID, level)
 	if err != nil {
@@ -409,7 +419,7 @@ func resolveReasoningEffort(modelID, level string) (string, error) {
 			return effort, nil
 		}
 	}
-	return "medium", nil
+	return "", nil
 }
 
 func decodeOpenAIToolCalls(value interface{}) ([]tools.OpenAIToolCall, error) {

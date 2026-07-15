@@ -166,16 +166,22 @@ func levelSupported(allowed []string, level string) bool {
 //
 //	descriptor model checks operate on bare model names.
 //
-// HOW:   Splits on the first "/" only; a model without "/" returns ("", modelID).
+// HOW:   Strips any |reasoning_level suffix via ParseModelSpec, then splits on
 //
-// PARAMS: modelID — full or bare model identifier.
+//	the first "/" only. A model without "/" returns ("", modelID).
+//
+// PARAMS: modelID — full or bare model identifier, optionally suffixed.
 // RETURNS: provider name and bare model name.
 func splitModelID(modelID string) (string, string) {
-	idx := strings.Index(modelID, "/")
-	if idx < 0 {
+	spec, err := ParseModelSpec(modelID)
+	if err != nil {
 		return "", modelID
 	}
-	return modelID[:idx], modelID[idx+1:]
+	idx := strings.Index(spec.ModelID, "/")
+	if idx < 0 {
+		return "", spec.ModelID
+	}
+	return spec.ModelID[:idx], spec.ModelID[idx+1:]
 }
 
 // ValidateLevel checks whether level is one of the standard reasoning levels.

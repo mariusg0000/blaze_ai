@@ -1,7 +1,6 @@
 // openai_responses.go — OpenAI Responses/Codex reasoning descriptor.
 // Maps standard reasoning levels to the nested `reasoning.effort` field
-// used by the /responses endpoint. Clamps `max` to `xhigh` per codex-rs
-// behavior where Ultra is capped before sending.
+// used by the /responses endpoint.
 // Layer: pure domain logic. Dependencies: reasoning/levels.go only.
 package reasoning
 
@@ -24,13 +23,8 @@ var openaiResponsesSupportedModels = []string{
 // openaiResponsesSupportedLevels defines the reasoning levels accepted by
 // the Responses API.
 //
-// WHAT:  The Responses API accepts none through max (max is clamped to xhigh
-//
-//	in the transform).
-//
-// WHY:   codex-rs research shows Ultra is clamped to the wire value before sending;
-//
-//	our standard level set includes max for semantic completeness.
+// WHAT:  The Responses API accepts none through max.
+// WHY:   Each standard level maps directly to its OpenAI wire value.
 var openaiResponsesSupportedLevels = []string{
 	LevelNone, LevelMin, LevelLow, LevelMed, LevelHigh, LevelXHigh, LevelMax,
 }
@@ -78,19 +72,14 @@ func isOpenAIResponsesModel(modelID string) bool {
 // WHAT:  Produces the nested reasoning.effort field for /responses.
 // WHY:   The Responses API requires a nested structure inside a "reasoning" object.
 //
-//	HOW: Clamps `max` to `xhigh` per codex-rs behavior, then maps to OpenAI wire value.
+//	HOW: Maps standard level to OpenAI wire value via openaiWireLevel.
 //
 // PARAMS: level — a validated standard reasoning level.
 // RETURNS: map[string]any with a nested "reasoning" object containing "effort".
 func transformOpenAIResponses(level string) (map[string]any, error) {
-	wireLevel := level
-	if level == LevelMax {
-		// codex-rs clamps Ultra/max to the highest wire value before sending.
-		wireLevel = LevelXHigh
-	}
 	return map[string]any{
 		"reasoning": map[string]any{
-			"effort": openaiWireLevel(wireLevel),
+			"effort": openaiWireLevel(level),
 		},
 	}, nil
 }

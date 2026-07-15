@@ -15,10 +15,6 @@ func TestOpenAIChatTransformAllLevels(t *testing.T) {
 			t.Fatalf("transformOpenAIChat(%q) missing reasoning_effort", level)
 		}
 		want := openaiWireLevel(level)
-		if level == LevelMax {
-			// max is clamped to xhigh for the Chat Completions wire format.
-			want = openaiWireLevel(LevelXHigh)
-		}
 		if got != want {
 			t.Errorf("transformOpenAIChat(%q) reasoning_effort = %v, want %q (wire)", level, got, want)
 		}
@@ -66,20 +62,33 @@ func TestOpenAIChatDescriptorRegistered(t *testing.T) {
 		t.Errorf("DefaultLevel = %q, want med", d.DefaultLevel)
 	}
 	if len(d.SupportedLevels) != 7 {
-		t.Errorf("SupportedLevels = %d entries, want 7 (includes max)", len(d.SupportedLevels))
+		t.Errorf("SupportedLevels = %d entries, want 7", len(d.SupportedLevels))
 	}
 }
 
-// TestOpenAIChatTransformMaxClamped verifies max is clamped to xhigh wire value.
-func TestOpenAIChatTransformMaxClamped(t *testing.T) {
+// TestOpenAIChatTransformMax verifies max serializes as "max" on the wire.
+func TestOpenAIChatTransformMax(t *testing.T) {
 	fragment, err := transformOpenAIChat(LevelMax)
 	if err != nil {
 		t.Fatalf("transformOpenAIChat(max) error: %v", err)
 	}
 	got := fragment["reasoning_effort"]
-	want := openaiWireLevel(LevelXHigh)
+	want := openaiWireLevel(LevelMax)
 	if got != want {
 		t.Errorf("transformOpenAIChat(max) reasoning_effort = %v, want %q", got, want)
+	}
+}
+
+// TestOpenAIChatTransformXHigh verifies xhigh serializes as "xhigh" on the wire.
+func TestOpenAIChatTransformXHigh(t *testing.T) {
+	fragment, err := transformOpenAIChat(LevelXHigh)
+	if err != nil {
+		t.Fatalf("transformOpenAIChat(xhigh) error: %v", err)
+	}
+	got := fragment["reasoning_effort"]
+	want := openaiWireLevel(LevelXHigh)
+	if got != want {
+		t.Errorf("transformOpenAIChat(xhigh) reasoning_effort = %v, want %q", got, want)
 	}
 }
 

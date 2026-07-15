@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"blazeai/internal/platform"
+	"blazeai/internal/reasoning"
 )
 
 // ErrConfigMissing is returned when config.json does not exist on disk.
@@ -404,18 +405,27 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// validateModelFormat checks that a model identifier is in provider/model_name form.
+// validateModelFormat checks that a model identifier is in provider/model_name form,
+// optionally with a |reasoning_level suffix.
 //
-// WHAT:  Verifies that a model string contains exactly one "/" separator.
-// WHY:   The runtime always works with full provider/model_name identifiers.
-// PARAMS: model — the model identifier to check.
+// WHAT:  Parses any |reasoning_level suffix, then verifies the model ID part
+//
+//	starts with a provider prefix and has a non-empty model name.
+//	Multiple slashes in the model name are allowed (e.g., "openrouter/openai/o3").
+//
+// WHY:   The runtime always works with full provider/model_name identifiers;
+//
+//	the suffix is the sole source of reasoning configuration.
+//
+// PARAMS: model — the model identifier to check, optionally suffixed.
 // RETURNS: error if the format is invalid.
 func validateModelFormat(model string) error {
-	idx := strings.Index(model, "/")
-	if idx <= 0 || idx == len(model)-1 {
-		return ErrInvalidModelFormat
+	spec, err := reasoning.ParseModelSpec(model)
+	if err != nil {
+		return err
 	}
-	if strings.Contains(model[idx+1:], "/") {
+	idx := strings.Index(spec.ModelID, "/")
+	if idx <= 0 || idx == len(spec.ModelID)-1 {
 		return ErrInvalidModelFormat
 	}
 	return nil
@@ -477,12 +487,19 @@ func providerNameSet(providers []Provider) map[string]bool {
 // validateModelProvider checks that the provider part of a model ID exists.
 //
 // WHAT:  Verifies that a model's provider prefix matches an existing provider.
+//
+//	Strips any |reasoning_level suffix before extracting the provider prefix.
+//
 // WHY:   A model identifier without a matching provider is a dangling reference.
-// PARAMS: model — the model identifier; providers — the provider name lookup table.
+// PARAMS: model — the model identifier, optionally suffixed; providers — the provider name lookup table.
 // RETURNS: error if the provider does not exist.
 func validateModelProvider(model string, providers map[string]bool) error {
-	idx := strings.Index(model, "/")
-	providerName := model[:idx]
+	spec, err := reasoning.ParseModelSpec(model)
+	if err != nil {
+		return err
+	}
+	idx := strings.Index(spec.ModelID, "/")
+	providerName := spec.ModelID[:idx]
 	if !providers[providerName] {
 		return fmt.Errorf("%w: %s", ErrProviderNotFound, providerName)
 	}
@@ -537,15 +554,22 @@ func (c *Config) ModelForRole(role string) (string, error) {
 // SplitModelID separates a provider/model_name identifier into its parts.
 //
 // WHAT:  Splits a model identifier into provider name and model name.
+//
+//	Strips any |reasoning_level suffix before splitting.
+//
 // WHY:   API calls need the bare model name and the provider separately.
-// PARAMS: modelID — the full provider/model_name string.
+// PARAMS: modelID — the full provider/model_name string, optionally suffixed.
 // RETURNS: provider string, model string — the two parts.
 func SplitModelID(modelID string) (provider, model string) {
-	idx := strings.Index(modelID, "/")
-	if idx < 0 {
+	spec, err := reasoning.ParseModelSpec(modelID)
+	if err != nil {
 		return modelID, ""
 	}
-	return modelID[:idx], modelID[idx+1:]
+	idx := strings.Index(spec.ModelID, "/")
+	if idx < 0 {
+		return spec.ModelID, ""
+	}
+	return spec.ModelID[:idx], spec.ModelID[idx+1:]
 }
 
 // AddFavorite adds a model ID to the favorites list if not already present.

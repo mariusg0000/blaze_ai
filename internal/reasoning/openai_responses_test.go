@@ -22,28 +22,36 @@ func TestOpenAIResponsesTransformAllLevels(t *testing.T) {
 		if !ok {
 			t.Fatalf("transformOpenAIResponses(%q) missing effort key", level)
 		}
-		// max is clamped to xhigh, then both are mapped to wire values
-		wantLevel := level
-		if level == LevelMax {
-			wantLevel = LevelXHigh
-		}
-		want := openaiWireLevel(wantLevel)
+		want := openaiWireLevel(level)
 		if effort != want {
 			t.Errorf("transformOpenAIResponses(%q) effort = %v, want %q (wire)", level, effort, want)
 		}
 	}
 }
 
-// TestOpenAIResponsesMaxClamped verifies max is clamped and mapped to xhigh wire value.
-func TestOpenAIResponsesMaxClamped(t *testing.T) {
+// TestOpenAIResponsesMaxMapsToMax verifies max maps directly to "max" wire value.
+func TestOpenAIResponsesMaxMapsToMax(t *testing.T) {
 	fragment, err := transformOpenAIResponses(LevelMax)
 	if err != nil {
 		t.Fatalf("transformOpenAIResponses(max) error: %v", err)
 	}
 	reasoning := fragment["reasoning"].(map[string]any)
-	want := openaiWireLevel(LevelXHigh)
+	want := openaiWireLevel(LevelMax)
 	if reasoning["effort"] != want {
 		t.Errorf("max wire value = %v, want %q", reasoning["effort"], want)
+	}
+}
+
+// TestOpenAIResponsesXHighMapsToXHigh verifies xhigh maps directly to "xhigh" wire value.
+func TestOpenAIResponsesXHighMapsToXHigh(t *testing.T) {
+	fragment, err := transformOpenAIResponses(LevelXHigh)
+	if err != nil {
+		t.Fatalf("transformOpenAIResponses(xhigh) error: %v", err)
+	}
+	reasoning := fragment["reasoning"].(map[string]any)
+	want := openaiWireLevel(LevelXHigh)
+	if reasoning["effort"] != want {
+		t.Errorf("xhigh wire value = %v, want %q", reasoning["effort"], want)
 	}
 }
 
@@ -124,6 +132,6 @@ func TestOpenAIResponsesDescriptorRegistered(t *testing.T) {
 		t.Errorf("DefaultLevel = %q, want med", d.DefaultLevel)
 	}
 	if len(d.SupportedLevels) != 7 {
-		t.Errorf("SupportedLevels = %d entries, want 7 (includes max)", len(d.SupportedLevels))
+		t.Errorf("SupportedLevels = %d entries, want 7", len(d.SupportedLevels))
 	}
 }

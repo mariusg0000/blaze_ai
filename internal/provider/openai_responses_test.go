@@ -114,6 +114,12 @@ func TestStreamChatGPTParsesTextToolCallAndUsage(t *testing.T) {
 	if requestBody.PromptCacheKey != "blazeai-session-key" {
 		t.Errorf("PromptCacheKey = %q", requestBody.PromptCacheKey)
 	}
+	if requestBody.Reasoning.Effort != "" {
+		t.Errorf("Reasoning.Effort = %q, want empty for no-suffix model", requestBody.Reasoning.Effort)
+	}
+	if requestBody.Reasoning.Summary != "" {
+		t.Errorf("Reasoning.Summary = %q, want empty for no-suffix model", requestBody.Reasoning.Summary)
+	}
 	if requestBody.ClientMetadata["session_id"] != "session-1" || requestBody.ClientMetadata["thread_id"] != "session-1" {
 		t.Errorf("ClientMetadata = %#v", requestBody.ClientMetadata)
 	}
@@ -189,6 +195,17 @@ func TestStreamChatGPTAddsResponsesLiteHeaderForGPT56(t *testing.T) {
 	if requested == nil {
 		t.Fatal("request was not sent")
 	}
+	// Decode request body to verify reasoning is absent for no-suffix model.
+	var requestBody chatGPTResponsesRequest
+	if err := json.NewDecoder(requested.Body).Decode(&requestBody); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	if requestBody.Reasoning.Effort != "" {
+		t.Errorf("Reasoning.Effort = %q, want empty for no-suffix lite model", requestBody.Reasoning.Effort)
+	}
+	if requestBody.Reasoning.Context != "" {
+		t.Errorf("Reasoning.Context = %q, want empty for no-suffix lite model", requestBody.Reasoning.Context)
+	}
 	if requested.Header.Get(chatGPTCodexLiteHeader) != "true" {
 		t.Errorf("%s = %q, want true", chatGPTCodexLiteHeader, requested.Header.Get(chatGPTCodexLiteHeader))
 	}
@@ -210,12 +227,15 @@ func TestBuildChatGPTLiteRequestAddsAllTurnsReasoningAndStripsImageDetail(t *tes
 	}, {
 		Type:     "function",
 		Function: tools.FunctionDef{Name: "load_skill", Description: "Load a skill", Parameters: json.RawMessage(`{"type":"object"}`)},
-	}}, "")
+	}}, "high")
 	if err != nil {
 		t.Fatalf("buildChatGPTRequest() error: %v", err)
 	}
 	if request.Reasoning.Context != "all_turns" {
 		t.Fatalf("Reasoning.Context = %q, want all_turns", request.Reasoning.Context)
+	}
+	if request.Reasoning.Effort == "" {
+		t.Fatal("Reasoning.Effort is empty, want non-empty for level 'high'")
 	}
 	if len(request.Input) < 2 {
 		t.Fatalf("Input length = %d, want at least 2", len(request.Input))
@@ -232,5 +252,53 @@ func TestBuildChatGPTLiteRequestAddsAllTurnsReasoningAndStripsImageDetail(t *tes
 	}
 	if !strings.Contains(encoded, `"text":"describe"`) {
 		t.Fatalf("lite input missing text part: %s", encoded)
+	}
+}
+
+func TestBuildChatGPTRequestNoSuffixOmitsReasoning(t *testing.T) {
+	request, err := buildChatGPTRequest("gpt-5.4", []session.Message{
+		{Role: "user", Content: "hello"},
+	}, nil, "")
+	if err != nil {
+		t.Fatalf("buildChatGPTRequest() error: %v", err)
+	}
+	if request.Reasoning.Effort != "" {
+		t.Errorf("Reasoning.Effort = %q, want empty for no-suffix model", request.Reasoning.Effort)
+	}
+	if request.Reasoning.Summary != "" {
+		t.Errorf("Reasoning.Summary = %q, want empty for no-suffix model", request.Reasoning.Summary)
+	}
+}
+
+func TestBuildChatGPTLiteRequestNoSuffixOmitsReasoning(t *testing.T) {
+	request, err := buildChatGPTRequest("gpt-5.6-luna", []session.Message{
+		{Role: "user", Content: "hello"},
+	}, nil, "")
+	if err != nil {
+		t.Fatalf("buildChatGPTRequest() error: %v", err)
+	}
+	if request.Reasoning.Effort != "" {
+		t.Errorf("Reasoning.Effort = %q, want empty for no-suffix model", request.Reasoning.Effort)
+	}
+	if request.Reasoning.Summary != "" {
+		t.Errorf("Reasoning.Summary = %q, want empty for no-suffix model", request.Reasoning.Summary)
+	}
+	if request.Reasoning.Context != "" {
+		t.Errorf("Reasoning.Context = %q, want empty for no-suffix lite model", request.Reasoning.Context)
+	}
+}
+
+func TestBuildChatGPTRequestWithSuffixSetsEffort(t *testing.T) {
+	request, err := buildChatGPTRequest("gpt-5.4", []session.Message{
+		{Role: "user", Content: "hello"},
+	}, nil, "high")
+	if err != nil {
+		t.Fatalf("buildChatGPTRequest() error: %v", err)
+	}
+	if request.Reasoning.Effort == "" {
+		t.Fatal("Reasoning.Effort is empty, want non-empty for level 'high'")
+	}
+	if request.Reasoning.Summary != "auto" {
+		t.Errorf("Reasoning.Summary = %q, want 'auto'", request.Reasoning.Summary)
 	}
 }

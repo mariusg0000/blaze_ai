@@ -63,6 +63,16 @@ func LoadStateFrom(path string, cfg *config.Config) (*State, error) {
 }
 
 // Validate checks the selected model against global provider config.
+//
+// WHAT:  Validates the selected model using the canonical format and provider check.
+// WHY:   The model string may include a |reasoning_level suffix; the canonical
+//
+//	validation must parse and accept it before the bridge uses the model.
+//
+// HOW:   Calls config.ValidateModelFormat to parse the model identifier (stripping
+//
+//	any suffix) and verify the provider/model_name format, then checks that the
+//	provider exists in the config.
 func (s *State) Validate(cfg *config.Config) error {
 	if cfg == nil {
 		return fmt.Errorf("global config is required")
@@ -71,15 +81,14 @@ func (s *State) Validate(cfg *config.Config) error {
 	if modelID == "" {
 		return fmt.Errorf("selected_model is required")
 	}
-	providerName, modelName := config.SplitModelID(modelID)
-	if providerName == "" || modelName == "" || strings.Contains(modelName, "/") {
-		return fmt.Errorf("selected_model must be in provider/model_name format")
+	if err := config.ValidateModelFormat(modelID); err != nil {
+		return err
 	}
+	providerName, _ := config.SplitModelID(modelID)
 	if cfg.ProviderByName(providerName) == nil {
 		return fmt.Errorf("selected_model provider not found: %s", providerName)
 	}
 	return nil
-
 }
 
 // SaveTo writes state.json atomically to an explicit path.
