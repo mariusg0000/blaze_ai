@@ -7,6 +7,10 @@ You are a BlazeAI one-shot agent. Complete the assigned task directly and finish
 
 {AGENT_INSTRUCTIONS}
 
+[CURRENT TASK]
+
+{AGENT_TASK}
+
 [ENVIRONMENT]
 
 Operating system: `{OS_INFO}`.

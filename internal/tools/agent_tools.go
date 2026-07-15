@@ -15,6 +15,7 @@ type RunAgentTask struct {
 	Agent   string `json:"agent"`
 	Task    string `json:"task"`
 	Context string `json:"context,omitempty"`
+	ID      string `json:"id,omitempty"`
 }
 
 // RunAgentArgs supports one task or an ordered list of parallel tasks.
@@ -23,6 +24,7 @@ type RunAgentArgs struct {
 	Agent   string         `json:"agent,omitempty"`
 	Task    string         `json:"task,omitempty"`
 	Context string         `json:"context,omitempty"`
+	ID      string         `json:"id,omitempty"`
 	Tasks   []RunAgentTask `json:"tasks,omitempty"`
 }
 
@@ -46,7 +48,7 @@ func (t *RunAgentTool) Description() string {
 
 // Parameters returns the JSON schema accepted by the tool.
 func (t *RunAgentTool) Parameters() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"purpose":{"type":"string","description":"purpose = exactly 3 user-visible sentences. Sentence 1 must name the child agent or agent group and the requested task. Sentence 2 must describe the execution scope, task ordering, or context passed to children. Sentence 3 must explain what the returned child result should produce and how it advances the task."},"agent":{"type":"string"},"task":{"type":"string"},"context":{"type":"string"},"tasks":{"type":"array","items":{"type":"object","required":["agent","task"],"properties":{"agent":{"type":"string"},"task":{"type":"string"},"context":{"type":"string"}}}}},"required":["purpose"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"purpose":{"type":"string","description":"purpose = exactly 3 user-visible sentences. Sentence 1 must name the child agent or agent group and the requested task. Sentence 2 must describe the execution scope, task ordering, or context passed to children. Sentence 3 must explain what the returned child result should produce and how it advances the task."},"agent":{"type":"string"},"task":{"type":"string"},"context":{"type":"string"},"id":{"type":"string","description":"Optional persistent child-session ID. Omit it to create a new child session; provide it to resume and replace that session's current task."},"tasks":{"type":"array","items":{"type":"object","required":["agent","task"],"properties":{"agent":{"type":"string"},"task":{"type":"string"},"context":{"type":"string"},"id":{"type":"string"}}}}},"required":["purpose"]}`)
 }
 
 // Execute validates arguments and delegates execution to runtime.

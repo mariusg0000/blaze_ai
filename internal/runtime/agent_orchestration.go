@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -91,11 +92,11 @@ func (f *activityForwarder) signal() {
 
 // runAgent resolves and executes one or more child tasks.
 // WHAT: Orchestrates one-shot definitions with ordered parallel results.
-// HOW: Validates definitions, starts bounded workers, and cleans every temporary folder by defer.
+// HOW: Validates definitions, starts bounded workers, and persists each child session for resume.
 func (a *Agent) runAgent(ctx context.Context, args tools.RunAgentArgs) string {
 	tasks := args.Tasks
 	if len(tasks) == 0 {
-		tasks = []tools.RunAgentTask{{Agent: args.Agent, Task: args.Task, Context: args.Context}}
+		tasks = []tools.RunAgentTask{{Agent: args.Agent, Task: args.Task, Context: args.Context, ID: args.ID}}
 	}
 	for _, task := range tasks {
 		if !a.modeAllowsAgent(strings.TrimSpace(task.Agent)) {
@@ -121,7 +122,10 @@ func (a *Agent) runAgent(ctx context.Context, args tools.RunAgentArgs) string {
 				return
 			}
 			defer func() { <-sem }()
-			displayID := fmt.Sprintf("%s_%02d", task.Agent, index+1)
+			displayID := strings.TrimSpace(task.ID)
+			if displayID == "" {
+				displayID = fmt.Sprintf("%s_%02d_%d", task.Agent, index+1, time.Now().UnixNano())
+			}
 			result, err := a.runOneChild(childCtx, task, displayID)
 			if err != nil {
 				setFirstError(&errMu, &firstErr, err)
@@ -172,15 +176,11 @@ func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, 
 		return "", fmt.Errorf("one-shot agent not found: %s", task.Agent)
 	}
 	a.emitAgentActivity(AgentActivity{Agent: displayID, Kind: "started", Status: "running", Text: "child agent started"})
-	folder, err := os.MkdirTemp(a.Session.Folder, "agent-")
+	folder, childSession, err := openChildSession(a.Session.Folder, displayID)
 	if err != nil {
-		return "", fmt.Errorf("cannot create temporary child session: %w", err)
+		return "", err
 	}
 	defer func() {
-		cleanupErr := os.RemoveAll(folder)
-		if cleanupErr != nil && err == nil {
-			err = fmt.Errorf("child cleanup failed: %w", cleanupErr)
-		}
 		if err != nil {
 			kind := "failed"
 			if strings.Contains(err.Error(), "timed out") || strings.Contains(err.Error(), "inactivity") {
@@ -194,9 +194,12 @@ func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, 
 		a.emitAgentActivity(AgentActivity{Agent: displayID, Kind: "completed", Status: "ok", Text: "child agent completed"})
 	}()
 
-	childSession := &session.Session{Messages: []session.Message{}, Folder: folder}
-	if err := childSession.Save(); err != nil {
-		return "", fmt.Errorf("cannot initialize temporary child session: %w", err)
+	taskPath := filepath.Join(folder, "agent_task.md")
+	if strings.TrimSpace(task.Task) == "" {
+		return "", fmt.Errorf("child %q task is empty", displayID)
+	}
+	if err := os.WriteFile(taskPath, []byte(strings.TrimSpace(task.Task)+"\n"), 0644); err != nil {
+		return "", fmt.Errorf("cannot write child task file: %w", err)
 	}
 
 	model := strings.TrimSpace(definition.Model)
@@ -209,6 +212,7 @@ func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, 
 	}
 	child.Builder.SystemPromptName = "sysprompt.agent.md"
 	child.Builder.AgentInstructions = definition.Instructions
+	child.Builder.AgentTaskFile = taskPath
 	child.Builder.Agents = nil
 
 	completion := ""
@@ -256,7 +260,7 @@ func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, 
 		}
 	}()
 
-	input := buildChildInput(definition, task)
+	input := buildChildInput(task)
 	if err := child.RunTurn(actx, input); err != nil {
 		if parentCtx.Err() != nil {
 			return "", fmt.Errorf("child %q cancelled: %w", definition.Name, parentCtx.Err())
@@ -272,7 +276,7 @@ func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, 
 	if completion == "" {
 		return "", fmt.Errorf("child %q incomplete: agent_done was not called", definition.Name)
 	}
-	return completion, nil
+	return fmt.Sprintf("child session id: %s\n\n%s", displayID, completion), nil
 }
 
 // oneShotDefinition resolves only one-shot definitions and never falls back to modes.
@@ -295,15 +299,57 @@ func containsToolName(names []string, wanted string) bool {
 	return false
 }
 
-// buildChildInput passes only requested task/context and the definition body.
-func buildChildInput(_ agents.Definition, task tools.RunAgentTask) string {
-	var parts []string
-	parts = append(parts, "[TASK]\n"+strings.TrimSpace(task.Task))
-	if strings.TrimSpace(task.Context) != "" {
-		parts = append(parts, "[CONTEXT]\n"+strings.TrimSpace(task.Context))
+// buildChildInput passes only optional context because the current task is part of the system prompt.
+func buildChildInput(task tools.RunAgentTask) string {
+	if strings.TrimSpace(task.Context) == "" {
+		return "Continue with the current task from the system prompt. Call agent_done with a concise non-empty final answer when complete."
 	}
-	parts = append(parts, "Call agent_done with a concise non-empty final answer when complete.")
-	return strings.Join(parts, "\n\n")
+	return "[CONTEXT]\n" + strings.TrimSpace(task.Context) + "\n\nCall agent_done with a concise non-empty final answer when complete."
+}
+
+// openChildSession creates or resumes a persistent child session beneath the main session.
+func openChildSession(mainFolder, id string) (string, *session.Session, error) {
+	if !validChildID(id) {
+		return "", nil, fmt.Errorf("invalid child session id %q", id)
+	}
+	root := filepath.Join(mainFolder, "agents")
+	if err := os.MkdirAll(root, 0755); err != nil {
+		return "", nil, fmt.Errorf("cannot create child sessions directory: %w", err)
+	}
+	folder := filepath.Join(root, id)
+	if info, err := os.Stat(folder); err == nil {
+		if !info.IsDir() {
+			return "", nil, fmt.Errorf("child session path is not a directory: %s", folder)
+		}
+		child, err := session.Load(folder)
+		if err != nil {
+			return "", nil, fmt.Errorf("cannot resume child session %q: %w", id, err)
+		}
+		return folder, child, nil
+	} else if !os.IsNotExist(err) {
+		return "", nil, fmt.Errorf("cannot inspect child session %q: %w", id, err)
+	}
+	if err := os.Mkdir(folder, 0755); err != nil {
+		return "", nil, fmt.Errorf("cannot create child session %q: %w", id, err)
+	}
+	child := &session.Session{Messages: []session.Message{}, Folder: folder}
+	if err := child.Save(); err != nil {
+		return "", nil, fmt.Errorf("cannot initialize child session %q: %w", id, err)
+	}
+	return folder, child, nil
+}
+
+// validChildID rejects path separators and traversal from resume identifiers.
+func validChildID(id string) bool {
+	if id == "" || id == "." || id == ".." || filepath.Base(id) != id {
+		return false
+	}
+	for _, r := range id {
+		if !(r == '-' || r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
 }
 
 // boundAnswer limits child output before inserting it into parent context.

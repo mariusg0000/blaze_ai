@@ -52,17 +52,18 @@ var variablePattern = regexp.MustCompile(`\{([A-Z_][A-Z0-9_]*)\}`)
 //	HelperSetup — user UX preferences for host helper installation prompts;
 //	HelperLookup — binary lookup function for helper detection (injectable for tests).
 type Builder struct {
-	PromptsFS        fs.FS
-	WorkDir          string
-	OS               platform.OS
-	OSInfo           string
-	SystemPromptName string
-	TransportName    string
-	TransportContext string
+	PromptsFS         fs.FS
+	WorkDir           string
+	OS                platform.OS
+	OSInfo            string
+	SystemPromptName  string
+	TransportName     string
+	TransportContext  string
 	AgentInstructions string
-	HelperSetup      config.HelperSetup
-	HelperLookup     helpers.LookupFunc
-	Agents           []agents.Definition
+	AgentTaskFile     string
+	HelperSetup       config.HelperSetup
+	HelperLookup      helpers.LookupFunc
+	Agents            []agents.Definition
 }
 
 // injectVariables replaces known variable placeholders in text with resolved values.
@@ -164,7 +165,7 @@ func allowsEmptyTemplateValue(name string) bool {
 		return true
 	case "AGENTS_CONTENT":
 		return true
-	case "AGENT_INSTRUCTIONS":
+	case "AGENT_INSTRUCTIONS", "AGENT_TASK":
 		return true
 	default:
 		return false
@@ -377,8 +378,8 @@ func (b *Builder) buildAgentsSection() string {
 		fmt.Fprintf(&sb, "- %s [%s] — %s (model: %s; tools: %s)\\n", definition.Name, definition.Kind, definition.Description, model, strings.Join(definition.ToolNames, ", "))
 	}
 	sb.WriteString("\\nExecution instructions:\n")
-	sb.WriteString("- Use run_agent only when it is present in your available tool registry and only with an explicitly listed one-shot agent name. Provide purpose as exactly three user-visible sentences; if purpose is unavailable, the UI falls back to the task truncated to 150 characters. Pass the task and only the context the child needs; do not copy the full parent transcript.\\n")
-	sb.WriteString("- One-shot agents are independent and temporary. They must call agent_done with a non-empty final answer; plain assistant text is incomplete and must not be treated as success.\\n")
+	sb.WriteString("- Use run_agent only when it is present in your available tool registry and only with an explicitly listed one-shot agent name. Provide purpose as exactly three user-visible sentences; if purpose is unavailable, the UI falls back to the task truncated to 80 characters. Pass the task, optional persistent child-session id, and only the context the child needs; do not copy the full parent transcript.\\n")
+	sb.WriteString("- One-shot agents persist under the main session and can be resumed with their id. Their current task is loaded from agent_task.md into the child system prompt and is replaced when a resumed run supplies a new task.\\n")
 	sb.WriteString("- agent_done is internal to one-shot children and is added automatically; do not request it from the parent.\\n")
 	return strings.TrimSpace(sb.String())
 }
@@ -457,6 +458,18 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 		agents = fmt.Sprintf("---\nAGENTS.md:\n\n%s\n---", agents)
 	}
 
+	agentTask := ""
+	if strings.TrimSpace(b.AgentTaskFile) != "" {
+		content, err := os.ReadFile(b.AgentTaskFile)
+		if err != nil {
+			return "", fmt.Errorf("cannot read agent task file %q: %w", b.AgentTaskFile, err)
+		}
+		agentTask = strings.TrimSpace(string(content))
+		if agentTask == "" {
+			return "", fmt.Errorf("agent task file %q is empty", b.AgentTaskFile)
+		}
+	}
+
 	templateValues := map[string]string{
 		"HOST_HELPERS_ADVISORY":   strings.TrimSpace(helperAdvisory),
 		"HOST_HELPERS_AVAILABLE":  strings.TrimSpace(helperAvailable),
@@ -465,7 +478,8 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 		"RUNNABLE_SKILLS_SECTION": strings.TrimSpace(runnableSkillsAvailable),
 		"SKILLS_ACTIVE":           strings.TrimSpace(skillsActive),
 		"AGENTS_AVAILABLE":        strings.TrimSpace(b.buildAgentsSection()),
-		"AGENT_INSTRUCTIONS":     strings.TrimSpace(b.AgentInstructions),
+		"AGENT_INSTRUCTIONS":      strings.TrimSpace(b.AgentInstructions),
+		"AGENT_TASK":              agentTask,
 		"PROJECT_CONTENT":         strings.TrimSpace(projectContext),
 		"AGENTS_CONTENT":          strings.TrimSpace(agents),
 	}

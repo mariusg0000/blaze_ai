@@ -185,6 +185,35 @@ func TestInjectVariablesForSkillEscapeBraces(t *testing.T) {
 	}
 }
 
+// TestBuildRuntimePartLoadsAgentTask verifies that the persistent child task is injected on every build.
+func TestBuildRuntimePartLoadsAgentTask(t *testing.T) {
+	_, workDir := setupTestDirs(t)
+
+	// Use a separate prompt directory because setupTestDirs intentionally creates only main-runtime fixtures.
+	agentRoot := t.TempDir()
+	writeFile(t, filepath.Join(agentRoot, "sysprompt.agent.md"), "Task: {AGENT_TASK}")
+	writeFile(t, filepath.Join(agentRoot, "sysprompt.linux.md"), "Linux")
+	taskPath := filepath.Join(workDir, "agent_task.md")
+	writeFile(t, taskPath, "first task")
+	b := &Builder{PromptsFS: os.DirFS(agentRoot), WorkDir: workDir, OS: platform.Linux, SystemPromptName: "sysprompt.agent.md", AgentTaskFile: taskPath}
+
+	first, err := b.BuildRuntimePart(skills.NewActiveList())
+	if err != nil {
+		t.Fatalf("first BuildRuntimePart() error: %v", err)
+	}
+	if !strings.Contains(first, "Task: first task") {
+		t.Fatalf("first prompt does not contain task: %q", first)
+	}
+	writeFile(t, taskPath, "replacement task")
+	second, err := b.BuildRuntimePart(skills.NewActiveList())
+	if err != nil {
+		t.Fatalf("second BuildRuntimePart() error: %v", err)
+	}
+	if !strings.Contains(second, "Task: replacement task") || strings.Contains(second, "first task") {
+		t.Fatalf("second prompt did not replace task: %q", second)
+	}
+}
+
 // TestBuildRuntimePartFull verifies the full runtime part with all sources.
 func TestBuildRuntimePartFull(t *testing.T) {
 	promptsFS, workDir := setupTestDirs(t)
