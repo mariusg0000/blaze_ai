@@ -180,12 +180,22 @@ func (a *Agent) emitAgentActivity(activity AgentActivity) {
 //
 //	resets on every tool call or result forwarded by the activity handler.
 func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, displayID, childID string) (result string, err error) {
+	// Decorate failures before they reach the parent so resume always uses the exact session ID.
+	defer func() {
+		if err != nil {
+			err = formatChildError(task.Agent, childID, err)
+		}
+	}()
+
 	definition, ok := a.oneShotDefinition(task.Agent)
 	if !ok {
 		a.emitAgentActivity(AgentActivity{Agent: task.Agent, Kind: "failed", Status: "error", Text: "one-shot agent not found"})
 		return "", fmt.Errorf("one-shot agent not found: %s", task.Agent)
 	}
-	folder, childSession, err := openChildSession(a.Session.Folder, childID)
+	if strings.TrimSpace(task.Task) == "" {
+		return "", fmt.Errorf("child %q task is empty", displayID)
+	}
+	folder, childSession, resumed, err := openChildSession(a.Session.Folder, childID)
 	if err != nil {
 		return "", err
 	}
@@ -210,11 +220,10 @@ func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, 
 	}()
 
 	taskPath := filepath.Join(folder, "agent_task.md")
-	if strings.TrimSpace(task.Task) == "" {
-		return "", fmt.Errorf("child %q task is empty", displayID)
-	}
-	if err := os.WriteFile(taskPath, []byte(strings.TrimSpace(task.Task)+"\n"), 0644); err != nil {
-		return "", fmt.Errorf("cannot write child task file: %w", err)
+	if !resumed {
+		if err := os.WriteFile(taskPath, []byte(strings.TrimSpace(task.Task)+"\n"), 0644); err != nil {
+			return "", fmt.Errorf("cannot write child task file: %w", err)
+		}
 	}
 	child, err := newChildAgent(a.Config, childSession, a.OS, a.Builder.PromptsFS, a.WorkDir, &childHandler{agentID: displayID, emit: a.emitAgentActivity}, a.Builder.TransportName, model)
 	if err != nil {
@@ -270,7 +279,7 @@ func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, 
 		}
 	}()
 
-	input := buildChildInput(task)
+	input := buildChildInput(task, resumed)
 	if err := child.RunTurn(actx, input); err != nil {
 		if parentCtx.Err() != nil {
 			return "", fmt.Errorf("child %q cancelled: %w", definition.Name, parentCtx.Err())
@@ -319,6 +328,13 @@ func formatChildResult(agentName, childID, warning, answer string) string {
 	return fmt.Sprintf("%sagent: %s\nchild session id: %s\nThis child session can be resumed later with the same agent name, this id, and a new task, if needed.\n\n%s", warning, agentName, childID, answer)
 }
 
+// formatChildError adds exact resume metadata to a child failure.
+// WHAT: Makes failed child sessions resumable by the parent model.
+// HOW: Places the agent name, exact session ID, and valid run_agent syntax in the error text.
+func formatChildError(agentName, childID string, err error) error {
+	return fmt.Errorf("agent: %s\nchild session id: %s\n%s\nResume with agent=%q and id=%q", agentName, childID, err, agentName, childID)
+}
+
 // shortChildID generates a compact 5-character hex identifier for child sessions.
 func shortChildID() string {
 	b := make([]byte, 3)
@@ -346,8 +362,17 @@ func containsToolName(names []string, wanted string) bool {
 	return false
 }
 
-// buildChildInput passes only optional context because the current task is part of the system prompt.
-func buildChildInput(task tools.RunAgentTask) string {
+// buildChildInput creates the child turn input for a new task or a resume request.
+// WHAT: Keeps the original task in the system prompt and sends resume work as a user message.
+// HOW: New children receive optional context; resumed children receive the new task explicitly.
+func buildChildInput(task tools.RunAgentTask, resumed bool) string {
+	if resumed {
+		input := "[RESUME TASK]\n" + strings.TrimSpace(task.Task)
+		if strings.TrimSpace(task.Context) != "" {
+			input += "\n\n[CONTEXT]\n" + strings.TrimSpace(task.Context)
+		}
+		return input + "\n\nCall agent_done with a concise non-empty final answer when complete."
+	}
 	if strings.TrimSpace(task.Context) == "" {
 		return "Continue with the current task from the system prompt. Call agent_done with a concise non-empty final answer when complete."
 	}
@@ -355,35 +380,35 @@ func buildChildInput(task tools.RunAgentTask) string {
 }
 
 // openChildSession creates or resumes a persistent child session beneath the main session.
-func openChildSession(mainFolder, id string) (string, *session.Session, error) {
+func openChildSession(mainFolder, id string) (string, *session.Session, bool, error) {
 	if !validChildID(id) {
-		return "", nil, fmt.Errorf("invalid child session id %q", id)
+		return "", nil, false, fmt.Errorf("invalid child session id %q", id)
 	}
 	root := filepath.Join(mainFolder, "agents")
 	if err := os.MkdirAll(root, 0755); err != nil {
-		return "", nil, fmt.Errorf("cannot create child sessions directory: %w", err)
+		return "", nil, false, fmt.Errorf("cannot create child sessions directory: %w", err)
 	}
 	folder := filepath.Join(root, id)
 	if info, err := os.Stat(folder); err == nil {
 		if !info.IsDir() {
-			return "", nil, fmt.Errorf("child session path is not a directory: %s", folder)
+			return "", nil, false, fmt.Errorf("child session path is not a directory: %s", folder)
 		}
 		child, err := session.Load(folder)
 		if err != nil {
-			return "", nil, fmt.Errorf("cannot resume child session %q: %w", id, err)
+			return "", nil, false, fmt.Errorf("cannot resume child session %q: %w", id, err)
 		}
-		return folder, child, nil
+		return folder, child, true, nil
 	} else if !os.IsNotExist(err) {
-		return "", nil, fmt.Errorf("cannot inspect child session %q: %w", id, err)
+		return "", nil, false, fmt.Errorf("cannot inspect child session %q: %w", id, err)
 	}
 	if err := os.Mkdir(folder, 0755); err != nil {
-		return "", nil, fmt.Errorf("cannot create child session %q: %w", id, err)
+		return "", nil, false, fmt.Errorf("cannot create child session %q: %w", id, err)
 	}
 	child := &session.Session{Messages: []session.Message{}, Folder: folder}
 	if err := child.Save(); err != nil {
-		return "", nil, fmt.Errorf("cannot initialize child session %q: %w", id, err)
+		return "", nil, false, fmt.Errorf("cannot initialize child session %q: %w", id, err)
 	}
-	return folder, child, nil
+	return folder, child, false, nil
 }
 
 // validChildID rejects path separators and traversal from resume identifiers.

@@ -76,10 +76,10 @@ func TestListChatGPTModelsUsesLiveAccountCatalog(t *testing.T) {
 		Endpoint: server.URL + "/backend-api/codex/responses",
 		AuthType: config.OAuthAuthType,
 		OAuth: &config.OAuthCredential{
-			AccessToken: "access-token",
+			AccessToken:  "access-token",
 			RefreshToken: "refresh-token",
-			ExpiresAt:   time.Now().Add(time.Hour).UnixMilli(),
-			AccountID:   "acct_1",
+			ExpiresAt:    time.Now().Add(time.Hour).UnixMilli(),
+			AccountID:    "acct_1",
 		},
 		HTTP: server.Client(),
 	}

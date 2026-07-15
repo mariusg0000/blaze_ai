@@ -1115,9 +1115,9 @@ func TestSetModelLoadsReasoningLevel(t *testing.T) {
 
 	// Persist modes to the file so reloadModesForPersistence finds them.
 	modes := &config.ModesConfig{
-		Modes: []config.Mode{{Name: "default", Model: "test/test-model"}},
-		LastMode:         "default",
-		ReasoningLevels:  map[string]string{"test/test-model": "min"},
+		Modes:           []config.Mode{{Name: "default", Model: "test/test-model"}},
+		LastMode:        "default",
+		ReasoningLevels: map[string]string{"test/test-model": "min"},
 	}
 	if err := modes.Save(); err != nil {
 		t.Fatalf("Save() modes failed: %v", err)

@@ -4,10 +4,14 @@
 package runtime
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"blazeai/internal/session"
+	"blazeai/internal/tools"
 )
 
 // TestLastAssistantAnswerUsesFinalPlainText verifies a final assistant message
@@ -57,6 +61,26 @@ func TestFormatChildResultIncludesResumeMetadata(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("formatChildResult() missing %q in %q", want, got)
 		}
+	}
+}
+
+// TestFormatChildErrorIncludesResumeMetadata verifies failed children expose the exact ID.
+// WHAT: Ensures timeout-style errors contain valid resume arguments.
+// HOW: Formats a representative failure and checks the agent name is not used as the ID.
+func TestFormatChildErrorIncludesResumeMetadata(t *testing.T) {
+	got := formatChildError("coder", "e83f12", fmt.Errorf("child timed out due to inactivity")).Error()
+	for _, want := range []string{
+		"agent: coder",
+		"child session id: e83f12",
+		"child timed out due to inactivity",
+		`Resume with agent="coder" and id="e83f12"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("formatChildError() missing %q in %q", want, got)
+		}
+	}
+	if strings.Contains(got, `id="coder"`) {
+		t.Fatalf("formatChildError() used agent name as ID: %q", got)
 	}
 }
 
@@ -149,5 +173,54 @@ func TestChildHandlerToolCallDoesNotCarryTokens(t *testing.T) {
 	}
 	if emitted[0].LastPromptTokens != 0 {
 		t.Errorf("tool_call LastPromptTokens = %d, want 0", emitted[0].LastPromptTokens)
+	}
+}
+
+// TestOpenChildSessionMarksExistingSessionAsResumed verifies that an existing
+// child session is distinguished from a newly created child session.
+// WHAT: Detects resume state without changing the persisted session.
+// HOW: Creates a child once, then opens the same ID again.
+func TestOpenChildSessionMarksExistingSessionAsResumed(t *testing.T) {
+	mainFolder := t.TempDir()
+	folder, _, resumed, err := openChildSession(mainFolder, "child1")
+	if err != nil {
+		t.Fatalf("first openChildSession() error: %v", err)
+	}
+	if resumed {
+		t.Fatal("new child session was marked resumed")
+	}
+	if err := os.WriteFile(filepath.Join(folder, "agent_task.md"), []byte("original task\n"), 0644); err != nil {
+		t.Fatalf("write task file: %v", err)
+	}
+
+	resumedFolder, _, resumed, err := openChildSession(mainFolder, "child1")
+	if err != nil {
+		t.Fatalf("resume openChildSession() error: %v", err)
+	}
+	if !resumed {
+		t.Fatal("existing child session was not marked resumed")
+	}
+	if resumedFolder != folder {
+		t.Fatalf("resumed folder = %q, want %q", resumedFolder, folder)
+	}
+	content, err := os.ReadFile(filepath.Join(folder, "agent_task.md"))
+	if err != nil {
+		t.Fatalf("read task file: %v", err)
+	}
+	if string(content) != "original task\n" {
+		t.Fatalf("original task file changed: %q", content)
+	}
+}
+
+// TestBuildChildInputUsesResumeMessage verifies that resumed work is sent as
+// a distinct user-facing input instead of being written into the task file.
+// WHAT: Includes the new task and optional context in the resume message.
+// HOW: Builds resumed input and checks its explicit protocol markers.
+func TestBuildChildInputUsesResumeMessage(t *testing.T) {
+	got := buildChildInput(tools.RunAgentTask{Task: "new task", Context: "extra context"}, true)
+	for _, want := range []string{"[RESUME TASK]", "new task", "[CONTEXT]", "extra context"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("buildChildInput() missing %q in %q", want, got)
+		}
 	}
 }
