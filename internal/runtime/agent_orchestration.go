@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	maxParallelChildren = 4
-	childTimeout        = 2 * time.Minute
-	maxChildAnswerRunes = 12000
+	maxParallelChildren       = 4
+	childInactivityTimeout    = 2 * time.Minute
+	defaultChildOverallTimeout = 20 * time.Minute
+	maxChildAnswerRunes       = 12000
 )
 
 // childHandler suppresses child transcript text but forwards scoped tool activity immediately.
@@ -47,6 +48,37 @@ func (h childHandler) OnMaintenanceResult(name, result string) {
 	h.emit(AgentActivity{Agent: h.agentID, Kind: "tool_result", Tool: name, Status: "ok", Text: result})
 }
 func (h childHandler) RequestSudoApproval(string) (bool, string) { return false, "" }
+
+// activityForwarder wraps a Handler and signals an activity channel on each tool event.
+// WHAT: Bridges childHandler events to the inactivity timer reset channel.
+// HOW: Non-blocking send on each tool call/result; default case avoids blocking when
+//
+//	channel buffer is full (timer already resetting).
+type activityForwarder struct {
+	inner    Handler
+	activity chan<- struct{}
+}
+
+func (f *activityForwarder) OnContent(delta string)                       { f.inner.OnContent(delta) }
+func (f *activityForwarder) OnReasoning(delta string)                     { f.inner.OnReasoning(delta) }
+func (f *activityForwarder) OnUsage(p, c, u int)                          { f.inner.OnUsage(p, c, u) }
+func (f *activityForwarder) OnToolResult(name, result string)             { f.inner.OnToolResult(name, result); f.signal() }
+func (f *activityForwarder) OnSystem(message string)                      { f.inner.OnSystem(message) }
+func (f *activityForwarder) OnMaintenanceCall(name, args string)          { f.inner.OnMaintenanceCall(name, args) }
+func (f *activityForwarder) OnMaintenanceResult(name, result string)      { f.inner.OnMaintenanceResult(name, result) }
+func (f *activityForwarder) RequestSudoApproval(cmd string) (bool, string) { return f.inner.RequestSudoApproval(cmd) }
+
+func (f *activityForwarder) OnToolCall(name, args string) {
+	f.inner.OnToolCall(name, args)
+	f.signal()
+}
+
+func (f *activityForwarder) signal() {
+	select {
+	case f.activity <- struct{}{}:
+	default:
+	}
+}
 
 // runAgent resolves and executes one or more child tasks.
 // WHAT: Orchestrates one-shot definitions with ordered parallel results.
@@ -120,6 +152,10 @@ func (a *Agent) emitAgentActivity(activity AgentActivity) {
 }
 
 // runOneChild creates, runs, and removes one ephemeral child session.
+// WHAT: Executes one child with dual timeout: overall hard cap + inactivity reset.
+// HOW: Overall timeout (per-agent or 20min default) never resets. Inactivity timeout (2min)
+//
+//	resets on every tool call or result forwarded by the activity handler.
 func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, displayID string) (result string, err error) {
 	definition, ok := a.oneShotDefinition(task.Agent)
 	if !ok {
@@ -138,7 +174,7 @@ func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, 
 		}
 		if err != nil {
 			kind := "failed"
-			if strings.Contains(err.Error(), "timed out") {
+			if strings.Contains(err.Error(), "timed out") || strings.Contains(err.Error(), "inactivity") {
 				kind = "timed out"
 			} else if strings.Contains(err.Error(), "cancelled") {
 				kind = "cancelled"
@@ -179,15 +215,49 @@ func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, 
 	}
 	child.Completion = ""
 
-	ctx, cancel := context.WithTimeout(parentCtx, childTimeout)
-	defer cancel()
-	input := buildChildInput(definition, task)
-	if err := child.RunTurn(ctx, input); err != nil {
-		if ctx.Err() != nil {
-			if parentCtx.Err() != nil {
-				return "", fmt.Errorf("child %q cancelled: %w", definition.Name, parentCtx.Err())
+	// Dual timeout: overall hard cap + inactivity reset.
+	overallTimeout := defaultChildOverallTimeout
+	if definition.Timeout > 0 {
+		overallTimeout = definition.Timeout
+	}
+	otctx, otCancel := context.WithTimeout(parentCtx, overallTimeout)
+	defer otCancel()
+	actx, aCancel := context.WithCancel(otctx)
+	defer aCancel()
+
+	// Inactivity timer: resets on every child activity event.
+	inactivityTimer := time.AfterFunc(childInactivityTimeout, func() { aCancel() })
+	defer inactivityTimer.Stop()
+
+	// Activity signal channel — childHandler forwards tool calls/results here.
+	activity := make(chan struct{}, 1)
+	origHandler := child.Handler
+	child.Handler = &activityForwarder{
+		inner:    origHandler,
+		activity: activity,
+	}
+
+	go func() {
+		for {
+			select {
+			case <-activity:
+				inactivityTimer.Reset(childInactivityTimeout)
+			case <-actx.Done():
+				return
 			}
-			return "", fmt.Errorf("child %q timed out", definition.Name)
+		}
+	}()
+
+	input := buildChildInput(definition, task)
+	if err := child.RunTurn(actx, input); err != nil {
+		if parentCtx.Err() != nil {
+			return "", fmt.Errorf("child %q cancelled: %w", definition.Name, parentCtx.Err())
+		}
+		if actx.Err() != nil && otctx.Err() == nil {
+			return "", fmt.Errorf("child %q timed out due to inactivity", definition.Name)
+		}
+		if otctx.Err() != nil {
+			return "", fmt.Errorf("child %q timed out after %s", definition.Name, overallTimeout)
 		}
 		return "", fmt.Errorf("child %q failed: %w", definition.Name, err)
 	}

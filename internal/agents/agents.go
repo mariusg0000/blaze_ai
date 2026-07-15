@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"blazeai/internal/config"
 	"blazeai/internal/tools"
@@ -29,6 +30,7 @@ type Definition struct {
 	Kind         Kind
 	Model        string
 	ToolNames    []string
+	Timeout      time.Duration
 	Instructions string
 	Path         string
 }
@@ -136,6 +138,12 @@ func parse(content string) (Definition, error) {
 			definition.Kind = Kind(value)
 		case "model":
 			definition.Model = value
+		case "timeout":
+			d, err := time.ParseDuration(value)
+			if err != nil {
+				return Definition{}, fmt.Errorf("line %d: invalid timeout %q: %w", lineNumber+1, value, err)
+			}
+			definition.Timeout = d
 		case "tools":
 			currentList = "tools"
 			if value != "" {
@@ -170,6 +178,9 @@ func validateDefinition(definition Definition, registry *tools.Registry) error {
 		if err := config.ValidateModelFormat(definition.Model); err != nil {
 			return fmt.Errorf("invalid model %q: %w", definition.Model, err)
 		}
+	}
+	if definition.Timeout != 0 && definition.Timeout <= 0 {
+		return fmt.Errorf("timeout must be positive")
 	}
 	if len(definition.ToolNames) == 0 {
 		return fmt.Errorf("tools allowlist is required and cannot be empty")

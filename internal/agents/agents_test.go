@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"blazeai/internal/tools"
 )
@@ -98,5 +99,38 @@ func TestOneShotRules(t *testing.T) {
 	writeAgent(t, dir, "nested.md", "---\nname: nested\ndescription: Recursive test\nkind: one-shot\ntools:\n  - run_agent\n---\n")
 	if _, err := Load(dir, testRegistry()); err == nil || !strings.Contains(err.Error(), "cannot use run_agent") {
 		t.Fatalf("expected one-shot run_agent rejection, got %v", err)
+	}
+}
+
+func TestLoadTimeoutParsed(t *testing.T) {
+	dir := t.TempDir()
+	writeAgent(t, dir, "timed.md", "---\nname: timed\ndescription: Agent with timeout\nkind: one-shot\ntimeout: 15m\ntools:\n  - read_file\n---\nDo work.\n")
+	got, err := Load(dir, testRegistry())
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if len(got) != 1 || got[0].Timeout != 15*time.Minute {
+		t.Fatalf("expected timeout 15m, got %+v", got[0].Timeout)
+	}
+}
+
+func TestLoadTimeoutDefaultZero(t *testing.T) {
+	dir := t.TempDir()
+	writeAgent(t, dir, "notime.md", "---\nname: notime\ndescription: Agent without timeout\nkind: one-shot\ntools:\n  - read_file\n---\nDo work.\n")
+	got, err := Load(dir, testRegistry())
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if len(got) != 1 || got[0].Timeout != 0 {
+		t.Fatalf("expected timeout 0 (default), got %+v", got[0].Timeout)
+	}
+}
+
+func TestLoadRejectsInvalidTimeout(t *testing.T) {
+	dir := t.TempDir()
+	writeAgent(t, dir, "bad.md", "---\nname: bad\ndescription: Bad timeout\nkind: one-shot\ntimeout: notaduration\ntools:\n  - read_file\n---\n")
+	_, err := Load(dir, testRegistry())
+	if err == nil || !strings.Contains(err.Error(), "invalid timeout") {
+		t.Fatalf("expected invalid timeout error, got %v", err)
 	}
 }
