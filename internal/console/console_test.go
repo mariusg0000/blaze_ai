@@ -1191,3 +1191,104 @@ func TestOnAgentActivityResultStandaloneCTX(t *testing.T) {
 		t.Errorf("standalone tool_result missing checkmark: %q", plain)
 	}
 }
+
+// TestCycleReasoningLevelUnsupportedModel verifies that cycleReasoningLevel
+// returns an error and does not mutate state for non-reasoning-capable models.
+func TestCycleReasoningLevelUnsupportedModel(t *testing.T) {
+	c, _ := newConsole(mockAgent(t))
+	// Default model test/test-model is not reasoning-capable.
+	err := c.cycleReasoningLevel()
+	if err == nil {
+		t.Fatal("cycleReasoningLevel() expected error for unsupported model, got nil")
+	}
+	if !strings.Contains(err.Error(), "does not support reasoning levels") {
+		t.Errorf("cycleReasoningLevel() error = %q, want unsupported model error", err)
+	}
+	// Verify no mutation: model ID and provider reasoning level unchanged.
+	if c.Agent.ModelID != "test/test-model" {
+		t.Errorf("ModelID changed to %q, want test/test-model", c.Agent.ModelID)
+	}
+	if got := c.Agent.ActiveReasoningLevel(); got != "" {
+		t.Errorf("ActiveReasoningLevel() = %q, want empty", got)
+	}
+}
+
+// TestCycleReasoningLevelOrder verifies that cycling advances through supported
+// levels in descriptor-provided order: none → min → low.
+func TestCycleReasoningLevelOrder(t *testing.T) {
+	c, _ := newConsole(mockAgent(t))
+	// Override to a reasoning-capable model (o3 matches openai_chat prefix).
+	c.Agent.ModelID = "test/o3"
+	c.Agent.Provider.ReasoningLevel = ""
+
+	// First call: empty → first supported level (none).
+	if err := c.cycleReasoningLevel(); err != nil {
+		t.Fatalf("first cycle error: %v", err)
+	}
+	if got := c.Agent.ActiveReasoningLevel(); got != "none" {
+		t.Fatalf("after first cycle: level = %q, want none", got)
+	}
+
+	// Second call: none → min.
+	if err := c.cycleReasoningLevel(); err != nil {
+		t.Fatalf("second cycle error: %v", err)
+	}
+	if got := c.Agent.ActiveReasoningLevel(); got != "min" {
+		t.Fatalf("after second cycle: level = %q, want min", got)
+	}
+
+	// Third call: min → low.
+	if err := c.cycleReasoningLevel(); err != nil {
+		t.Fatalf("third cycle error: %v", err)
+	}
+	if got := c.Agent.ActiveReasoningLevel(); got != "low" {
+		t.Fatalf("after third cycle: level = %q, want low", got)
+	}
+}
+
+// TestCycleReasoningLevelWraparound verifies that cycling past the last
+// supported level wraps around to the first level.
+func TestCycleReasoningLevelWraparound(t *testing.T) {
+	c, _ := newConsole(mockAgent(t))
+	c.Agent.ModelID = "test/o3"
+	c.Agent.Provider.ReasoningLevel = ""
+
+	// Cycle to max: none(0) → min(1) → low(2) → med(3) → high(4) → xhigh(5) → max(6)
+	for i := 0; i < 7; i++ {
+		if err := c.cycleReasoningLevel(); err != nil {
+			t.Fatalf("forward cycle %d error: %v", i, err)
+		}
+	}
+	// After 7 cycles from start we should be at max (the 7th level).
+	if got := c.Agent.ActiveReasoningLevel(); got != "max" {
+		t.Fatalf("after 7 cycles: level = %q, want max", got)
+	}
+
+	// One more cycle wraps to none.
+	if err := c.cycleReasoningLevel(); err != nil {
+		t.Fatalf("wrap cycle error: %v", err)
+	}
+	if got := c.Agent.ActiveReasoningLevel(); got != "none" {
+		t.Fatalf("after wrap: level = %q, want none", got)
+	}
+}
+
+// TestStartupSplashReasoningShortcut verifies the startup splash includes the
+// Ctrl+] shortcut for cycling reasoning levels.
+func TestStartupSplashReasoningShortcut(t *testing.T) {
+	agent := mockAgent(t)
+	out := &bytes.Buffer{}
+	c := &Console{
+		Out:   out,
+		Agent: agent,
+	}
+	c.showStartupSplash()
+
+	output := out.String()
+	if !strings.Contains(output, "Ctrl+]") {
+		t.Errorf("splash missing Ctrl+] shortcut: %q", output)
+	}
+	if !strings.Contains(output, "cycle reasoning level") {
+		t.Errorf("splash missing 'cycle reasoning level' description: %q", output)
+	}
+}

@@ -17,6 +17,7 @@ func TestShortcutSequencesDecodeToControlBytes(t *testing.T) {
 		`\C-f`: 0x06,
 		`\C-r`: 0x12,
 		`\C-t`: 0x14,
+		`\C-]`: 0x1d,
 	}
 	for notation, want := range tests {
 		got := inputrc.Unescape(notation)

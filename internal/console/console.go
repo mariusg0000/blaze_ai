@@ -495,6 +495,47 @@ func (c *Console) updateStatusBar() {
 	c.rl.Hint.Persist(c.buildStatusBar())
 }
 
+// cycleReasoningLevel advances the active reasoning level to the next supported
+// level for the current model, wrapping to the first level after the last.
+// If no level is set, it selects the first supported level.
+//
+// WHAT:  Cycles the reasoning level for Ctrl+] hotkey.
+// WHY:   Users need fast keyboard-level cycling for reasoning-capable models.
+// HOW:   Gets the supported levels from the reasoning descriptor, finds the
+//
+//	index of the current level, and advances by one with wrap-around.
+//	When the current level is empty, starts with the first supported level.
+//	Delegates persistence and provider-state mutation to SetActiveReasoningLevel.
+//
+// RETURNS: error if the model does not support reasoning or SetActiveReasoningLevel
+//
+//	fails.
+func (c *Console) cycleReasoningLevel() error {
+	supported := reasoning.SupportedForModel(c.Agent.ModelID)
+	if len(supported) == 0 {
+		return fmt.Errorf("model %q does not support reasoning levels", c.Agent.ModelID)
+	}
+	current := c.Agent.ActiveReasoningLevel()
+	var next string
+	if current == "" {
+		next = supported[0]
+	} else {
+		idx := -1
+		for i, l := range supported {
+			if l == current {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			next = supported[0]
+		} else {
+			next = supported[(idx+1)%len(supported)]
+		}
+	}
+	return c.Agent.SetActiveReasoningLevel(next)
+}
+
 // refreshTurnStatusBarLocked redraws the footer in place without moving the output cursor.
 //
 // WHAT: Updates phase/countdown text during an active turn.
@@ -662,6 +703,7 @@ func (c *Console) showStartupSplash() {
 		{"Ctrl+F", "add model to favorites"},
 		{"Ctrl+R", "remove model from favorites"},
 		{"Ctrl+T", "toggle reasoning display"},
+		{"Ctrl+]", "cycle reasoning level"},
 		{"ESC", "cancel active turn"},
 		{"Ctrl+D", "exit (empty line)"},
 	}
@@ -744,6 +786,7 @@ func (c *Console) showStartupSplash() {
 	c.sectionLabel("Shortcuts", colorGreen)
 	fmt.Fprintf(c.Out, "  %-8s  cycle work mode\n", c.bold("Tab"))
 	fmt.Fprintf(c.Out, "  %-8s  cycle favorite model\n", c.bold("Ctrl+\\"))
+	fmt.Fprintf(c.Out, "  %-8s  cycle reasoning level\n", c.bold("Ctrl+]"))
 	fmt.Fprintln(c.Out)
 
 	// Session section.
@@ -1608,6 +1651,13 @@ func (c *Console) runTTY() error {
 			}
 			c.updateStatusBar()
 		},
+		"blazeai-reasoning-next": func() {
+			if err := c.cycleReasoningLevel(); err != nil {
+				showShortcutError("Reasoning level: %v", err)
+				return
+			}
+			c.updateStatusBar()
+		},
 	})
 	for sequence, action := range map[string]string{
 		`\C-i`: "blazeai-mode-next",        // Tab
@@ -1615,6 +1665,7 @@ func (c *Console) runTTY() error {
 		`\C-f`: "blazeai-favorite-add",     // Ctrl+F
 		`\C-r`: "blazeai-favorite-remove",  // Ctrl+R
 		`\C-t`: "blazeai-reasoning-toggle", // Ctrl+T
+		`\C-]`: "blazeai-reasoning-next",   // Ctrl+]
 	} {
 		// Config.Bind stores raw bytes; decode inputrc notation before binding.
 		key := inputrc.Unescape(sequence)
