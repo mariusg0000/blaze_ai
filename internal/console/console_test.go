@@ -989,21 +989,37 @@ func TestStartupSplashTTY(t *testing.T) {
 	if !strings.Contains(output, "Commands") {
 		t.Error("output missing Commands section")
 	}
-	if !strings.Contains(output, "/model [model]") {
-		t.Error("output missing /model command")
+
+	// Verify all slash commands are present.
+	for _, cmd := range []string{"/auth openai", "/model [model]", "/cd <path>", "/clear", "/new", "/exit"} {
+		if !strings.Contains(output, cmd) {
+			t.Errorf("output missing command %q", cmd)
+		}
 	}
-	if !strings.Contains(output, "/cd <path>") {
-		t.Error("output missing /cd command")
+
+	// Verify all shortcut labels are present.
+	for _, shortcut := range []string{"Tab", "Ctrl+\\", "Ctrl+F", "Ctrl+R", "Ctrl+T", "Ctrl+]", "ESC", "Ctrl+D"} {
+		if !strings.Contains(output, shortcut) {
+			t.Errorf("output missing shortcut label %q", shortcut)
+		}
 	}
-	if !strings.Contains(output, "/clear") {
-		t.Error("output missing /clear command")
+
+	// Verify exactly one "Shortcuts" section header (strip ANSI for robust count).
+	plain := stripANSICodes(output)
+	if got := strings.Count(plain, "Shortcuts"); got != 1 {
+		t.Errorf("output has %d Shortcuts sections, want exactly 1", got)
 	}
-	if !strings.Contains(output, "/new") {
-		t.Error("output missing /new command")
+
+	// Verify Commands region does not contain Ctrl+ entries.
+	cmdIdx := strings.Index(plain, "Commands")
+	shortcutsIdx := strings.Index(plain, "Shortcuts")
+	if cmdIdx >= 0 && shortcutsIdx >= 0 {
+		commandsRegion := plain[cmdIdx:shortcutsIdx]
+		if strings.Contains(commandsRegion, "Ctrl+") {
+			t.Errorf("Commands region must not contain Ctrl+ labels: %q", commandsRegion)
+		}
 	}
-	if !strings.Contains(output, "/exit") {
-		t.Error("output missing /exit command")
-	}
+
 	if !strings.Contains(output, "Skills") {
 		t.Error("output missing Skills section")
 	}
@@ -1034,6 +1050,25 @@ func TestStartupSplashTTY(t *testing.T) {
 	if strings.Index(output, "Helpers") > strings.Index(output, "Session") {
 		t.Error("Helpers section should appear before Session")
 	}
+
+	// Verify full section order: Commands < Shortcuts < Skills < Helpers < Session.
+	sections := []string{"Commands", "Shortcuts", "Skills", "Helpers", "Session"}
+	for i := 0; i < len(sections)-1; i++ {
+		a := strings.Index(plain, sections[i])
+		b := strings.Index(plain, sections[i+1])
+		if a < 0 {
+			t.Errorf("section %q not found", sections[i])
+			continue
+		}
+		if b < 0 {
+			t.Errorf("section %q not found", sections[i+1])
+			continue
+		}
+		if a > b {
+			t.Errorf("section order: %q (pos %d) appears after %q (pos %d)", sections[i], a, sections[i+1], b)
+		}
+	}
+
 	if !strings.Contains(output, "Model") {
 		t.Error("output missing Model line")
 	}

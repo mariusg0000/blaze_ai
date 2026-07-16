@@ -64,7 +64,6 @@ var slashCommands = []slashCmd{
 	{"/cd <path>", "change working folder"},
 	{"/clear", "clear current session"},
 	{"/new", "start a clean session"},
-	{"Ctrl+T", "toggle reasoning display"},
 	{"/exit", "close session cleanly"},
 }
 
@@ -780,13 +779,6 @@ func (c *Console) showStartupSplash() {
 			fmt.Fprintln(c.Out)
 		}
 	}
-	fmt.Fprintln(c.Out)
-
-	// Shortcuts section.
-	c.sectionLabel("Shortcuts", colorGreen)
-	fmt.Fprintf(c.Out, "  %-8s  cycle work mode\n", c.bold("Tab"))
-	fmt.Fprintf(c.Out, "  %-8s  cycle favorite model\n", c.bold("Ctrl+\\"))
-	fmt.Fprintf(c.Out, "  %-8s  cycle reasoning level\n", c.bold("Ctrl+]"))
 	fmt.Fprintln(c.Out)
 
 	// Session section.
