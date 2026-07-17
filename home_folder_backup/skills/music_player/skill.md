@@ -1,7 +1,7 @@
 [DESCRIPTION]
 Load when the user wants to play, stop, or manage music playback, or create/use playlists. Use for mpv-based audio playback, playlist management, and library navigation. Library path, tracks, playlists, and radio stations in DATA.
 
-[BEHAVIOR]
+[BODY]
 
 ## Music Library Path
 
@@ -99,7 +99,6 @@ setsid mpv --no-terminal --really-quiet --input-ipc-server=/tmp/mpv-socket "<str
 
 4. Confirm playback.
 
-[DATA]
 music.library.path=/mnt/DATA/Music
 music.download.tool=yt-dlp
 music.download.format=mp3

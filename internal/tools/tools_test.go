@@ -234,7 +234,7 @@ func TestShellFormatArgsFallbackTruncated(t *testing.T) {
 
 // TestLoadSkillFormatArgs verifies load_skill uses a fixed UI label.
 func TestLoadSkillFormatArgs(t *testing.T) {
-	l := NewLoadSkillTool(nil, nil)
+	l := NewLoadSkillTool(nil)
 	result := l.FormatArgs(json.RawMessage(`{"name":"memory-manager.md"}`))
 	if result != "Loading skill: memory-manager" {
 		t.Errorf("FormatArgs() = %q, want %q", result, "Loading skill: memory-manager")
@@ -243,28 +243,10 @@ func TestLoadSkillFormatArgs(t *testing.T) {
 
 // TestLoadSkillFormatArgsFallback verifies load_skill uses a generic label on invalid args.
 func TestLoadSkillFormatArgsFallback(t *testing.T) {
-	l := NewLoadSkillTool(nil, nil)
+	l := NewLoadSkillTool(nil)
 	result := l.FormatArgs(json.RawMessage(`{invalid}`))
 	if result != "Loading skill" {
 		t.Errorf("FormatArgs() = %q, want %q", result, "Loading skill")
-	}
-}
-
-// TestUnloadSkillFormatArgs verifies unload_skill uses a fixed UI label.
-func TestUnloadSkillFormatArgs(t *testing.T) {
-	u := NewUnloadSkillTool(nil, nil)
-	result := u.FormatArgs(json.RawMessage(`{"name":"memory-manager"}`))
-	if result != "Unloading skill: memory-manager" {
-		t.Errorf("FormatArgs() = %q, want %q", result, "Unloading skill: memory-manager")
-	}
-}
-
-// TestUnloadSkillFormatArgsFallback verifies unload_skill uses a generic label on invalid args.
-func TestUnloadSkillFormatArgsFallback(t *testing.T) {
-	u := NewUnloadSkillTool(nil, nil)
-	result := u.FormatArgs(json.RawMessage(`{invalid}`))
-	if result != "Unloading skill" {
-		t.Errorf("FormatArgs() = %q, want %q", result, "Unloading skill")
 	}
 }
 

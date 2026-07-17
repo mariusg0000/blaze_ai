@@ -1,10 +1,9 @@
-// skills.go — skill discovery, parsing, validation, scoping, active skills list, and seeding.
+// skills.go — skill discovery, parsing, validation, scoping, and seeding.
 // At startup, embedded builtin skill templates are seeded into app_home/skills/ if missing.
 // At runtime, skills are discovered from two scopes: global (app_home/skills/) and
 // project (app_home/projects/<project>/skills/). Both use subdirectory layout:
 // <scope>/<name>/skill.md. Skills are keyed with scope prefix: global/name, project/name.
-// Parses [DESCRIPTION] (required), [BEHAVIOR] (optional), [DATA] (optional),
-// A skill must provide [DESCRIPTION] and prompt content ([BEHAVIOR] or [DATA]).
+// Parses the required [DESCRIPTION] and [BODY] sections.
 // Resolution: unqualified names resolve if unique across scopes; ambiguous names error.
 // Layer: skill management. Dependencies: internal/platform.
 package skills
@@ -32,90 +31,26 @@ const (
 // ErrMissingDescription is returned when a skill file lacks a [DESCRIPTION] section.
 var ErrMissingDescription = errors.New("skill missing [DESCRIPTION] section")
 
-// ErrMissingBehaviorOrData is returned when a skill file has no prompt content.
-var ErrMissingBehaviorOrData = errors.New("skill missing [BEHAVIOR] and [DATA]")
+// ErrMissingBody is returned when a skill file lacks a non-empty [BODY] section.
+var ErrMissingBody = errors.New("skill missing [BODY] section")
 
 // Skill represents a parsed skill file.
 //
 // WHAT:  Holds the parsed content of a single prompt skill.
-// HOW:   The prompt builder uses description, behavior, and data.
+// HOW:   The prompt builder uses description while load_skill renders the body.
 // Fields: Name — folder name; Description — [DESCRIPTION] content;
 //
-//	Behavior — [BEHAVIOR] content (optional); Data — [DATA] content (optional);
+//	Body — [BODY] content;
 //	Dir — folder path; Scope — global or project.
 type Skill struct {
 	Name        string
 	Description string
-	Behavior    string
-	Data        string
+	Body        string
 	Dir         string
 	Scope       Scope
 }
 
-// HasPromptContent reports whether the skill contributes prompt content when loaded.
-func (s *Skill) HasPromptContent() bool {
-	return strings.TrimSpace(s.Behavior) != "" || strings.TrimSpace(s.Data) != ""
-}
-
-// ActiveList holds the in-memory list of active skill IDs for the current session.
-// The list starts empty, is not persisted, and is not deduced from history.
-//
-// WHAT:  Tracks which skills are loaded in the current session.
-// WHY:   load_skill and unload_skill modify this list; prompt builder injects active skill content.
-// HOW:   Simple slice with Load/Unload/Has/List methods.
-type ActiveList struct {
-	names []string
-}
-
-// Clear removes all active skills from the list.
-func (a *ActiveList) Clear() {
-	a.names = a.names[:0]
-}
-
-// NewActiveList returns an empty ActiveList for a new session.
-func NewActiveList() *ActiveList {
-	return &ActiveList{names: []string{}}
-}
-
-// Load adds a skill ID to the active list if not already present.
-func (a *ActiveList) Load(name string) {
-	for _, n := range a.names {
-		if n == name {
-			return
-		}
-	}
-	a.names = append(a.names, name)
-}
-
-// Unload removes a skill ID from the active list if present.
-func (a *ActiveList) Unload(name string) {
-	for i, n := range a.names {
-		if n == name {
-			a.names = append(a.names[:i], a.names[i+1:]...)
-			return
-		}
-	}
-}
-
-// Has returns true if the given skill ID is in the active list.
-func (a *ActiveList) Has(name string) bool {
-	for _, n := range a.names {
-		if n == name {
-			return true
-		}
-	}
-	return false
-}
-
-// List returns a copy of the active skill IDs.
-func (a *ActiveList) List() []string {
-	result := make([]string, len(a.names))
-	copy(result, a.names)
-	return result
-}
-
-// Parse extracts [DESCRIPTION], [BEHAVIOR], and [DATA] sections from skill content.
-// [DESCRIPTION] and either [BEHAVIOR] or [DATA] are required.
+// Parse extracts the required [DESCRIPTION] and [BODY] sections from skill content.
 // Section markers must appear at the start of a line (after newline or at position 0).
 // References to [SECTION] names inside body text (e.g., in backticks or prose) are ignored.
 // Escaped markers like \[BEHAVIOR\] and \[DATA\] remain literal text and do not open sections.
@@ -129,18 +64,15 @@ func Parse(name, content string) (*Skill, error) {
 		return nil, err
 	}
 
-	behavior, _ := extractOptionalSection(content, "BEHAVIOR")
-	data, _ := extractOptionalSection(content, "DATA")
-	hasPromptContent := strings.TrimSpace(behavior) != "" || strings.TrimSpace(data) != ""
-	if !hasPromptContent {
-		return nil, ErrMissingBehaviorOrData
+	body, err := extractSection(content, "BODY")
+	if err != nil || strings.TrimSpace(body) == "" {
+		return nil, ErrMissingBody
 	}
 
 	return &Skill{
 		Name:        name,
 		Description: strings.TrimSpace(desc),
-		Behavior:    strings.TrimSpace(behavior),
-		Data:        strings.TrimSpace(data),
+		Body:        strings.TrimSpace(body),
 	}, nil
 }
 
@@ -176,15 +108,6 @@ func extractSection(content, sectionName string) (string, error) {
 		return strings.TrimSpace(rest), nil
 	}
 	return strings.TrimSpace(rest[:nextIdx]), nil
-}
-
-// extractOptionalSection finds an optional [SECTION] block. Returns empty string if missing.
-func extractOptionalSection(content, sectionName string) (string, error) {
-	result, err := extractSection(content, sectionName)
-	if err != nil {
-		return "", nil
-	}
-	return result, nil
 }
 
 // SeedBuiltins copies embedded builtin skill templates into app_home/skills/ if they do not
@@ -411,7 +334,7 @@ func discoverFromSubdirs(root string, skills map[string]*Skill, scope Scope) err
 		}
 		skill, err := Parse(name, string(data))
 		if err != nil {
-			continue
+			return fmt.Errorf("cannot parse skill %s: %w", skillFile, err)
 		}
 		skill.Dir = skillDir
 		skill.Scope = scope

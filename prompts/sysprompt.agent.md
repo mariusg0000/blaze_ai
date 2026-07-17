@@ -45,13 +45,10 @@ Use concise English Markdown. State the result first, then changed files, valida
 
 [SKILLS]
 
-Before performing any task, scan available skill descriptions. If a domain or system mentioned in the task appears in a skill's description, load that skill first. Do not act on an unfamiliar domain without loading the relevant skill.
+Before performing any task, scan available skill descriptions. If a domain or system mentioned in the task appears in a skill's description, load that skill first. `load_skill` returns the skill body as a standard tool message in the conversation. Load a skill again only when its body is no longer present in the usable conversation context.
 
 **Available skills:**
 {SKILLS_AVAILABLE}
-
-**Active skills:**
-{SKILLS_ACTIVE}
 
 [HOST ENVIRONMENT HELPERS]
 

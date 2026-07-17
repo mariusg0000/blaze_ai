@@ -157,8 +157,6 @@ func (b *Builder) injectTemplateVariables(text string, extra map[string]string, 
 // allowsEmptyTemplateValue reports which full-section placeholders should disappear when empty.
 func allowsEmptyTemplateValue(name string) bool {
 	switch name {
-	case "SKILLS_ACTIVE":
-		return true
 	case "PROJECT_CONTENT":
 		return true
 	case "AGENTS_CONTENT":
@@ -221,16 +219,14 @@ func readProjectFileOptional(dir, filename string) (string, error) {
 	return readFileOptional(filepath.Join(dir, matches[0]))
 }
 
-// buildSkillsSection assembles loadable skills and active skill content.
-// Available skills: compact-language bullet list with name = description.
-// Active skills:   Markdown sections with name header followed by BEHAVIOR and DATA blocks.
-func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string, error) {
+// buildSkillsSection assembles loadable skill descriptions.
+func (b *Builder) buildSkillsSection() (string, error) {
 	discovered, err := skills.DiscoverAll(b.WorkDir)
 	if err != nil {
-		return "", "", fmt.Errorf("skills discovery: %w", err)
+		return "", fmt.Errorf("skills discovery: %w", err)
 	}
 	if len(discovered) == 0 {
-		return "", "", nil
+		return "", nil
 	}
 
 	// Available loadable skills as compact-language list.
@@ -239,60 +235,29 @@ func (b *Builder) buildSkillsSection(active *skills.ActiveList) (string, string,
 	for _, id := range skills.SortedNames(discovered) {
 		skill := discovered[id]
 		displayName := strings.TrimPrefix(id, "global/")
-		if skill.HasPromptContent() {
-			desc, err := b.injectVariablesForSkill(skill.Description, skill.Dir)
-			if err != nil {
-				return "", "", err
-			}
-			if !hasAvail {
-				avail.WriteString("\n[SKILLS — use load_skill to activate]\n\n")
-				hasAvail = true
-			}
-			avail.WriteString(fmt.Sprintf("- %s = %s\n", displayName, desc))
+		desc, err := b.injectVariablesForSkill(skill.Description, skill.Dir)
+		if err != nil {
+			return "", err
 		}
-	}
-
-	// Active skills as Markdown sections.
-	activeNames := active.List()
-	activeContent := ""
-	if len(activeNames) > 0 {
-		var sb strings.Builder
-		sb.WriteString("\n")
-		for _, id := range activeNames {
-			skill, ok := discovered[id]
-			if !ok {
-				continue
-			}
-			if !skill.HasPromptContent() {
-				continue
-			}
-			name := strings.TrimPrefix(id, "global/")
-			sb.WriteString(fmt.Sprintf("### %s\n\n", name))
-
-			if skill.Behavior != "" {
-				behavior, err := b.injectVariablesForSkill(skill.Behavior, skill.Dir)
-				if err != nil {
-					return "", "", err
-				}
-				sb.WriteString("[BEHAVIOR]\n")
-				sb.WriteString(behavior)
-				sb.WriteString("\n\n")
-			}
-
-			if skill.Data != "" {
-				data, err := b.injectVariablesForSkill(skill.Data, skill.Dir)
-				if err != nil {
-					return "", "", err
-				}
-				sb.WriteString("[DATA]\n")
-				sb.WriteString(data)
-				sb.WriteString("\n\n")
-			}
+		if !hasAvail {
+			avail.WriteString("\n[SKILLS — use load_skill to load]\n\n")
+			hasAvail = true
 		}
-		activeContent = sb.String()
+		avail.WriteString(fmt.Sprintf("- %s = %s\n", displayName, desc))
 	}
+	return avail.String(), nil
+}
 
-	return avail.String(), activeContent, nil
+// RenderSkillBody expands variables in a parsed skill body for tool loading.
+func (b *Builder) RenderSkillBody(skill *skills.Skill) (string, error) {
+	if skill == nil {
+		return "", fmt.Errorf("skill is nil")
+	}
+	body, err := b.injectVariablesForSkill(skill.Body, skill.Dir)
+	if err != nil {
+		return "", fmt.Errorf("render skill body: %w", err)
+	}
+	return body, nil
 }
 
 // buildHostHelpersSection assembles the host helpers data from live detection.
@@ -365,7 +330,7 @@ func (b *Builder) buildAgentsSection() string {
 
 // BuildRuntimePart assembles the runtime prompt part from all disk sources.
 // Order: universal → OS → transport → helpers → skills → agents → specs.md → AGENTS.md.
-func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, error) {
+func (b *Builder) BuildRuntimePart() (string, error) {
 	// 1. Universal system prompt (required).
 	systemPromptName := strings.TrimSpace(b.SystemPromptName)
 	if systemPromptName == "" {
@@ -410,7 +375,7 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 	}
 
 	// 5. Skills section (optional, includes project-scoped).
-	skillsAvailable, skillsActive, err := b.buildSkillsSection(activeSkills)
+	skillsAvailable, err := b.buildSkillsSection()
 	if err != nil {
 		return "", err
 	}
@@ -454,7 +419,6 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 		"HOST_HELPERS_AVAILABLE": strings.TrimSpace(helperAvailable),
 		"HOST_HELPERS_OPTIONAL":  strings.TrimSpace(helperOptional),
 		"SKILLS_AVAILABLE":       strings.TrimSpace(skillsAvailable),
-		"SKILLS_ACTIVE":          strings.TrimSpace(skillsActive),
 		"AGENTS_AVAILABLE":       strings.TrimSpace(b.buildAgentsSection()),
 		"AGENT_INSTRUCTIONS":     strings.TrimSpace(b.AgentInstructions),
 		"AGENT_TASK":             agentTask,
@@ -480,8 +444,8 @@ func (b *Builder) BuildRuntimePart(activeSkills *skills.ActiveList) (string, err
 }
 
 // Build assembles the full prompt: runtime part + conversation part from the session.
-func (b *Builder) Build(sess *session.Session, activeSkills *skills.ActiveList) ([]session.Message, error) {
-	runtimePart, err := b.BuildRuntimePart(activeSkills)
+func (b *Builder) Build(sess *session.Session) ([]session.Message, error) {
+	runtimePart, err := b.BuildRuntimePart()
 	if err != nil {
 		return nil, err
 	}

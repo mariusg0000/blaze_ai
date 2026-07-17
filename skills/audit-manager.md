@@ -1,7 +1,7 @@
 [DESCRIPTION]
 Load when the user explicitly wants to analyze recent BlazeAI sessions for recurring issues, missing or weak skills, inefficient tool use, or cross-session workflow improvements. Use with `shell` and `ask_a_friend` to generate per-session review reports and a consolidated improvement plan. Do not use for normal code review, current-task debugging, project mapping, config editing, or direct skill creation.
 
-[BEHAVIOR]
+[BODY]
 # Audit Manager
 
 ## Purpose
@@ -70,7 +70,7 @@ The source for per-session analysis is `<session_dir>/prompt.json`, not `session
 - If `shell` or `ask_a_friend` returns a hard error, surface it clearly and stop unless the user explicitly asks for partial review.
 - Keep per-session reports concise and evidence-based.
 - Separate missing-skill recommendations from skill-optimization recommendations.
-- Distinguish [DATA] skill opportunities from native-tool opportunities.
+- Distinguish reference-data skill opportunities from native-tool opportunities.
 - Keep Telegram bridge findings separate from terminal findings when the usage pattern or UX constraints differ.
 - Prefer high-payoff improvements over exhaustive lists.
 - Do not invent missing skills from weak evidence.
@@ -85,7 +85,6 @@ The source for per-session analysis is `<session_dir>/prompt.json`, not `session
 - Do not delete existing `review.md` files unless the user explicitly requests regeneration.
 - Do not create or edit skills, memories, docs, specs, or code from this workflow.
 
-[DATA]
 per_session_report_format:
 
 ```md
@@ -107,7 +106,7 @@ per_session_report_format:
 - existing skills used poorly
 - missing skill opportunities
 - over-broad or unclear skill triggers
-- [DATA] skill opportunities
+- reference-data skill opportunities
 - native-tool opportunities
 
 ## Inefficiencies
@@ -120,7 +119,7 @@ per_session_report_format:
 ## Recommendations
 - create skill X
 - optimize skill Y
-- add [DATA] skill Z
+- add reference-data skill Z
 - leave unchanged if nothing useful was found
 ```
 

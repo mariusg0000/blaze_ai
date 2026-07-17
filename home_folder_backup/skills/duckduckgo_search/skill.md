@@ -1,7 +1,7 @@
 [DESCRIPTION]
 Load when the user asks for web search, news, internet research, or DuckDuckGo results. Use for `ddgs` text, news, image, and video searches without an API key.
 
-[BEHAVIOR]
+[BODY]
 Free web search using DuckDuckGo via the `ddgs` CLI installed in the BlazeAI venv. **No API key required.**
 
 Wrapper script: `/home/marius/blazeai/skills/duckduckgo_search/scripts/duckduckgo.sh` — adaugă automat un delay de 1s între căutări (configurabil via `DDGS_DELAY`) pentru a evita rate limiting-ul DuckDuckGo.

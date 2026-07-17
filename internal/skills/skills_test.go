@@ -1,10 +1,11 @@
-// skills_test.go — tests for skill parsing, discovery, collision, and active list.
+// skills_test.go — tests for skill parsing, discovery, collision, and seeding.
 // Uses temp directories to avoid touching the real app home.
 package skills
 
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -30,6 +31,8 @@ func writeCustomSkill(t *testing.T, root, name, content string) string {
 		t.Fatalf("cannot create custom skill dir %s: %v", skillDir, err)
 	}
 	path := filepath.Join(skillDir, "skill.md")
+	content = strings.ReplaceAll(content, "[BEHAVIOR]", "[BODY]")
+	content = strings.ReplaceAll(content, "[DATA]", "")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("cannot write custom skill %s: %v", path, err)
 	}
@@ -61,7 +64,7 @@ func TestParseValid(t *testing.T) {
 	content := `[DESCRIPTION]
 A test skill for testing purposes.
 
-[BEHAVIOR]
+[BODY]
 # Test Skill
 
 This is the full detail of the test skill.
@@ -76,7 +79,7 @@ It has multiple lines.`
 	if skill.Description != "A test skill for testing purposes." {
 		t.Errorf("Description = %q, want 'A test skill for testing purposes.'", skill.Description)
 	}
-	if skill.Behavior == "" {
+	if skill.Body == "" {
 		t.Error("Details is empty, want content")
 	}
 }
@@ -91,13 +94,13 @@ Only details here.`
 	}
 }
 
-// TestParseMissingBehaviorOrData verifies error when neither [BEHAVIOR] nor [DATA] is present.
-func TestParseMissingBehaviorOrData(t *testing.T) {
+// TestParseMissingBody verifies error when [BODY] is absent.
+func TestParseMissingBody(t *testing.T) {
 	content := `[DESCRIPTION]
 Only description here.`
 	_, err := Parse("test", content)
-	if err != ErrMissingBehaviorOrData {
-		t.Errorf("Parse() err = %v, want ErrMissingBehaviorOrData", err)
+	if err != ErrMissingBody {
+		t.Errorf("Parse() err = %v, want ErrMissingBody", err)
 	}
 }
 
@@ -109,15 +112,15 @@ func TestParseBothMissing(t *testing.T) {
 	}
 }
 
-// TestParseBehaviorAtEnd verifies that [BEHAVIOR] as the last section is captured fully.
+// TestParseBodyAtEnd verifies that [BODY] as the last section is captured fully.
 func TestParseBehaviorAtEnd(t *testing.T) {
-	content := "[DESCRIPTION]\nShort desc.\n\n[BEHAVIOR]\nLine 1\nLine 2\nLine 3"
+	content := "[DESCRIPTION]\nShort desc.\n\n[BODY]\nLine 1\nLine 2\nLine 3"
 	skill, err := Parse("test", content)
 	if err != nil {
 		t.Fatalf("Parse() unexpected error: %v", err)
 	}
-	if !contains(skill.Behavior, "Line 1") || !contains(skill.Behavior, "Line 3") {
-		t.Errorf("Details = %q, want all three lines", skill.Behavior)
+	if !contains(skill.Body, "Line 1") || !contains(skill.Body, "Line 3") {
+		t.Errorf("Body = %q, want all three lines", skill.Body)
 	}
 }
 
@@ -133,75 +136,6 @@ func containsStr(s, sub string) bool {
 		}
 	}
 	return false
-}
-
-// TestActiveListLoad verifies adding skills to the active list.
-func TestActiveListLoad(t *testing.T) {
-	a := NewActiveList()
-	a.Load("memory-manager")
-	a.Load("skill-manager")
-	if !a.Has("memory-manager") {
-		t.Error("Has(memory-manager) = false, want true")
-	}
-	if !a.Has("skill-manager") {
-		t.Error("Has(skill-manager) = false, want true")
-	}
-}
-
-// TestActiveListLoadDuplicate verifies that loading the same skill twice does not duplicate.
-func TestActiveListLoadDuplicate(t *testing.T) {
-	a := NewActiveList()
-	a.Load("memory-manager")
-	a.Load("memory-manager")
-	if len(a.List()) != 1 {
-		t.Errorf("List() = %d items, want 1", len(a.List()))
-	}
-}
-
-// TestActiveListUnload verifies removing a skill from the active list.
-func TestActiveListUnload(t *testing.T) {
-	a := NewActiveList()
-	a.Load("memory-manager")
-	a.Load("skill-manager")
-	a.Unload("memory-manager")
-	if a.Has("memory-manager") {
-		t.Error("Has(memory-manager) = true after Unload, want false")
-	}
-	if !a.Has("skill-manager") {
-		t.Error("Has(skill-manager) = false after Unload(memory-manager), want true")
-	}
-}
-
-// TestActiveListUnloadNotPresent verifies that unloading a non-active skill is a no-op.
-func TestActiveListUnloadNotPresent(t *testing.T) {
-	a := NewActiveList()
-	a.Load("memory-manager")
-	a.Unload("ghost")
-	if len(a.List()) != 1 {
-		t.Errorf("List() = %d items, want 1", len(a.List()))
-	}
-}
-
-// TestActiveListEmpty verifies that a new list is empty.
-func TestActiveListEmpty(t *testing.T) {
-	a := NewActiveList()
-	if len(a.List()) != 0 {
-		t.Errorf("NewActiveList().List() = %d items, want 0", len(a.List()))
-	}
-}
-
-// TestActiveListListCopy verifies that List returns a copy, not the internal slice.
-func TestActiveListListCopy(t *testing.T) {
-	a := NewActiveList()
-	a.Load("memory-manager")
-	l := a.List()
-	l[0] = "modified"
-	if a.Has("modified") {
-		t.Error("modifying List() result affected internal state")
-	}
-	if !a.Has("memory-manager") {
-		t.Error("internal state was corrupted by List() modification")
-	}
 }
 
 // TestDiscoverFromDirs verifies discovery from two directories.
@@ -259,18 +193,9 @@ func TestDiscoverSkipsInvalid(t *testing.T) {
 	writeCustomSkill(t, builtin, "valid", "[DESCRIPTION]\nValid.\n\n[BEHAVIOR]\nValid details.")
 	writeCustomSkill(t, builtin, "invalid", "no sections here")
 
-	skills, err := discoverFromRoots(builtin, custom)
-	if err != nil {
-		t.Fatalf("discoverFromRoots() unexpected error: %v", err)
-	}
-	if len(skills) != 1 {
-		t.Fatalf("discovered %d skills, want 1 (invalid skipped)", len(skills))
-	}
-	if skills["global/valid"] == nil {
-		t.Error("valid skill not found")
-	}
-	if skills["global/invalid"] != nil {
-		t.Error("invalid skill should have been skipped")
+	_, err := discoverFromRoots(builtin, custom)
+	if err == nil || !strings.Contains(err.Error(), filepath.Join("invalid", "skill.md")) {
+		t.Fatalf("discoverFromRoots() error = %v, want contextual malformed-file error", err)
 	}
 }
 
@@ -425,7 +350,7 @@ func TestSeedBuiltinsSkipsExistingSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cannot read existing skill: %v", err)
 	}
-	if string(data) != "[DESCRIPTION]\nCustom.\n\n[BEHAVIOR]\nCustom body." {
+	if string(data) != "[DESCRIPTION]\nCustom.\n\n[BODY]\nCustom body." {
 		t.Fatalf("existing skill was overwritten: %q", string(data))
 	}
 }

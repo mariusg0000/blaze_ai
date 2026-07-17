@@ -40,9 +40,8 @@ part (session history).
 5. **Host helpers available** — live-detected and available helpers (optional)
 6. **Host helpers optional** — missing helpers the user may want to install (optional)
 7. **Skills available** — descriptions of all discovered skills (optional)
-8. **Skills active** — [BEHAVIOR] and [DATA] of loaded skills (optional)
-9. **Project context** — `specs.md` from work folder (optional)
-10. **AGENTS.md** — project rules from work folder (optional)
+8. **Project context** — `specs.md` from work folder (optional)
+9. **AGENTS.md** — project rules from work folder (optional)
 
 All optional sections disappear entirely if their content is empty (no empty
 placeholders or stale headers).
@@ -72,7 +71,7 @@ The universal sysprompt is an 112-line Markdown file with labelled sections and
 [TRANSPORT]            — {TRANSPORT_PROMPT} + {TRANSPORT_CONTEXT}
 [OUTPUT STYLE]         — transport override rule + shared structure guidance
 [COMMUNICATION PROTOCOL] — message optimization rules (from AGENTS.md)
-[SKILLS]               — skill usage rules, {SKILLS_AVAILABLE}, {SKILLS_ACTIVE}
+[SKILLS]               — skill usage rules, {SKILLS_AVAILABLE}
 [SECONDARY MODEL CONSULTATION] — ask_a_friend and analyze_image guidance
 [HOST ENVIRONMENT HELPERS] — {HOST_HELPERS_ADVISORY}, available, optional
 [PROJECT RULES]        — {AGENTS_CONTENT}
@@ -123,7 +122,6 @@ template-specific extras.
 | `{HOST_HELPERS_AVAILABLE}` | detected + available helpers | empty string |
 | `{HOST_HELPERS_OPTIONAL}` | missing helpers (undismissed) | empty string |
 | `{SKILLS_AVAILABLE}` | all discovered skill descriptions | empty string (allows empty) |
-| `{SKILLS_ACTIVE}` | loaded skills [BEHAVIOR]/[DATA] | empty string (allows empty) |
 | `{AGENTS_AVAILABLE}` | discovered agent definitions (runtime prompt) or empty (agent prompt) | empty string (allows empty) |
 | `{AGENT_INSTRUCTIONS}` | agent's Markdown body instructions (for child agents only) | empty string (allows empty) |
 | `{AGENT_TASK}` | agent_task.md content (for resumed child agents only) | empty string (allows empty) |
@@ -133,10 +131,7 @@ template-specific extras.
 Variables that are `"NULL"` render literally as `NULL` in the prompt — the LLM
 sees a clear indicator that a value is missing.
 
-Section-level variables (`{SKILLS_AVAILABLE}`, `{SKILLS_ACTIVE}`) allow
-empty resolution — when empty, their entire section (including surrounding
-context like "**Active skills:**") is removed from the prompt rather than
-showing an empty section.
+The section-level variable `{SKILLS_AVAILABLE}` allows empty resolution, so no empty available-skills content is rendered.
 
 ### Escape Sequences
 
@@ -149,26 +144,22 @@ showing an empty section.
 
 ### Template-Specific (Extra) Variables
 
-The `buildSkillsSection()` method injects per-skill directory resolution before
-injecting content into `{SKILLS_AVAILABLE}` and `{SKILLS_ACTIVE}` sections.
-Skills can reference `{SKILL_DIR}` in their [BEHAVIOR] or [DATA] sections to
-self-reference their directory for file includes or skill-local resources.
+The `buildSkillsSection()` method injects per-skill variables into descriptions before `{SKILLS_AVAILABLE}` is rendered. `RenderSkillBody()` applies the same variable expansion, including `{SKILL_DIR}`, immediately before `load_skill` returns a body.
 
 ## Prompt Build Sequence in Code
 
 ```
-Builder.Build(session, activeSkills)
-  ├─ Builder.BuildRuntimePart(activeSkills)
+Builder.Build(session)
+  ├─ Builder.BuildRuntimePart()
   │    ├─ 1. readFileRequiredFS("sysprompt.md") → universal
   │    ├─ 2. readFileRequiredFS("sysprompt.{os}.md") → osPrompt
   │    ├─ 3. readFileRequiredFS("transport.{name}.md") → transportPrompt (main runtime only)
   │    ├─ 4. buildHostHelpersAdvisory()
   │    ├─ 5. helpers.Detect(lookup) → statuses
   │    │    └─ buildHostHelpersSection(statuses)
-  │    ├─ 6. buildSkillsSection(active)
+  │    ├─ 6. buildSkillsSection()
   │    │    ├─ skills.DiscoverAll(workDir) → all skills
-  │    │    ├─ Format available skills list
-  │    │    └─ Format active skills content
+  │    │    └─ Format available skills list
   │    ├─ 7. buildAgentsSection() → AGENTS_AVAILABLE (from Builder.Agents, mode-filtered)
   │    ├─ 8. readFileOptional("specs.md") → PROJECT_CONTENT
   │    ├─ 9. readFileOptional("AGENTS.md") → AGENTS_CONTENT (with variable injection)
@@ -191,35 +182,16 @@ When `SystemPromptName == "sysprompt.agent.md"` (child agent runtime):
 
 When `config.debugPrompt` is `true`, the runtime writes the exact fully built payload sent to the LLM to `{session_folder}/prompt.json` before each LLM call. When the field is omitted or `false`, no prompt debug artifact is written.
 
-## Skill Content in Prompts
+## Skill Content and Message Loading
 
-### Available Skills Section
+The system prompt contains compact one-line descriptions only:
 
-Compact one-line-per-skill format:
-```
+```text
 - skill-name = Description text
 - another-skill = Description text
 ```
 
-Only skills with `HasPromptContent()` (i.e., they have a non-empty [DESCRIPTION]
-and at least one of [BEHAVIOR] or [DATA]) appear in the available list.
-
-### Active Skills Section
-
-Full Markdown sections with skill name as heading, followed by [BEHAVIOR] and
-[DATA] blocks if present:
-
-```
-### skill-name
-
-[BEHAVIOR]
-behavior content here
-
-[DATA]
-data content here
-```
-
-Active skills are sorted by their scoped ID (project/ prefix before global/builtin).
+Every discovered skill has already passed strict `[DESCRIPTION]` and `[BODY]` validation. Skill bodies never enter the system prompt. When `load_skill` runs, `RenderSkillBody()` expands body variables and the tool returns the body through the ordinary tool-result message path. The persisted result then participates in session resume and compaction like any other conversation message.
 
 ## Host Helpers in Prompts
 

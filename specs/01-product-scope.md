@@ -57,9 +57,7 @@ Git workflows.
 - **Python**: last resort only, in a lazily-created venv under `app_home/scripts/venv/`
 - **Host helpers** (rg, fd, jq, git, xh, pandoc, sqlite3): detected at startup,
   listed in prompt so the LLM knows they are available without checking
-- **Native tools**: 12 base native tools plus conditional run_agent (shell, load_skill,
-  unload_skill, replace_block, ask_a_friend, analyze_image, task_read, task_write,
-  read_file, write_file) and conditional run_agent
+- **Native tools**: 9 base native tools plus conditional `run_agent` (`shell`, `load_skill`, `replace_block`, `ask_a_friend`, `analyze_image`, `task_read`, `task_write`, `read_file`, `write_file`)
 - OpenAI-compatible tool calling with multi-tool-call per turn
 - Default tool timeout: 60s. Timeout returns `"timeout <N>s exceeded"`
 - Shell output capped at 150kB (combined stdout + stderr)
@@ -90,13 +88,13 @@ auto-provisioning beyond the explicit first-run setup flow.
   - Application entry: `main.go` — flag parsing, wiring, transport startup
   - Agent core: `internal/runtime/` — RunTurn, tool loop, prompt builder, compactor, orchestration
   - Transports: `internal/console/`, `internal/telegram/` — implement Handler
-  - Tools: `internal/tools/` — 12 base native tool implementations plus conditional run_agent
+  - Tools: `internal/tools/` — 9 base native tool implementations plus conditional `run_agent`
   - Agent definitions: `internal/agents/` — Markdown agent discovery, parsing, validation
   - LLM client: `internal/provider/` — OpenAI-compatible streaming HTTP client
   - Secondary calls: `internal/llmcall/` — one-shot role-based LLM consultation
   - Usage normalization: `internal/usage/` — provider-agnostic token usage extraction
   - Session persistence: `internal/session/` — file-based, no database
-  - Skills: `internal/skills/` — parsing, discovery, active list
+  - Skills: `internal/skills/` — strict parsing, scoped discovery, and body loading
   - Config: `internal/config/` — load/save/validate
   - Platform: `internal/platform/` — OS detection, app home, shell selection
 
@@ -137,17 +135,15 @@ missing. Standard subfolders:
 - New session by default; `-c` continues last cleanly closed session; `-r` resumes last session
 - `session.json` contains full message array exactly as sent to LLM
 - Sessions persist indefinitely on disk (no automatic cleanup)
-- Active skills list NOT persisted in session
+
 
 ## Skills
 
-- Markdown files with `[DESCRIPTION]` (required) and at least one of `[BEHAVIOR]`
-  or `[DATA]`
+- Markdown files with exactly two required sections: `[DESCRIPTION]` and `[BODY]`
 - Three scopes: builtin (embedded), global (`app_home/skills/`), project (project `skills/`)
-- All scopes read every prompt build
-- Collision: project wins over global, global wins over builtin
-- Active skills: in-memory list, starts empty, not persisted, tool-only modification
-- No separate memory subsystem — skills `[DATA]` sections replace it
+- Descriptions are rebuilt into the system prompt on every LLM call
+- `load_skill` returns the expanded body as a standard persisted tool message
+- No active-skill state, repeated system-prompt injection, or `unload_skill` tool
 
 ## Agent Definitions
 
@@ -186,8 +182,8 @@ Conservative Linux targets — minimal libc dependency, validate on older system
 - BlazeAI is not designed for non-technical users
 - Automatic session cleanup is not in scope
 - No fallback providers or models
-- No separate memory subsystem — skills `[DATA]` sections serve as memory and persistent knowledge storage
-- No native plugin system beyond skills — skills with `[BEHAVIOR]` extend agent behavior at runtime
+- No separate memory subsystem — skill bodies may carry reference data in ordinary conversation history
+- No native plugin system beyond skills — loaded skill bodies provide instructions and reference content
 
 ## Scope Boundary
 

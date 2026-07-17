@@ -1,7 +1,7 @@
 [DESCRIPTION]
 Load when the user wants to download YouTube videos as MP3 audio files, create playlists, or build a music library. Use for yt-dlp MP3 extraction, batch downloads, and managing local music collections.
 
-[BEHAVIOR]
+[BODY]
 
 # YouTube Music Downloader
 

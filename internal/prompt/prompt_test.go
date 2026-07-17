@@ -14,7 +14,6 @@ import (
 	"blazeai/internal/helpers"
 	"blazeai/internal/platform"
 	"blazeai/internal/session"
-	"blazeai/internal/skills"
 )
 
 // setupTestDirs creates temp directories with prompt and skill files for testing.
@@ -43,12 +42,12 @@ func setupTestDirs(t *testing.T) (promptsFS fs.FS, workDir string) {
 
 	// Global skill.
 	writeFile(t, filepath.Join(appHome, "skills", "skill-manager", "skill.md"),
-		"[DESCRIPTION]\nLoad when creating, reviewing, or modifying a skill.\n\n[BEHAVIOR]\n# Skill Manager\n\nManage skills at {APP_HOME}/skills/.\n")
+		"[DESCRIPTION]\nLoad when creating, reviewing, or modifying a skill.\n\n[BODY]\n# Skill Manager\n\nManage skills at {APP_HOME}/skills/.\n")
 	writeFile(t, filepath.Join(appHome, "skills", "echo-runner", "skill.md"),
-		"[DESCRIPTION]\nEcho raw arguments for smoke tests.\n\n[SYNTAX]\n<text>\n\n[CODE]\n```shell\nprintf '%s' \"$BLAZE_SKILL_ARGS\"\n```\n")
+		"[DESCRIPTION]\nEcho raw arguments for smoke tests.\n\n[BODY]\n```shell\nprintf '%s' \"$BLAZE_SKILL_ARGS\"\n```\n")
 	customSkillDir := filepath.Join(appHome, "skills", "project_hub")
 	writeFile(t, filepath.Join(customSkillDir, "skill.md"),
-		"[DESCRIPTION]\nProject Hub skill with local scripts at {SKILL_DIR}/scripts/run.py.\n\n[BEHAVIOR]\nUse local helper at {SKILL_DIR}/scripts/run.py.\n[DATA]\napi.url=https://example.com\n")
+		"[DESCRIPTION]\nProject Hub skill with local scripts at {SKILL_DIR}/scripts/run.py.\n\n[BODY]\nUse local helper at {SKILL_DIR}/scripts/run.py.\napi.url=https://example.com\n")
 
 	// AGENTS.md in work dir.
 	writeFile(t, filepath.Join(workDir, "AGENTS.md"),
@@ -64,6 +63,10 @@ func writeFile(t *testing.T, path, content string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatalf("cannot create parent dir for %s: %v", path, err)
 	}
+	if strings.HasSuffix(path, "skill.md") {
+		content = strings.ReplaceAll(content, "[BEHAVIOR]", "[BODY]")
+		content = strings.ReplaceAll(content, "[DATA]", "")
+	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("cannot write %s: %v", path, err)
 	}
@@ -72,7 +75,7 @@ func writeFile(t *testing.T, path, content string) {
 // writePromptFixtures creates the prompt templates required by runtime prompt assembly.
 func writePromptFixtures(t *testing.T, promptsDir string) {
 	t.Helper()
-	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n{OS_PROMPT}\n\n## Transport\n{TRANSPORT_PROMPT}\n\n{TRANSPORT_CONTEXT}\n\n## Host Environment Helpers\n{HOST_HELPERS_ADVISORY}\n\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nBefore performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first. Do not act on an unfamiliar domain without loading the relevant skill.\n\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n")
+	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n{OS_PROMPT}\n\n## Transport\n{TRANSPORT_PROMPT}\n\n{TRANSPORT_CONTEXT}\n\n## Host Environment Helpers\n{HOST_HELPERS_ADVISORY}\n\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nBefore performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first. Do not act on an unfamiliar domain without loading the relevant skill.\n\nAvailable skills:\n{SKILLS_AVAILABLE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n")
 	writeFile(t, filepath.Join(promptsDir, "sysprompt.linux.md"), "# Linux System Prompt\n\nScripts at {APP_HOME}/scripts/.\n")
 	writeFile(t, filepath.Join(promptsDir, "transport.console.md"), "Console transport profile.")
 	writeFile(t, filepath.Join(promptsDir, "transport.telegram.md"), "Telegram transport profile. {TRANSPORT_CONTEXT}")
@@ -196,7 +199,7 @@ func TestBuildRuntimePartLoadsAgentTask(t *testing.T) {
 	writeFile(t, taskPath, "first task")
 	b := &Builder{PromptsFS: os.DirFS(agentRoot), WorkDir: workDir, OS: platform.Linux, SystemPromptName: "sysprompt.agent.md", AgentTaskFile: taskPath}
 
-	first, err := b.BuildRuntimePart(skills.NewActiveList())
+	first, err := b.BuildRuntimePart()
 	if err != nil {
 		t.Fatalf("first BuildRuntimePart() error: %v", err)
 	}
@@ -204,7 +207,7 @@ func TestBuildRuntimePartLoadsAgentTask(t *testing.T) {
 		t.Fatalf("first prompt does not contain task: %q", first)
 	}
 	writeFile(t, taskPath, "replacement task")
-	second, err := b.BuildRuntimePart(skills.NewActiveList())
+	second, err := b.BuildRuntimePart()
 	if err != nil {
 		t.Fatalf("second BuildRuntimePart() error: %v", err)
 	}
@@ -223,8 +226,7 @@ func TestBuildRuntimePartFull(t *testing.T) {
 		OS:            platform.Linux,
 		TransportName: "console",
 	}
-	active := skills.NewActiveList()
-	result, err := b.BuildRuntimePart(active)
+	result, err := b.BuildRuntimePart()
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
@@ -275,7 +277,7 @@ func TestBuildRuntimePartMissingUniversal(t *testing.T) {
 		OS:            platform.Linux,
 		TransportName: "console",
 	}
-	_, err := b.BuildRuntimePart(skills.NewActiveList())
+	_, err := b.BuildRuntimePart()
 	if err != ErrUniversalPromptMissing {
 		t.Errorf("BuildRuntimePart() err = %v, want ErrUniversalPromptMissing", err)
 	}
@@ -294,7 +296,7 @@ func TestBuildRuntimePartMissingOSPrompt(t *testing.T) {
 		OS:            platform.Linux,
 		TransportName: "console",
 	}
-	_, err := b.BuildRuntimePart(skills.NewActiveList())
+	_, err := b.BuildRuntimePart()
 	if err != ErrOSPromptMissing {
 		t.Errorf("BuildRuntimePart() err = %v, want ErrOSPromptMissing", err)
 	}
@@ -312,7 +314,7 @@ func TestBuildRuntimePartNoAgentsMD(t *testing.T) {
 		OS:            platform.Linux,
 		TransportName: "console",
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList())
+	result, err := b.BuildRuntimePart()
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
@@ -321,34 +323,6 @@ func TestBuildRuntimePartNoAgentsMD(t *testing.T) {
 	}
 	if strings.Contains(result, "Project Rules (AGENTS.md)\nNULL") {
 		t.Error("runtime part should not render NULL for missing AGENTS.md")
-	}
-}
-
-// TestBuildRuntimePartActiveSkills verifies that active skills inject Behavior and Data.
-func TestBuildRuntimePartActiveSkills(t *testing.T) {
-	promptsFS, workDir := setupTestDirs(t)
-
-	b := &Builder{
-		PromptsFS:     promptsFS,
-		WorkDir:       workDir,
-		OS:            platform.Linux,
-		TransportName: "console",
-	}
-	active := skills.NewActiveList()
-	active.Load("global/project_hub")
-
-	result, err := b.BuildRuntimePart(active)
-	if err != nil {
-		t.Fatalf("BuildRuntimePart() error: %v", err)
-	}
-	if !strings.Contains(result, "Active skills:") {
-		t.Error("runtime part missing Active skills section")
-	}
-	if !strings.Contains(result, "Use local helper") {
-		t.Error("runtime part missing active skill behavior")
-	}
-	if !strings.Contains(result, "api.url") {
-		t.Error("runtime part missing active skill data")
 	}
 }
 
@@ -363,7 +337,7 @@ func TestBuildRuntimePartTransportContext(t *testing.T) {
 		TransportName:    "telegram",
 		TransportContext: "Telegram bridge active.",
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList())
+	result, err := b.BuildRuntimePart()
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
@@ -386,7 +360,7 @@ func TestBuildRuntimePartMissingTransportName(t *testing.T) {
 		WorkDir:   workDir,
 		OS:        platform.Linux,
 	}
-	_, err := b.BuildRuntimePart(skills.NewActiveList())
+	_, err := b.BuildRuntimePart()
 	if err != ErrTransportNameMissing {
 		t.Fatalf("BuildRuntimePart() err = %v, want ErrTransportNameMissing", err)
 	}
@@ -407,7 +381,7 @@ func TestBuildRuntimePartMissingTransportPrompt(t *testing.T) {
 		OS:            platform.Linux,
 		TransportName: "console",
 	}
-	_, err := b.BuildRuntimePart(skills.NewActiveList())
+	_, err := b.BuildRuntimePart()
 	if err != ErrTransportPromptMissing {
 		t.Fatalf("BuildRuntimePart() err = %v, want ErrTransportPromptMissing", err)
 	}
@@ -440,7 +414,7 @@ func TestBuildRuntimePartNoSkills(t *testing.T) {
 		OS:            platform.Linux,
 		TransportName: "console",
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList())
+	result, err := b.BuildRuntimePart()
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
@@ -467,7 +441,7 @@ func TestBuild(t *testing.T) {
 		},
 	}
 
-	messages, err := b.Build(sess, skills.NewActiveList())
+	messages, err := b.Build(sess)
 	if err != nil {
 		t.Fatalf("Build() error: %v", err)
 	}
@@ -500,7 +474,7 @@ func TestBuildEmptySession(t *testing.T) {
 
 	sess := &session.Session{Messages: []session.Message{}}
 
-	messages, err := b.Build(sess, skills.NewActiveList())
+	messages, err := b.Build(sess)
 	if err != nil {
 		t.Fatalf("Build() error: %v", err)
 	}
@@ -523,7 +497,7 @@ func TestBuildRuntimePartOrder(t *testing.T) {
 		TransportName: "console",
 		HelperLookup:  fakeHelperLookup([]string{"rg", "fd", "jq", "git", "curl"}),
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList())
+	result, err := b.BuildRuntimePart()
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
@@ -570,7 +544,7 @@ func TestBuildRuntimePartHelperAvailable(t *testing.T) {
 		HelperSetup:   config.HelperSetup{},
 		HelperLookup:  fakeHelperLookup([]string{"rg", "jq", "curl"}),
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList())
+	result, err := b.BuildRuntimePart()
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
@@ -594,7 +568,7 @@ func TestBuildRuntimePartHelperMissingNotDismissed(t *testing.T) {
 		HelperSetup:   config.HelperSetup{},
 		HelperLookup:  fakeHelperLookup([]string{"git"}),
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList())
+	result, err := b.BuildRuntimePart()
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
@@ -618,7 +592,7 @@ func TestBuildRuntimePartHelperMissingDismissed(t *testing.T) {
 		HelperSetup:   config.HelperSetup{Dismissed: true},
 		HelperLookup:  fakeHelperLookup([]string{"git"}),
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList())
+	result, err := b.BuildRuntimePart()
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
@@ -639,7 +613,7 @@ func TestBuildRuntimePartHelperDeclined(t *testing.T) {
 		HelperSetup:   config.HelperSetup{Declined: []string{"rg", "fd"}},
 		HelperLookup:  fakeHelperLookup([]string{"git"}),
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList())
+	result, err := b.BuildRuntimePart()
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
@@ -672,7 +646,7 @@ func TestBuildRuntimePartHelperOrder(t *testing.T) {
 		HelperSetup:   config.HelperSetup{},
 		HelperLookup:  fakeHelperLookup([]string{"rg", "fd", "jq", "git", "curl"}),
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList())
+	result, err := b.BuildRuntimePart()
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}
@@ -705,7 +679,7 @@ func TestBuildRuntimePartHelperNoHelpers(t *testing.T) {
 		HelperSetup:   config.HelperSetup{Dismissed: true},
 		HelperLookup:  fakeHelperLookup(nil),
 	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList())
+	result, err := b.BuildRuntimePart()
 	if err != nil {
 		t.Fatalf("BuildRuntimePart() error: %v", err)
 	}

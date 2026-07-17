@@ -1,7 +1,7 @@
 [DESCRIPTION]
 MUST load using `load_skill project-hub` when the user asks to open, resume, initialize, register, or switch between managed projects. Required for inbox capture/processing only with an explicit project name from the registry. Do NOT load for task or todo queries within the current working directory — check working-directory files first.
 
-[BEHAVIOR]
+[BODY]
 
 ## Related Data
 

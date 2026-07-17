@@ -1,7 +1,7 @@
 [DESCRIPTION]
 MUST load first before creating, reviewing, modifying, repairing, or debugging any skill. Use for skill structure, separating instructions from facts, and turning user corrections or failed workflows into better skill rules.
 
-[BEHAVIOR]
+[BODY]
 # Skill Manager
 
 ## Purpose
@@ -11,9 +11,9 @@ Design, review, or improve skill content. A skill improves future behavior by de
 
 Every skill is a folder containing `skill.md`.
 
-Required sections: `[DESCRIPTION]` plus `[BEHAVIOR]`, `[DATA]`, or both.
+Required sections: `[DESCRIPTION]` and `[BODY]` only.
 
-Skills are loaded with `load_skill`. Their `[BEHAVIOR]` and `[DATA]` enter the prompt context and guide the agent's decisions. Use native tools such as `shell` for execution.
+Skills are loaded with `load_skill`. Their `[BODY]` is returned as a standard tool message in conversation history. Use native tools such as `shell` for execution.
 
 ### DESCRIPTION
 
@@ -82,7 +82,7 @@ Both use the same folder layout: `<name>/skill.md`. Never use a flat `.md` file 
 
 ### Prerequisites
 
-- An active skill's BEHAVIOR and DATA are already in your context. Do not read the file from disk unless you need to modify it.
+- A loaded skill body is already present in conversation history. Do not read the file from disk unless you need to modify it.
 - To modify a skill, read the file first, then write the updated version.
 
 ### Commands
@@ -130,7 +130,6 @@ If promoting a project skill to global:
 
 Builtin skills (`skill-manager`, `config-manager`, `audit-manager`) are seeded into `\{GLOBAL_SKILLS_DIR\}` on startup. To restore a builtin to its factory version, delete its folder and restart BlazeAI.
 
-[DATA]
 skill.format=folder/<name>/skill.md with \[DESCRIPTION\] (required) and at least one of \[BEHAVIOR\] or \[DATA\]
 skill.ids=bare name for global skills (default); project/name for project-scoped skills
 skill.resolution=bare name resolves to global by default; project/name resolves to project scope exactly

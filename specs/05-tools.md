@@ -54,12 +54,11 @@ type Registry struct {
 - `Clone()` — returns a shallow copy of the registry (used for BaseTools)
 - `Filter(names)` — returns a new registry with only the named tools (used for mode policy and child agents)
 
-All 12 base tools are registered at agent construction in `runtime.NewAgent()`; `run_agent` is added only when valid one-shot agent definitions exist:
+All 9 base tools are registered at agent construction in `runtime.NewAgent()`; `run_agent` is added only when valid one-shot agent definitions exist:
 
 ```go
 registry.Register(NewShellTool(os, workDirGetter))
 registry.Register(NewLoadSkillTool(active, skillResolver))
-registry.Register(NewUnloadSkillTool(active, skillResolver))
 registry.Register(NewAnalyzeImageTool(visionCaller))
 registry.Register(NewAskFriendTool(secondaryCaller))
 registry.Register(NewReplaceBlockTool(workDirGetter))
@@ -144,7 +143,6 @@ Each tool has a dedicated emoji for console and Telegram display:
 |------|-------|---------|
 | `shell` | `💻` | `💻 purpose …` |
 | `load_skill` | `📥` | `📥 purpose …` |
-| `unload_skill` | `📤` | `📤 purpose …` |
 | `replace_block` | `📝` | `📝 purpose …` |
 | `ask_a_friend` | `🧠` | `🧠 purpose …` |
 | `analyze_image` | `🖼` | `🖼 image analysis …` |

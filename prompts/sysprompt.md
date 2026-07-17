@@ -69,22 +69,12 @@ Optimize for clear meaning per token.
 
 [SKILLS]
 
-Active skills persist in the system prompt until unloaded.
-Avoid skill churn. Do not unload a skill immediately after use; keep it loaded for likely follow-up work.
-Unload a skill only when it is clearly irrelevant for about 10 user turns, or when it conflicts with the current task.
-If unsure, keep it loaded.
-
-Before performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first. Do not act on an unfamiliar domain without loading the relevant skill.
+Before performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first. `load_skill` returns the skill body as a standard tool message in the conversation. Load a skill again only when its body is no longer present in the usable conversation context.
 
 **Available skills:**
 Use the `load_skill` tool to load a skill if needed.
 
 {SKILLS_AVAILABLE}
-
-**Active skills:**
-Any skill loaded with the `load_skill` tool appears here.
-
-{SKILLS_ACTIVE}
 
 [SECONDARY MODEL CONSULTATION]
 

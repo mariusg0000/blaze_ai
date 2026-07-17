@@ -1,7 +1,7 @@
 [DESCRIPTION]
 Network topology, server IPs, roles, and SSH info.
 
-[DATA]
+[BODY]
 network.subnet=192.168.0.0/22
 network.gateway=192.168.0.1
 network.dns=192.168.0.1

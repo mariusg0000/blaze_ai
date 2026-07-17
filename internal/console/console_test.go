@@ -74,7 +74,8 @@ func stripANSICodes(s string) string {
 // writePromptFixtures creates the prompt templates required by runtime prompt assembly.
 func writePromptFixtures(t *testing.T, promptsDir string) {
 	t.Helper()
-	os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n## Tool Discipline\n- Keep relevant loaded skills active across follow-up turns on the same topic or task.\n- Do not unload a skill immediately after one successful action if the user is likely to continue in the same domain.\n- Unload a skill only when the user clearly changes topic or task, or when the loaded skill would interfere with the next turn.\n\n## Active State Rules\n- Only skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.\n\n{OS_PROMPT}\n\n## Transport\n{TRANSPORT_PROMPT}\n\n{TRANSPORT_CONTEXT}\n\n## Host Environment Helpers\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nBefore performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first. Do not act on an unfamiliar domain without loading the relevant skill.\n\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n"), 0644)
+	content := "# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n{OS_PROMPT}\n\n## Transport\n{TRANSPORT_PROMPT}\n\n{TRANSPORT_CONTEXT}\n\n## Host Environment Helpers\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nBefore performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first.\n\nAvailable skills:\n{SKILLS_AVAILABLE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n"
+	os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte(content), 0644)
 	os.WriteFile(filepath.Join(promptsDir, "sysprompt.linux.md"), []byte("linux"), 0644)
 	os.WriteFile(filepath.Join(promptsDir, "transport.console.md"), []byte("console transport"), 0644)
 	os.WriteFile(filepath.Join(promptsDir, "transport.telegram.md"), []byte("telegram transport"), 0644)
@@ -569,7 +570,6 @@ func TestToolEmojiMapping(t *testing.T) {
 		"task_write":    "📋",
 		"task_read":     "📖",
 		"load_skill":    "📥",
-		"unload_skill":  "📤",
 		"replace_block": "📝",
 		"ask_a_friend":  "🤝",
 		"analyze_image": "🖼",
@@ -720,7 +720,6 @@ func TestHandleCommandClear(t *testing.T) {
 	for _, cmd := range []string{"/clear", "/new"} {
 		t.Run(strings.TrimPrefix(cmd, "/"), func(t *testing.T) {
 			c, out := newConsole(mockAgent(t))
-			c.Agent.Active.Load("music_player")
 			if err := c.Agent.Session.Append(session.Message{Role: "user", Content: "old context"}); err != nil {
 				t.Fatalf("Append() failed: %v", err)
 			}
@@ -747,9 +746,6 @@ func TestHandleCommandClear(t *testing.T) {
 			}
 			if c.Agent.Session.ClosedCleanly {
 				t.Error("session should remain open after clear")
-			}
-			if len(c.Agent.Active.List()) != 0 {
-				t.Errorf("active skills = %v, want empty", c.Agent.Active.List())
 			}
 
 			if _, err := os.Stat(summaryDir); !os.IsNotExist(err) {
@@ -940,6 +936,7 @@ func writeSkillDir(t *testing.T, root, name, content string) {
 		t.Fatalf("cannot create skill dir %s: %v", skillDir, err)
 	}
 	path := filepath.Join(skillDir, "skill.md")
+	content = strings.ReplaceAll(content, "[DATA]", "[BODY]")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("cannot write skill %s: %v", path, err)
 	}

@@ -94,15 +94,14 @@ type AgentActivityHandler interface {
 // WHY:   One struct ties config, session, skills, prompt, tools, and provider together.
 // PARAMS: Config — loaded configuration; Session — current conversation session;
 //
-//	Active — in-memory active skills list; Builder — prompt assembler;
-//	Tools — tool registry; Provider — LLM client; Handler — transport callbacks;
+//	Builder — prompt assembler; Tools — tool registry; Provider — LLM client;
+//	Handler — transport callbacks;
 //	ModelID — current provider/model_name; WorkDir — current work folder; OS — detected platform.
 type Agent struct {
 	Config      *config.Config
 	Modes       *config.ModesConfig
 	Definitions []agents.Definition
 	Session     *session.Session
-	Active      *skills.ActiveList
 	Builder     *prompt.Builder
 	Tools       *tools.Registry
 	BaseTools   *tools.Registry
@@ -193,8 +192,6 @@ func newAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 		}
 	}
 
-	active := skills.NewActiveList()
-
 	builder := &prompt.Builder{
 		PromptsFS:        promptsFS,
 		WorkDir:          workDir,
@@ -209,7 +206,6 @@ func newAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 		Config:      cfg,
 		Modes:       modes,
 		Session:     sess,
-		Active:      active,
 		Builder:     builder,
 		Provider:    client,
 		Handler:     handler,
@@ -220,32 +216,27 @@ func newAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 		OS:          os,
 	}
 
-	// Build resolver for skill tools: resolves names against current discovery.
-	skillResolver := func(name string) (string, error) {
-		all, err := skills.DiscoverAll(agent.WorkDir)
-		if err != nil {
-			return "", fmt.Errorf("skill discovery failed: %w", err)
-		}
-		return skills.Resolve(name, all)
-	}
 	oneShotCaller := llmcall.New(cfg, func(cfg *config.Config, modelID string) (llmcall.StreamClient, error) {
 		return provider.NewClient(cfg, modelID)
 	})
 
 	registry := tools.NewRegistry()
 	registry.Register(tools.NewShellTool(os, func() string { return agent.WorkDir }))
-	registry.Register(tools.NewLoadSkillTool(active, func(name string) (string, *skills.Skill, error) {
+	registry.Register(tools.NewLoadSkillTool(func(name string) (string, string, error) {
 		all, err := skills.DiscoverAll(agent.WorkDir)
 		if err != nil {
-			return "", nil, fmt.Errorf("skill discovery failed: %w", err)
+			return "", "", fmt.Errorf("skill discovery failed: %w", err)
 		}
 		resolved, err := skills.Resolve(name, all)
 		if err != nil {
-			return "", nil, err
+			return "", "", err
 		}
-		return resolved, all[resolved], nil
+		body, err := agent.Builder.RenderSkillBody(all[resolved])
+		if err != nil {
+			return "", "", fmt.Errorf("skill body rendering failed: %w", err)
+		}
+		return resolved, body, nil
 	}))
-	registry.Register(tools.NewUnloadSkillTool(active, skillResolver))
 	registry.Register(tools.NewAnalyzeImageTool(func(ctx context.Context, req tools.AnalyzeImageRequest) (string, error) {
 		return oneShotCaller.Call(ctx, llmcall.Request{
 			Role:     "vision",
@@ -338,7 +329,7 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		}
 
 		// Build full prompt from disk + session history.
-		messages, err := a.Builder.Build(a.Session, a.Active)
+		messages, err := a.Builder.Build(a.Session)
 		if err != nil {
 			return fmt.Errorf("cannot build prompt: %w", err)
 		}
@@ -817,7 +808,7 @@ func (a *Agent) CloseSession() error {
 // ResetConversation clears the current session history and loaded context.
 //
 // WHAT:  Restarts the current session in place without changing its folder name.
-// WHY:   /clear and /new need a clean prompt state with only the sysprompt and no active skills.
+// WHY:   /clear and /new need a clean persisted conversation while retaining runtime configuration.
 // RETURNS: error if clearing summaries or persisting the reset session fails.
 func (a *Agent) ResetConversation() error {
 	if a.Compactor != nil {
@@ -827,9 +818,6 @@ func (a *Agent) ResetConversation() error {
 	}
 	if err := os.Remove(filepath.Join(a.Session.Folder, "prompt.json")); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("cannot clear prompt debug file: %w", err)
-	}
-	if a.Active != nil {
-		a.Active.Clear()
 	}
 	if err := a.Session.Reset(); err != nil {
 		return fmt.Errorf("cannot reset session: %w", err)

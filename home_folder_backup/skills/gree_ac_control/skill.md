@@ -1,7 +1,7 @@
 [DESCRIPTION]
 Load when the user wants to control, monitor, or configure Gree AC units. Use for power on/off, temperature setting, mode switching, fan speed, and reading AC status. Device credentials and network info in DATA.
 
-[BEHAVIOR]
+[BODY]
 ## Purpose
 Control Gree HVAC units in the local network via UDP using the gree.py CLI script.
 
@@ -54,7 +54,6 @@ Control Gree HVAC units in the local network via UDP using the gree.py CLI scrip
 - If the AC does not respond to ping, report it offline rather than retrying.
 - If bind fails repeatedly with different encryption types, ask the user for device model/firmware version.
 
-[DATA]
 ac.birou_etaj.ip=192.168.0.112
 ac.birou_etaj.id=580d0d2e3bc8
 ac.birou_etaj.key=mmvII30ecJ9i4Qwu

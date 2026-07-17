@@ -51,7 +51,7 @@ func newTelegramAgent(t *testing.T) (*runtime.Agent, *config.Config, *State, str
 
 func writePromptFixtures(t *testing.T, promptsDir string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("base\n{OS_PROMPT}\n{TRANSPORT_PROMPT}\n{TRANSPORT_CONTEXT}\n{HOST_HELPERS_ADVISORY}\n{HOST_HELPERS_AVAILABLE}\n{HOST_HELPERS_OPTIONAL}\n{SKILLS_AVAILABLE}\n{SKILLS_ACTIVE}\n{AGENTS_CONTENT}\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("base\n{OS_PROMPT}\n{TRANSPORT_PROMPT}\n{TRANSPORT_CONTEXT}\n{HOST_HELPERS_ADVISORY}\n{HOST_HELPERS_AVAILABLE}\n{HOST_HELPERS_OPTIONAL}\n{SKILLS_AVAILABLE}\n{AGENTS_CONTENT}\n"), 0644); err != nil {
 		t.Fatalf("write sysprompt.md: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(promptsDir, "sysprompt.linux.md"), []byte("linux"), 0644); err != nil {

@@ -469,8 +469,6 @@ func toolEmoji(name string) string {
 		return "📖"
 	case "load_skill":
 		return "📥"
-	case "unload_skill":
-		return "📤"
 	case "replace_block":
 		return "📝"
 	case "ask_a_friend":

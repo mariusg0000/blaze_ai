@@ -29,7 +29,7 @@
 - `internal/agents/` discovers and strictly validates Markdown agent definitions under `app_home/agents/`.
 - `internal/prompt/` rebuilds the runtime prompt on every LLM call from `prompts/`, skills, agent definitions, `specs.md`, and `AGENTS.md`.
 - `internal/platform/` handles OS detection, shell chain selection, app-home bootstrap, and project directory resolution.
-- `internal/skills/` discovers builtin, global, and project skills; active skills live only in memory for the current session.
+- `internal/skills/` strictly parses and discovers builtin, global, and project skills; `load_skill` adds the selected body to conversation history as a normal tool result.
 - `internal/compaction/` prunes long sessions, writes summaries, and strips reasoning from the payload while preserving on-disk session JSON.
 - `internal/provider/` talks to OpenAI-compatible endpoints, streams responses, parses tool calls, and reports usage.
 - `internal/tools/` implements shell execution, skill tools, ask_a_friend, analyze_image, replace_block, task tools, and filtered registries.

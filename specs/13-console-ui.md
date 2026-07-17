@@ -202,7 +202,6 @@ func toolEmoji(name string) string {
     switch name {
     case "shell":        return "💻"
     case "load_skill":   return "📥"
-    case "unload_skill": return "📤"
     case "replace_block": return "📝"
     case "ask_a_friend": return "🧠"
     case "task_read",

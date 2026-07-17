@@ -1,7 +1,7 @@
 [DESCRIPTION]
 Load when the user wants Node-RED, MQTT, Zigbee, or smart-home actions. Use for SSH access, MQTT control, reading room/outdoor temperatures, humidity, and energy/power consumption from smart plugs and sensors on the Node server. Server credentials, MQTT config, and full device list in DATA.
 
-[BEHAVIOR]
+[BODY]
 Use this skill to interact with the Node smart-home server via SSH and MQTT.
 
 ## SSH access method
@@ -152,7 +152,6 @@ sshpass -p 'gheorghe' ssh -o StrictHostKeyChecking=no node@192.168.0.110 \
 - **Ventilator recuperare** — ventilation control (Tasmota)
 - **Repeater** — Zigbee signal repeater (no direct controls)
 
-[DATA]
 node.mqtt.base_topic=zigbee2mqtt
 node.zigbee.config_path=/opt/zigbee2mqtt/data/configuration.yaml
 node.url.zigbee_frontend=http://192.168.0.110:8080/

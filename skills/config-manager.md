@@ -1,7 +1,7 @@
 [DESCRIPTION]
 Load for BlazeAI auto-configuration: providers, API keys, favorite models, role assignments, work modes, Telegram bridge, and host helpers.
 
-[BEHAVIOR]
+[BODY]
 # Config Manager
 
 ## Config Location

@@ -1,7 +1,7 @@
 [DESCRIPTION]
 Load when creating, reviewing, or modifying a skill. Use for designing clear procedural skill content, authoring data sections, separating behavior from data, and converting user corrections or failed workflows into better skill rules.
 
-[BEHAVIOR]
+[BODY]
 # Skill Manager
 
 ## Purpose
@@ -16,7 +16,7 @@ A skill should improve future agent behavior by defining:
 - what pitfalls or wrong assumptions are known.
 
 ## Required Skill Format
-Every skill must contain `[DESCRIPTION]` and at least one of `[BEHAVIOR]` or `[DATA]`.
+Every skill must contain exactly `[DESCRIPTION]` and `[BODY]`.
 
 `[DESCRIPTION]` must appear first.
 
@@ -99,7 +99,6 @@ For data-only skills, use a concise DATA section with key=value facts.
 
 Do not force this structure if the skill is very small. For small skills, concise procedural rules are better than many headings.
 
-[DATA]
 skill.format.behavior=rules for how to work
 skill.format.data=persistent facts in key=value format
 skill.scopes=two runtime scopes: global (app_home/skills/) and project (app_home/projects/<project>/skills/)

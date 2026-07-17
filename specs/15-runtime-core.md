@@ -23,7 +23,6 @@ type Agent struct {
     Modes       *config.ModesConfig
     Definitions []agents.Definition
     Session     *session.Session
-    Active      *skills.ActiveList
     Builder     *prompt.Builder
     Tools       *tools.Registry    // filtered by mode policy
     BaseTools   *tools.Registry    // complete unfiltered registry
@@ -259,12 +258,11 @@ NewAgent(cfg, sess, os, promptsFS, workDir, handler, transportName)
   ├─ Resolve active mode: lastMode > firstMode
   ├─ provider.NewClient(cfg, modelID)  → primary LLM client
   ├─ provider.NewClient(cfg, summarizationModel)  → secondary (if different model)
-  ├─ skills.NewActiveList()         → empty active skills list
   ├─ prompt.Builder{...}            → prompt assembler
   ├─ compaction.NewManager(...)     → compaction orchestrator
   ├─ skills.DiscoverAll(workDir)    → skill resolvers
   ├─ tools.NewRegistry()
-  │    ├─ shell, load_skill, unload_skill
+  │    ├─ shell, load_skill
   │    ├─ analyze_image (with oneShotCaller via llmcall, forced vision role)
   │    ├─ ask_a_friend (with oneShotCaller via llmcall)
   │    ├─ replace_block, task_write, task_read

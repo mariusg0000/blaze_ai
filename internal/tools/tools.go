@@ -15,7 +15,7 @@ const DefaultTimeout = 60
 
 // Tool defines the contract for a native tool executable by the runtime.
 //
-// WHAT:  Interface for all native tools (shell, load_skill, unload_skill, replace_block).
+// WHAT:  Interface for all native tools (shell, load_skill, replace_block).
 // WHY:   The runtime executes tools through this uniform interface regardless of implementation.
 type Tool interface {
 	// Name returns the tool's unique identifier.

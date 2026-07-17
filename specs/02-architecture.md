@@ -90,9 +90,9 @@ Three files:
 ### Layer 2 — Tools (`internal/tools/`)
 - `Tool` interface — 5 methods: Name, Description, Parameters, Execute, FormatArgs
 - `Registry` — map[string]Tool, built at agent construction, never modified at runtime
-- All 12 base tools registered in `NewAgent()` plus conditional `run_agent`:
+- All 9 base tools registered in `NewAgent()` plus conditional `run_agent`:
   - `shell` — command execution via platform shell
-  - `load_skill` / `unload_skill` — in-memory active skills management
+  - `load_skill` — resolves a skill and returns its expanded body as a standard tool result
   - `replace_block` — exact text replacement in files
   - `ask_a_friend` — delegate to secondary model role
   - `analyze_image` — vision role image analysis
@@ -137,7 +137,7 @@ Three files:
 - `Builder` struct with `Build()` and `BuildRuntimePart()` methods
 - Prompt rebuilt on every LLM call from disk sources
 - Build order: universal sysprompt → OS sysprompt → transport prompt → host helpers → skills → agents → specs.md → AGENTS.md → conversation history
-- Variable injection: `{APP_HOME}`, `{WORK_DIR}`, `{OS_INFO}`, `{SKILLS_AVAILABLE}`, `{SKILLS_ACTIVE}`, `{AGENTS_CONTENT}`, `{PROJECT_CONTENT}`, `{HOST_HELPERS_*}`, `{TRANSPORT_CONTEXT}`, `{SKILL_DIR}`
+- Variable injection: `{APP_HOME}`, `{WORK_DIR}`, `{OS_INFO}`, `{SKILLS_AVAILABLE}`, `{AGENTS_CONTENT}`, `{PROJECT_CONTENT}`, `{HOST_HELPERS_*}`, `{TRANSPORT_CONTEXT}`, `{SKILL_DIR}`
 - Agent definitions inject `{AGENT_INSTRUCTIONS}` and `{AGENT_TASK}` into `sysprompt.agent.md`
 
 ### Layer 6 — Supporting Packages
@@ -158,9 +158,9 @@ Three files:
 - `SanitizeMessages()` enforces tool-call/result pairing
 
 #### Skills (`internal/skills/`)
-- Markdown parsing: `[DESCRIPTION]`, `[BEHAVIOR]`, `[DATA]`
+- Markdown parsing: required `[DESCRIPTION]` and `[BODY]`
 - Three scopes: builtin (embedded), global (app_home/skills/), project (project skills/)
-- `ActiveList` — in-memory, starts empty, not persisted
+- No active state; loaded bodies are ordinary persisted tool messages
 - `DiscoverAll()` — reads all three scopes, returns map[id → Skill]
 - `Resolve()` — resolves name to scoped ID, errors on ambiguity
 
@@ -310,8 +310,7 @@ a bootstrap package. Keeps complexity low.
 Standard library first; direct external dependencies are `github.com/reeflective/readline`, `golang.org/x/image`, and `golang.org/x/term`; indirect dependencies are `github.com/rivo/uniseg` and `golang.org/x/sys`.
 
 ### Skills Replace Memory
-No separate memory subsystem. Skills with `[DATA]` sections provide persistent
-knowledge storage. Skills with `[BEHAVIOR]` sections extend agent behavior.
+No separate memory subsystem. Skill bodies may contain instructions and reference data; loaded bodies follow normal conversation-history and compaction behavior.
 
 ### Model Switching Paths
 - `SetModel()` — transport model switch with global persistence (config.json + modes.json)
