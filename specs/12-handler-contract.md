@@ -4,7 +4,7 @@
 
 | File | Role |
 |------|------|
-| `internal/runtime/runtime.go:40-57` | Handler interface definition |
+| `internal/runtime/runtime.go:37-63` | Handler interface definition, AgentActivity, AgentActivityHandler, StreamPhaseHandler |
 | `internal/runtime/runtime.go` | Agent struct — calls Handler methods during RunTurn |
 | `internal/console/console.go` | Console — primary Handler implementation |
 | `internal/telegram/handler.go` | Telegram bridge — secondary Handler implementation |
@@ -20,9 +20,35 @@ type Handler interface {
     OnContent(delta string)
     OnToolCall(name string, args string)
     OnToolResult(name string, result string)
-    OnUsage(promptTokens int)
-    OnReasoning(delta string)
+    OnUsage(promptTokens, cachedTokens, uncachedTokens int)
+    OnSystem(message string)
+    OnMaintenanceCall(name string, args string)
+    OnMaintenanceResult(name string, result string)
     RequestSudoApproval(command string) (approved bool, password string)
+}
+```
+
+### Optional Extensions
+
+```go
+// StreamPhaseHandler is an optional transport extension for richer provider wait-state updates.
+type StreamPhaseHandler interface {
+    OnStreamPhase(phase provider.StreamPhase)
+}
+
+// AgentActivity describes one ephemeral child-agent lifecycle event.
+type AgentActivity struct {
+    Agent            string
+    Kind             string   // "started", "completed", "failed", "timed out", "cancelled", "tool_call", "tool_result", "system"
+    Tool             string
+    Status           string   // "running", "ok", "error", "info"
+    Text             string
+    LastPromptTokens int
+}
+
+// AgentActivityHandler is an optional transport extension for child activity.
+type AgentActivityHandler interface {
+    OnAgentActivity(activity AgentActivity)
 }
 ```
 
@@ -30,11 +56,12 @@ type Handler interface {
 
 ```
 Agent.RunTurn()
+  ├─ Append user message to session
   ├─ Build prompt
   ├─ Provider.Stream(...)
-  │    ├─ OnReasoning (0+ streaming chunks) — reasoning/thinking tokens
+  │    ├─ OnSystem (streaming phase updates) — optional via StreamPhaseHandler
   │    └─ OnContent (0+ streaming chunks) — final text content
-  ├─ OnUsage(promptTokens) — token usage from response
+  ├─ OnUsage(promptTokens, cachedTokens, uncachedTokens) — token usage from response
   │
   ├─ For each tool call in response:
   │    ├─ OnToolCall(name, formattedArgs) — notify about to execute
@@ -44,19 +71,11 @@ Agent.RunTurn()
   └─ (continue until no tool calls → end of turn)
 ```
 
-### Reasoning and Content
+### Content Streaming
 
-These are streaming callbacks fired during `Provider.Stream()`:
-
-- `OnReasoning(delta)` — called for each chunk of reasoning/thinking. May be
-  empty if the model doesn't produce reasoning or if streaming hasn't started.
-  Called BEFORE `OnContent` for the same response.
-
-- `OnContent(delta)` — called for each chunk of visible text content. Called
-  AFTER all reasoning chunks for the response.
-
-Both are called with partial deltas. The transport is responsible for assembling
-them if needed (console streams directly to terminal).
+`OnContent(delta)` is called for each chunk of visible text content during
+`Provider.Stream()`. The transport is responsible for assembling streaming
+chunks (console streams directly to terminal).
 
 ### Tool Lifecycle
 
@@ -79,10 +98,28 @@ back to the LLM for the next turn.
 
 ### Usage Reporting
 
-`OnUsage(promptTokens)` is called once after each LLM response with the
-provider-reported prompt token count. The transport uses this for:
+`OnUsage(promptTokens, cachedTokens, uncachedTokens)` is called once after each
+LLM response with the provider-reported token counts. Three parameters:
+- `promptTokens` — total input tokens
+- `cachedTokens` — tokens served from prompt cache
+- `uncachedTokens` — tokens not cached (promptTokens - cachedTokens)
+
+The transport uses this for:
 - Console: displays CTX in response separator and after tool results
 - Telegram: currently unused (passed to transport for future display)
+
+### System Notifications
+
+`OnSystem(message)` is called when the runtime needs to display a system-level
+notification. Used for streaming phase transitions and status updates that are
+not part of the LLM content stream.
+
+### Maintenance Operations
+
+`OnMaintenanceCall(name, args)` and `OnMaintenanceResult(name, result)` are
+user-visible internal operations rendered like tool calls. They represent
+background work (e.g., OAuth token refresh) that the user should see as activity
+but that are not LLM-initiated tool calls.
 
 ### Sudo Approval
 
@@ -105,12 +142,15 @@ never stored in session JSON or prompt text.
 File: `internal/console/console.go`
 
 Console is the primary transport. It renders:
-- `OnReasoning` → captured internally for session/provider compatibility; not displayed to user
 - `OnContent` → `[BLAZE]` label, streaming text
 - `OnToolCall` → emoji + purpose on its own line (e.g., `💻 Search files...`)
 - `OnToolResult` → status badge + CTX on same line (` ✔️ CTX: 45K`)
 - `OnUsage` → stored for CTX display
+- `OnSystem` → phase indicator during provider connect/wait
+- `OnMaintenanceCall` → displayed like a tool call with wrench emoji
+- `OnMaintenanceResult` → completion badge
 - `RequestSudoApproval` → prompt user in terminal with hidden input
+- `OnAgentActivity` → child agent activity display (implements AgentActivityHandler)
 
 See 13-console-ui.md for full rendering details.
 
@@ -122,18 +162,21 @@ Telegram bridge is a secondary transport. It renders:
 - `OnContent` → streams as Telegram message edits (single message per turn)
 - `OnToolCall` → appends inline to the message
 - `OnToolResult` → status badge inline
-- `OnReasoning` → skipped (not shown in Telegram)
 - `OnUsage` → currently no-op
-- `RequestSudoApproval` → prompts user via Telegram button UI
+- `OnSystem` → currently no-op
+- `OnMaintenanceCall`/`OnMaintenanceResult` → currently no-op
+- `RequestSudoApproval` → always returns false (no sudo over chat)
 
 ## Design Rationale
 
 - **Single interface** — both transports implement the same Handler, no transport
   awareness in the runtime
-- **Streaming-first** — OnContent and OnReasoning are streaming for immediate
-  user feedback; transports can still buffer if needed
+- **Streaming-first** — OnContent is streaming for immediate user feedback;
+  transports can still buffer if needed
 - **Sequential tool calls** — not streamed, each tool is a discrete event with
   a clear start (OnToolCall) and end (OnToolResult)
 - **Sudo in handler** — password input is inherently transport-specific (terminal
   vs Telegram button); runtime just delegates
 - **No transport branching in runtime** — Handler abstracts all UI concerns
+- **Optional interfaces** — StreamPhaseHandler and AgentActivityHandler are
+  checked via type assertion, keeping the core Handler minimal

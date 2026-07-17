@@ -51,7 +51,7 @@
 - Session JSON is the source of truth for message history and is written exactly as sent to the LLM.
 - `closed_cleanly` is set only on `/exit`.
 - Summary files live under `summaries/` inside each session folder.
-- The transport boundary is `runtime.Handler` with `OnContent`, `OnToolCall`, `OnToolResult`, `OnUsage`, `OnReasoning`, and `RequestSudoApproval`.
+- The transport boundary is `runtime.Handler` with `OnContent`, `OnToolCall`, `OnToolResult`, `OnUsage`, `OnSystem`, `OnMaintenanceCall`, `OnMaintenanceResult`, and `RequestSudoApproval`. Optional extensions: `StreamPhaseHandler`, `AgentActivityHandler`.
 - Tool calls follow the OpenAI-compatible tool-calling format with multi-call support and per-call timeouts.
 - Markdown agents use `---` front matter with `name`, required `description`, `kind`, optional `model`, and explicit `tools`; the Markdown body is the behavioral prompt. One-shot children complete only through `agent_done`, persist under the main session, and store the current task in `agent_task.md` for system-prompt injection.
 - The runtime prompt contains a separate `AGENTS` section with descriptions and run/completion instructions for agents discovered from `app_home/agents/`; work modes remain defined only by `config/modes.json`.
@@ -84,11 +84,12 @@
 - `internal/config/` - Loads and validates runtime config and work modes, including providers, roles, compaction settings, and first-run conditions. Keywords: config, validation, modes, roles, providers, compaction, first-run
 - `internal/session/` - File-based session persistence under project-scoped session folders. Keywords: sessions, JSON, persistence, resume, clean-close
 - `internal/compaction/` - Context compaction, pruning, summary file management, and reasoning stripping. Keywords: compaction, summaries, pruning, reasoning, token budget
-- `internal/tools/` - Native tools: shell, skill tools, ask_a_friend, analyze_image, replace_block, task tools, run_agent, agent_done, and filtered registries. Keywords: tools, shell, editing, image, delegation, agents, timeout
+- `internal/tools/` - Native tools: shell, skill tools, ask_a_friend, analyze_image, replace_block, task tools, read_file, write_file, run_agent, agent_done, and filtered registries. Keywords: tools, shell, editing, image, file-operations, delegation, agents, timeout
 - `internal/skills/` - Skill discovery, parsing, validation, scoping, and active list management. Keywords: skills, discovery, parsing, scopes, active-list
 - `internal/platform/` - OS detection, shell selection, app home bootstrap (including `agents/`), and project directory resolution. Keywords: platform, OS, app-home, agents, shell, paths, bootstrap
 - `internal/provider/` - OpenAI-compatible HTTP client, streaming response parsing, tool-call decoding, and usage reporting. Keywords: provider, HTTP, SSE, OpenAI-compatible, usage, tool-calls
 - `internal/llmcall/` - One-shot secondary LLM calls routed by role. Keywords: delegation, advisor, summarization, secondary-call
+- `internal/usage/` - Provider-agnostic token usage extraction and normalization from raw SSE events. Keywords: usage, tokens, cache, normalization, provider-compat
 - `prompts/` - Embedded universal, OS, and transport prompt templates. Keywords: prompts, sysprompt, transport, embedded, runtime
 - `skills/` - Builtin skill definitions seeded into app home on startup. Keywords: builtin-skills, seed, prompt-content
 - `specs/` - Specification fragments that describe the rebuilt product scope and runtime behavior. Keywords: specs, requirements, runtime, architecture

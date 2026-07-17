@@ -124,6 +124,9 @@ template-specific extras.
 | `{HOST_HELPERS_OPTIONAL}` | missing helpers (undismissed) | empty string |
 | `{SKILLS_AVAILABLE}` | all discovered skill descriptions | empty string (allows empty) |
 | `{SKILLS_ACTIVE}` | loaded skills [BEHAVIOR]/[DATA] | empty string (allows empty) |
+| `{AGENTS_AVAILABLE}` | discovered agent definitions (runtime prompt) or empty (agent prompt) | empty string (allows empty) |
+| `{AGENT_INSTRUCTIONS}` | agent's Markdown body instructions (for child agents only) | empty string (allows empty) |
+| `{AGENT_TASK}` | agent_task.md content (for resumed child agents only) | empty string (allows empty) |
 | `{PROJECT_CONTENT}` | specs.md content | empty string |
 | `{AGENTS_CONTENT}` | AGENTS.md content with variable injection | empty string |
 
@@ -158,9 +161,7 @@ Builder.Build(session, activeSkills)
   ├─ Builder.BuildRuntimePart(activeSkills)
   │    ├─ 1. readFileRequiredFS("sysprompt.md") → universal
   │    ├─ 2. readFileRequiredFS("sysprompt.{os}.md") → osPrompt
-  │    │    └─ injectVariables(osPrompt)
-  │    ├─ 3. readFileRequiredFS("transport.{name}.md") → transportPrompt
-  │    │    └─ injectVariables(transportPrompt)
+  │    ├─ 3. readFileRequiredFS("transport.{name}.md") → transportPrompt (main runtime only)
   │    ├─ 4. buildHostHelpersAdvisory()
   │    ├─ 5. helpers.Detect(lookup) → statuses
   │    │    └─ buildHostHelpersSection(statuses)
@@ -168,16 +169,23 @@ Builder.Build(session, activeSkills)
   │    │    ├─ skills.DiscoverAll(workDir) → all skills
   │    │    ├─ Format available skills list
   │    │    └─ Format active skills content
-   │    ├─ 7. readFileOptional("specs.md")
-  │    ├─ 8. readFileOptional("AGENTS.md")
-  │    │    └─ injectVariables(agents)
-  │    └─ 9. injectTemplateVariables(universal, {
-  │            OS_PROMPT, TRANSPORT_PROMPT, HOST_HELPERS_ADVISORY, HOST_HELPERS_AVAILABLE,
-  │            HOST_HELPERS_OPTIONAL, SKILLS_AVAILABLE,
-   │            SKILLS_ACTIVE, PROJECT_CONTENT, AGENTS_CONTENT
-  │         })
+  │    ├─ 7. buildAgentsSection() → AGENTS_AVAILABLE (from Builder.Agents, mode-filtered)
+  │    ├─ 8. readFileOptional("specs.md") → PROJECT_CONTENT
+  │    ├─ 9. readFileOptional("AGENTS.md") → AGENTS_CONTENT (with variable injection)
+  │    ├─ 10. Read AgentTaskFile (for resumed child agents)
+  │    ├─ 11. Inject all template values into osPrompt → templateValues.OS_PROMPT
+  │    ├─ 12. Inject all template values into transportPrompt → templateValues.TRANSPORT_PROMPT
+  │    └─ 13. injectTemplateVariables(universal, templateValues) → final runtime part
   └─ return []Message{system(runtimePart)} + session.Messages
 ```
+
+### Agent Prompt Differences
+
+When `SystemPromptName == "sysprompt.agent.md"` (child agent runtime):
+- Transport prompt is skipped entirely (no `transport.{name}.md`)
+- `AgentInstructions` is injected as `{AGENT_INSTRUCTIONS}` from the definition body
+- `AgentTaskFile` content is injected as `{AGENT_TASK}` from `agent_task.md`
+- `AGENTS_AVAILABLE` comes from `Builder.Agents` (mode-filtered for main, nil for children)
 
 ## Debug Artifact
 

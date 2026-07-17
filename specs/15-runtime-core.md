@@ -5,6 +5,8 @@
 | File | Role |
 |------|------|
 | `internal/runtime/runtime.go` | Handler interface, Agent struct, NewAgent, RunTurn, SetModel, SetModelLocal, SetWorkDir, CloseSession, ResetConversation, SetMode, NextMode |
+| `internal/runtime/agent_orchestration.go` | One-shot child-agent execution, persistent sessions, dual timeout |
+| `internal/runtime/mode_capabilities.go` | Mode tool deny-list and sub-agent allow-list enforcement |
 
 ## Overview
 
@@ -17,46 +19,60 @@ and transports.
 
 ```go
 type Agent struct {
-    Config    *config.Config
-    Modes     *config.ModesConfig
-    Session   *session.Session
-    Active    *skills.ActiveList
-    Builder   *prompt.Builder
-    Tools     *tools.Registry
-    Provider  *provider.Client
-    Handler   Handler
-    Compactor *compaction.Manager
+    Config      *config.Config
+    Modes       *config.ModesConfig
+    Definitions []agents.Definition
+    Session     *session.Session
+    Active      *skills.ActiveList
+    Builder     *prompt.Builder
+    Tools       *tools.Registry    // filtered by mode policy
+    BaseTools   *tools.Registry    // complete unfiltered registry
+    Provider    *provider.Client
+    Handler     Handler
+    Compactor   *compaction.Manager
 
     ModelID     string
     CurrentMode *config.Mode
     WorkDir     string
     OS          platform.OS
+
+    // Completion is set only by the internal agent_done tool in one-shot children.
+    Completion string
 }
 ```
 
 All fields are public for direct access from callers. No getter/setter
 indirection.
 
+### Key Fields
+
+- `Tools` — the active tool registry, filtered by mode `denied_tools`. This is
+  what `RunTurn` and the LLM see.
+- `BaseTools` — the complete unfiltered registry. Used to build child agent
+  tool sets and to re-apply mode capabilities.
+- `Definitions` — all loaded Markdown agent definitions from `app_home/agents/`.
+- `Completion` — set by `agent_done` tool in one-shot children only. Empty
+  string in main runtime.
+
 ## RunTurn (The Main Loop)
 
 ```
 RunTurn(ctx, userInput)
   ├─ Guard: nil Handler → error
-  ├─ sanitizeSession() → drop invalid tool rounds
   ├─ Append user message to session
   │
   └─ for {  (tool call loop)
        │
-       ├─ sanitizeSession()
+       ├─ sanitizeSession() → drop invalid tool rounds
        ├─ Builder.Build(session, active)    → full prompt from disk + history
        ├─ Compactor.StripReasoningFromPayload(messages)  → keep newest N reasoning
-        ├─ Write prompt.json debug file when config.debugPrompt is true
+       ├─ Write prompt.json debug file when config.debugPrompt is true
        ├─ injectDirective(messages, mode.Directive)  → volatile mode injection
        │
-        ├─ Provider.Stream(ctx, messages, tools, onContent, onReasoning)
-        │    └─ onReasoning captures reasoning/thinking chunks for session persistence
+       ├─ Provider.Stream(ctx, messages, tools, onContent, onReasoning)
+       │    └─ onReasoning captures reasoning/thinking chunks for session persistence
        │
-       ├─ OnUsage(promptTokens)         → report token usage to transport
+       ├─ OnUsage(promptTokens, cachedTokens, uncachedTokens)  → report token usage
        ├─ Build assistant message + persist
        │
        ├─ If aborted → appendAbortedToolResults + appendAbortMarker → return ErrTurnAborted
@@ -139,9 +155,8 @@ sanitizeSession()
   └─ Session.Save()          → persist cleaned session
 ```
 
-Called twice per turn iteration: once at the start of RunTurn and once at the
-top of each tool loop iteration. Ensures the session is always valid before
-sending to the LLM.
+Called once per turn iteration at the top of each tool loop iteration. Ensures
+the session is always valid before sending to the LLM.
 
 ## Mode Injection
 
@@ -194,6 +209,7 @@ func (a *Agent) SetMode(name string) error
 2. Applies the mode's model
 3. Sets `CurrentMode`, updates `Modes.LastMode`
 4. Persists `modes.json`
+5. Calls `refreshModeCapabilities()` to apply deny-list and agent allow-list
 
 ## Work Directory
 
@@ -236,9 +252,9 @@ Does not call the provider endpoint — only config-level validation.
 ## Startup Wiring (NewAgent)
 
 ```
-NewAgent(cfg, sess, os, promptsFS, workDir, handler)
+NewAgent(cfg, sess, os, promptsFS, workDir, handler, transportName)
   ├─ config.MigrateFromConfig()     → migrate modes from config.json if present
-  ├─ config.LoadModes(modelID)      → load modes.json with fallback
+  ├─ config.LoadModes(modelID)      → load modes with fallback
   ├─ Auto-create default mode if empty
   ├─ Resolve active mode: lastMode > firstMode
   ├─ provider.NewClient(cfg, modelID)  → primary LLM client
@@ -254,5 +270,17 @@ NewAgent(cfg, sess, os, promptsFS, workDir, handler)
   │    ├─ replace_block, task_write, task_read
   │    ├─ read_file, write_file
   │    ├─ run_agent (added only when valid one-shot agent definitions exist)
+  │    └─ Clone → BaseTools (unfiltered copy)
+  ├─ agents.Load(appHome/agents, registry)  → agent definitions
+  ├─ refreshModeCapabilities()      → filter Tools by denied_tools, filter Definitions by agents
   └─ Return agent
+```
+
+### Child Agent Construction
+
+```
+newChildAgent(cfg, sess, os, promptsFS, workDir, handler, transportName, modelID)
+  ├─ Reuses newAgent() with nil modes and nil currentMode
+  ├─ No mode policy applied (child has own explicit tool allowlist)
+  └─ Returns agent ready for one-shot execution
 ```

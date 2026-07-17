@@ -182,7 +182,9 @@ Distinct from live detection: this stores UX preferences only. Actual binary pre
     {
       "name": "planning",
       "model": "openai/o3",
-      "directive": "Think step by step before executing."
+      "directive": "Think step by step before executing.",
+      "denied_tools": ["shell", "replace_block", "write_file"],
+      "agents": ["coder", "worker"]
     }
   ],
   "last_mode": "default"
@@ -198,9 +200,11 @@ type ModesConfig struct {
 }
 
 type Mode struct {
-    Name      string `json:"name"`              // unique mode identifier
-    Model     string `json:"model"`             // provider/model_name
-    Directive string `json:"directive,omitempty"` // injected into last LLM message (volatile)
+    Name        string   `json:"name"`                  // unique mode identifier
+    Model       string   `json:"model"`                 // provider/model_name
+    Directive   string   `json:"directive,omitempty"`   // injected into last LLM message (volatile)
+    DeniedTools []string `json:"denied_tools,omitempty"` // tools unavailable to main runtime
+    Agents      []string `json:"agents,omitempty"`       // one-shot agents the runtime may call
 }
 ```
 
@@ -215,6 +219,8 @@ Basic (structural, no provider data needed):
 Full (with provider data from config):
 - All mode models reference existing providers
 - `last_mode` references an existing mode name
+- `denied_tools` references only known tool names (validated at runtime by `mode_capabilities.go`)
+- `agents` references only known one-shot agent definitions (validated at runtime by `mode_capabilities.go`)
 
 ### Save Behavior
 

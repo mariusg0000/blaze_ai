@@ -3,7 +3,6 @@
 **Source files:**
 - `main.go` — entry point, CLI flags, startup sequence
 - `firstrun.go` — interactive first-run setup
-- `modes.go` — mode initialization and Tab cycling
 - `embed.go` — embedded filesystem declarations
 - `internal/platform/platform.go` — app home, OS detection, shell selection
 - `internal/config/config.go` — config schema, validation, first-run detection
@@ -44,7 +43,7 @@ Git workflows.
   streaming output, visual separators between turns
 - Console is TTY-only — no pipe or non-TTY support
 - All transports implement the same `runtime.Handler` contract
-- Console slash commands: `/exit`, `/model`, `/cd`. Unknown `/...` passed to LLM as user message
+- Console slash commands: `/auth`, `/model`, `/cd`, `/clear`, `/new`, `/exit`. Unknown `/...` passed to LLM as user message
 - Tab cycles through work modes (defined in `modes.json`)
 
 ## Execution Model
@@ -52,14 +51,15 @@ Git workflows.
 - **Primary tool**: `shell` — executes commands via the host platform shell
 - **Inline shell** for simple tasks, OS-native scripts for complex tasks
 - **Platform shells**:
-  - Linux: `bash`
-  - macOS: `bash` (zsh optional, not required)
+  - Linux: `bash` → `sh`
+  - macOS: `bash` → `sh`
   - Windows: `pwsh` → `powershell.exe` → `cmd.exe` (priority order)
 - **Python**: last resort only, in a lazily-created venv under `app_home/scripts/venv/`
 - **Host helpers** (rg, fd, jq, git, xh, pandoc, sqlite3): detected at startup,
   listed in prompt so the LLM knows they are available without checking
-- **Native tools**: 10 base native tools plus conditional run_agent (shell, load_skill, unload_skill,
-  replace_block, ask_a_friend, analyze_image, task_read, task_write, read_file, write_file, and conditional run_agent)
+- **Native tools**: 12 base native tools plus conditional run_agent (shell, load_skill,
+  unload_skill, replace_block, ask_a_friend, analyze_image, task_read, task_write,
+  read_file, write_file) and conditional run_agent
 - OpenAI-compatible tool calling with multi-tool-call per turn
 - Default tool timeout: 60s. Timeout returns `"timeout <N>s exceeded"`
 - Shell output capped at 150kB (combined stdout + stderr)
@@ -84,14 +84,17 @@ auto-provisioning beyond the explicit first-run setup flow.
 
 ## Architecture Overview
 
-- **Single binary** built with `CGO_ENABLED=0`, Go 1.21+ minimum
+- **Single binary** built with `CGO_ENABLED=0`, Go 1.25.0+ minimum
 - **Flat Go layout**: no `cmd/` tree, transports under `internal/`
 - **Layer stack**:
   - Application entry: `main.go` — flag parsing, wiring, transport startup
-  - Agent core: `internal/runtime/` — RunTurn, tool loop, prompt builder, compactor
+  - Agent core: `internal/runtime/` — RunTurn, tool loop, prompt builder, compactor, orchestration
   - Transports: `internal/console/`, `internal/telegram/` — implement Handler
-  - Tools: `internal/tools/` — 10 base native tool implementations plus conditional run_agent
-  - LLM client: `internal/llmcall/` — OpenAI-compatible chat completions
+  - Tools: `internal/tools/` — 12 base native tool implementations plus conditional run_agent
+  - Agent definitions: `internal/agents/` — Markdown agent discovery, parsing, validation
+  - LLM client: `internal/provider/` — OpenAI-compatible streaming HTTP client
+  - Secondary calls: `internal/llmcall/` — one-shot role-based LLM consultation
+  - Usage normalization: `internal/usage/` — provider-agnostic token usage extraction
   - Session persistence: `internal/session/` — file-based, no database
   - Skills: `internal/skills/` — parsing, discovery, active list
   - Config: `internal/config/` — load/save/validate
@@ -108,10 +111,10 @@ missing. Standard subfolders:
 | `scripts/` | Script storage |
 | `scripts/venv/` | Python virtual environment (lazy-created) |
 | `backups/` | LLM-initiated backups |
-| `projects/` | Per-project data (sessions, skills, config) |
+| `projects/` | Per-project data (sessions, skills) |
 | `config/` | `config.json`, `modes.json` |
 | `telegram/` | Telegram bridge instance configs |
-| `sessions/` | Session storage |
+| `agents/` | Markdown agent definitions (one-shot sub-agents) |
 
 `{APP_HOME}` is injected into prompts and skill templates at build time.
 
@@ -120,17 +123,18 @@ missing. Standard subfolders:
 - Single source of truth: `app_home/config/config.json`
 - Separate file for work modes: `app_home/config/modes.json`
 - API keys stored in `config.json` (NOT in `.env` or environment variables)
-- Provider schema: `name`, `endpoint`, `api_key`
+- Provider schema: `name`, `endpoint`, `api_key` (or `auth_type: "oauth"` with OAuth credential)
 - Model format: `provider/model_name`
 - Four model roles: `default` (required), `vision`, `summarization`, `advisor` (optional)
+- Work modes: `name`, `model`, `directive`, `denied_tools`, `agents`
 - Last selected model persists per session transport
 - First-run: interactive setup with provider list → API key → model selection → role assignment
 
 ## Sessions
 
-- File-based storage in `app_home/sessions/` (or `app_home/projects/<hash>/sessions/`)
+- File-based storage in `app_home/projects/<project>/sessions/`
 - No database. Plain JSON files.
-- New session by default; `-c` continues last cleanly closed session
+- New session by default; `-c` continues last cleanly closed session; `-r` resumes last session
 - `session.json` contains full message array exactly as sent to LLM
 - Sessions persist indefinitely on disk (no automatic cleanup)
 - Active skills list NOT persisted in session
@@ -139,11 +143,20 @@ missing. Standard subfolders:
 
 - Markdown files with `[DESCRIPTION]` (required) and at least one of `[BEHAVIOR]`
   or `[DATA]`
-- Three scopes: builtin (embedded), global (`app_home/skills/`), project (`.blazeai/skills/`)
+- Three scopes: builtin (embedded), global (`app_home/skills/`), project (project `skills/`)
 - All scopes read every prompt build
 - Collision: project wins over global, global wins over builtin
 - Active skills: in-memory list, starts empty, not persisted, tool-only modification
 - No separate memory subsystem — skills `[DATA]` sections replace it
+
+## Agent Definitions
+
+- Markdown files with `---` front matter in `app_home/agents/`
+- Required fields: `name`, `description`, `kind: "one-shot"`, `tools` (explicit allowlist)
+- Optional fields: `model`, `timeout`
+- The Markdown body is the behavioral prompt injected as `sysprompt.agent.md`
+- One-shot children: ephemeral child sessions with bounded execution, `agent_done` protocol
+- Child sessions persist under the main session folder in `agents/<id>/`
 
 ## Safety
 
@@ -151,6 +164,7 @@ missing. Standard subfolders:
 - Password entry: interactive terminal only, never in chat or session
 - Secrets never in session JSON or prompt text
 - No built-in command whitelist/blacklist in shell tool
+- Telegram transport: sudo always denied (no password channel)
 
 ## Release Targets
 
@@ -180,13 +194,21 @@ Conservative Linux targets — minimal libc dependency, validate on older system
 This file defines product identity, user model, interaction model, execution
 philosophy, and top-level constraints. Detailed mechanics for each subsystem
 belong in their respective spec files:
-- Runtime mechanics → `14-runtime-core.md`
+- Runtime mechanics → `15-runtime-core.md`
+- Handler contract → `12-handler-contract.md`
+- Agent orchestration → `20-agent-orchestration.md`
+- Mode capabilities → `21-mode-capabilities.md`
 - Tool specifics → `05-tools.md`, `06-shell-execution.md`, `07-file-editing.md`,
   `08-cross-model-delegation.md`
 - Skill system → `09-skill-system.md`
-- Console transport → `12-console-ui.md`
-- Telegram transport → `13-telegram-bridge.md`
+- Console transport → `13-console-ui.md`
+- Telegram transport → `14-telegram-bridge.md`
 - Platform-specific rules → `17-platform.md`
 - Safety and secrets → `18-safety.md`
 - Build and deploy → `19-build-deploy.md`
 - Configuration schema → `03-config-schema.md`
+- Prompts → `04-prompts.md`
+- Sessions → `10-sessions.md`
+- Context compaction → `11-context-compaction.md`
+- First-run setup → `16-first-run.md`
+- Usage normalization → `22-usage-normalization.md`

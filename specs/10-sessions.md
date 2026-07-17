@@ -4,7 +4,8 @@
 
 | File | Role |
 |------|------|
-| `internal/session/session.go` | Message/Session types, Create, Load, Save, Append, AppendAll, Close, Reset, Sanitize, LastClean, Last |
+| `internal/session/session.go` | Message/Session types, Create, Load, Save, Append, AppendAll, AppendReadFileResult, Close, Reset, Sanitize, LastClean, Last |
+| `internal/session/usage.go` | RecordUsage, UsageReport, UsageSnapshot, CacheKeyForSession — private token analytics |
 | `internal/session/session_test.go` | Unit tests |
 | `internal/session/doc.go` | Package docs |
 
@@ -20,14 +21,23 @@ Session folders persist indefinitely. No automatic cleanup.
 
 ```go
 type Message struct {
-    Role       string      `json:"role"`                 // system, user, assistant, tool
-    Content    interface{} `json:"content,omitempty"`     // message text or tool result
-    Reasoning  string      `json:"reasoning,omitempty"`   // kept intact on disk
-    ToolCalls  interface{} `json:"tool_calls,omitempty"`  // assistant tool call array
-    ToolCallID string      `json:"tool_call_id,omitempty"`// tool result reference
-    Name       string      `json:"name,omitempty"`         // tool name for results
+    Role               string      `json:"role"`                    // system, user, assistant, tool
+    Content            interface{} `json:"content,omitempty"`        // message text or tool result
+    Reasoning          string      `json:"reasoning_content,omitempty"` // reasoning text (kept intact on disk)
+    ReasoningPresent   bool        `json:"-"`                        // forces reasoning_content to remain even when empty
+    ReasoningEncrypted string      `json:"-"`                        // encrypted reasoning continuation data
+    ToolCalls          interface{} `json:"tool_calls,omitempty"`     // assistant tool call array
+    ToolCallID         string      `json:"tool_call_id,omitempty"`  // tool result reference
+    Name               string      `json:"name,omitempty"`           // tool name for results
 }
 ```
+
+Follows the OpenAI chat message format exactly as sent/received. Reasoning
+parts are stored intact on disk and stripped only from the LLM payload.
+`ReasoningPresent` preserves the `reasoning_content` field as an empty string
+when the reasoning was stripped from the payload. `ReasoningEncrypted` stores
+Responses API encrypted reasoning data for providers that require it when
+continuing a tool loop.
 
 Follows the OpenAI chat message format exactly as sent/received. Reasoning
 parts are stored intact on disk and stripped only from the LLM payload.
@@ -133,6 +143,21 @@ Session.Append(msg) or Session.AppendAll(msgs)
 Saves to disk on every mutation. Each message or batch of messages triggers an
 atomic write of the full `session.json`.
 
+### AppendReadFileResult (file-aware append)
+
+```
+Session.AppendReadFileResult(msg)
+  ├─ Append msg to Messages
+  ├─ Extract file path from msg.Content envelope
+  ├─ Scan all earlier tool messages for read_file results with the same path
+  ├─ Clear content of older same-path results (empty string)
+  └─ save() → atomic write
+```
+
+This deduplicates read_file results: only the most recent read of any given
+file retains its full content in the session. Older results for the same path
+are cleared to save context space while preserving the tool_call_id reference.
+
 ## Saving
 
 ```go
@@ -203,6 +228,52 @@ The removed slice includes orphan tools, truncation tails.
 - **Summarization state** — no `summarizedIDs` or separate state file. Session
   JSON is the source of truth. Summaries are loaded from `summaries/` folder
   and injected as synthetic messages.
+
+## Token Usage Analytics
+
+Each session maintains a private `token-usage.json` file alongside `session.json`.
+This is aggregate provider usage data for personal inspection, NOT used by the
+runtime for any decision-making.
+
+### UsageReport
+
+```go
+type UsageReport struct {
+    SessionFolder string                   `json:"session_folder"`
+    UpdatedAt     time.Time                `json:"updated_at"`
+    Models        map[string]UsageSnapshot `json:"models"`
+}
+```
+
+### UsageSnapshot
+
+```go
+type UsageSnapshot struct {
+    Requests            int       `json:"requests"`
+    PromptTokens        int       `json:"prompt_tokens"`
+    CompletionTokens    int       `json:"completion_tokens"`
+    TotalTokens         int       `json:"total_tokens"`
+    CachedTokens        int       `json:"cached_tokens"`
+    CacheWriteTokens    int       `json:"cache_write_tokens"`
+    ReasoningTokens     int       `json:"reasoning_tokens"`
+    UncachedInputTokens int       `json:"uncached_input_tokens"`
+    CacheHits           int       `json:"cache_hits"`
+    CacheMisses         int       `json:"cache_misses"`
+    UnknownCacheStatus  int       `json:"unknown_cache_status"`
+    LastUpdated         time.Time `json:"last_updated"`
+}
+```
+
+### RecordUsage
+
+Called by the runtime after each LLM response with provider usage data.
+Aggregates token counters per model. Uses atomic rename for safe concurrent writes.
+
+### CacheKeyForSession
+
+Returns a stable, non-sensitive SHA-256 hash of the session folder path.
+Used as the prompt cache identity for provider requests so the provider never
+sees local filesystem details.
 
 ## Startup Flags
 

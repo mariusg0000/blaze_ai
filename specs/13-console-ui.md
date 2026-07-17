@@ -21,27 +21,46 @@ loaded through `Builder.TransportName = "console"`.
 
 ```go
 type Console struct {
-    // Handler methods carry state between calls in one turn:
-    contentStarted  bool
-    reasoningStarted bool
-    atLineStart     bool   // tracks whether cursor is at line start for newline insertion
-    contentBuffer   string // buffered streaming content pending newline
-    lastPromptTokens int   // from OnUsage, for CTX display
+    Out    io.Writer
+    In     io.Reader
+    Agent  *runtime.Agent
+    Reader *Reader
+    rl     *readline.Shell  // readline instance for hint status bar updates
 
-    // UI elements
-    writer      io.Writer
-    reader      *Reader
-    promptLabel string   // e.g. "[USER/(provider/model)]"
+    outMu sync.Mutex
 
-    // Callbacks
-    onCommand   func(cmd string, args []string) bool
-    onAbort     func()
-    onUserInput func(text string)
-
-    // State
-    running bool
+    contentStarted           bool
+    assistantContentRendered bool
+    contentBuffer            string
+    inCodeBlock              bool
+    lastPromptTokens         int    // from OnUsage, for CTX display
+    lastCachedTokens         int
+    lastUncachedInputTokens  int
+    lineOpen                 bool
+    toolsStarted             bool
+    turnAborting             atomic.Bool
+    lastToolArgs             string
+    agentToolAgent           string
+    spinnerActive            bool
+    spinnerVisible           bool
+    spinnerFrame             int
+    spinnerWidth             int
+    spinnerInterval          time.Duration
+    spinnerLabel             string
+    spinnerStop              chan struct{}
+    spinnerDone              chan struct{}
+    turnStatusBarVisible     bool
+    statusPhase              string
+    statusTool               string
+    statusDeadline           time.Time
+    switchLineActive bool // true when a mode/model status line can be overwritten
+    switchLineWidth  int  // visible width of the current status line
 }
 ```
+
+The struct carries state between handler callbacks within a single turn. State is
+reset at the start of each turn. The spinner system provides animated status
+during provider wait states without blocking output.
 
 The struct carries state between handler callbacks within a single turn. State is
 reset at the start of each turn.
@@ -50,17 +69,16 @@ reset at the start of each turn.
 
 | Constant | Code | Usage |
 |----------|------|-------|
-| `colorBrightBlue` | `\033[0;94m` | Bracket/box borders, border chars in response separator |
-| `colorBrightGreen` | `\033[0;92m` | Success badges, tool group labels |
-| `colorOrange` | `\033[0;33m` | [BLAZE] label, model name in separator |
-| `colorCtx` | `\033[0;96m` | CTX token count (bright cyan) |
-| `colorPurple` | `\033[0;95m` | User input prefix, status labels |
-| `colorRed` | `\033[0;91m` | Error messages |
-| `colorYellow` | `\033[0;93m` | System messages |
-| `colorDim` | `\033[2m` | Muted/less important text |
-| `colorOrangeGreen` | `\033[38;5;208m` | Reasoning header |
-| `colorOlive` | `\033[0;93m` | Fallback/highlight |
-| `colorOff` | `\033[0m` | Reset |
+| `colorBold` | `\033[1m` | Bold text |
+| `colorItalic` | `\033[3m` | Italic text |
+| `colorRed` | `\033[1;31m` | Error messages (bold) |
+| `colorGreen` / `colorBrightGreen` | `\033[1;32m` | Success badges, tool group labels (bold) |
+| `colorLightGray` | `\033[37m` | Subtle separators |
+| `colorBlue` / `colorBrightBlue` | `\033[1;34m` | Bracket/box borders (bold) |
+| `colorPurple` | `\033[1;35m` | User input prefix, status labels (bold) |
+| `colorOrange` | `\033[1;33m` | [BLAZE] label, model name (bold yellow) |
+| `colorCtx` | `\033[1;96m` | CTX token count (bright cyan, bold) |
+| `colorReset` | `\033[0m` | Reset all formatting |
 
 ## Turn Sequence (Visual Output)
 

@@ -203,11 +203,13 @@ content is being streamed. The initial onTurnStart typing is sent immediately.
 | Handler Method | Telegram Behavior |
 |----------------|-------------------|
 | `OnContent(delta)` | Append to content buffer (flushed periodically) |
-| `OnReasoning(delta)` | No-op (not shown in Telegram) |
 | `OnToolCall(name, args)` | Append emoji + purpose line to buffer |
 | `OnToolResult(name, result)` | Append status badge line to buffer |
-| `OnUsage(promptTokens)` | Store for potential display |
-| `RequestSudoApproval(command)` | Prompt user via reply (approved boolean) |
+| `OnUsage(promptTokens, cachedTokens, uncachedTokens)` | Store for potential display |
+| `OnSystem(message)` | No-op (not shown in Telegram) |
+| `OnMaintenanceCall(name, args)` | No-op |
+| `OnMaintenanceResult(name, result)` | No-op |
+| `RequestSudoApproval(command)` | Always returns false (no sudo over chat) |
 
 ### Turn End
 

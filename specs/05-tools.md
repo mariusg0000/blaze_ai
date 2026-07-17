@@ -5,13 +5,17 @@
 | File | Contents |
 |------|----------|
 | `internal/tools/tools.go` | Tool interface, Registry, OpenAITool format, ParseToolCallArgs, truncateDisplay |
+| `internal/tools/agent_tools.go` | run_agent, agent_done tool implementations |
 | `internal/tools/analyze_image.go` | analyze_image implementation |
+| `internal/tools/image_input.go` | Shared local image preprocessing for vision calls |
 | `internal/tools/task_tools.go` | task_read, task_write implementations |
+| `internal/tools/read_file.go` | read_file implementation |
+| `internal/tools/write_file.go` | write_file implementation |
+| `internal/tools/helper_exec.go` | Helper binary execution utilities |
 | `internal/tools/tools_test.go` | FormatArgs tests, schema validation |
 
 Individual tool files have their own specs (06–08). This file covers the shared
-tool system: interface, registry, OpenAI format, conventions, and the two simple
-task tools.
+tool system: interface, registry, OpenAI format, conventions, and simple tools.
 
 ## Tool Interface
 
@@ -47,20 +51,22 @@ type Registry struct {
 - `Get(name)` — returns Tool or nil
 - `All()` — returns all registered tools
 - `FormatArgs(name, args)` — delegates to tool's FormatArgs, falls back to raw JSON string
+- `Clone()` — returns a shallow copy of the registry (used for BaseTools)
+- `Filter(names)` — returns a new registry with only the named tools (used for mode policy and child agents)
 
-All 10 base tools are registered at agent construction in `runtime.NewAgent()`; `run_agent` is added only when valid one-shot agent definitions exist:
+All 12 base tools are registered at agent construction in `runtime.NewAgent()`; `run_agent` is added only when valid one-shot agent definitions exist:
 
 ```go
-registry.Register(NewShellTool(os))
+registry.Register(NewShellTool(os, workDirGetter))
 registry.Register(NewLoadSkillTool(active, skillResolver))
 registry.Register(NewUnloadSkillTool(active, skillResolver))
-registry.Register(NewAnalyzeImageTool(oneShotCaller))
-registry.Register(NewAskFriendTool(oneShotCaller))
+registry.Register(NewAnalyzeImageTool(visionCaller))
+registry.Register(NewAskFriendTool(secondaryCaller))
 registry.Register(NewReplaceBlockTool(workDirGetter))
 registry.Register(NewTaskWriteTool(workDirGetter))
 registry.Register(NewTaskReadTool(workDirGetter))
-registry.Register(NewReadFileTool())
-registry.Register(NewWriteFileTool())
+registry.Register(NewReadFileTool(workDirGetter))
+registry.Register(NewWriteFileTool(workDirGetter))
 // run_agent added conditionally when valid agent definitions exist
 ```
 
@@ -93,7 +99,7 @@ API in subsequent turns.
 
 1. LLM returns `tool_calls[]` in assistant message
 2. Runtime extracts each `ToolCall` (ID, name, arguments)
-3. Runtime calls `Handler.OnToolCall(name, purpose)` for transport display
+3. Runtime calls `Handler.OnToolCall(name, formattedArgs)` for transport display
 4. Runtime calls `registry.Get(name).Execute(ctx, args)` with optional timeout
 5. Runtime calls `Handler.OnToolResult(name, result)` for transport display
 6. Result appended to session as `tool`-role message (with `tool_call_id`)
@@ -146,6 +152,7 @@ Each tool has a dedicated emoji for console and Telegram display:
 | `task_write` | `📋` | `📋 purpose …` |
 | `read_file` | `📖` | `📖 purpose …` |
 | `write_file` | `✍️` | `✍️ purpose …` |
+| `run_agent` | `🤖` | `🤖 purpose …` |
 | Unknown | `🔧` | `🔧 name …` (generic fallback) |
 
 Mappings are defined in both `internal/console/console.go` and
@@ -195,13 +202,61 @@ Both tools write/read `{workDir}/tasks.md`. The workDir is resolved at execution
 time from a closure, not captured at construction — so `/cd` changes are reflected
 immediately.
 
+## File Tools
+
+### read_file
+
+- **Description**: `file_path → read file contents`
+- **Parameters**: `{ file_path: string, purpose: string }`
+- **Schema**: `required: ["purpose", "file_path"]`
+- **FormatArgs**: Purpose if present, otherwise `"Reading: <path>"` truncated to 100 chars
+- **Execute**:
+  - Requires `file_path`
+  - Resolves relative paths against `workDir`
+  - Rejects files larger than 300KB (`maxReadFileSize = 300 * 1024`)
+  - Returns `<file_content path>\n<content>\n</file_content>` on success
+  - Returns clear error for missing files, too-large files, and permission errors
+
+### write_file
+
+- **Description**: `file_path + content → write/overwrite file, auto-create parent dirs`
+- **Parameters**: `{ file_path: string, content: string, purpose: string }`
+- **Schema**: `required: ["purpose", "file_path", "content"]`
+- **FormatArgs**: Purpose if present, otherwise `"Writing: <path>"` truncated to 100 chars
+- **Execute**:
+  - Requires `file_path` and `content`
+  - Resolves relative paths against `workDir`
+  - Creates missing parent directories (`os.MkdirAll`)
+  - Returns `"ok wrote <path>"` on success
+
+## Agent Tools
+
+### run_agent
+
+- **Description**: `Run one child agent, or multiple child agents in parallel by supplying tasks in order. Each result includes a child session id that can be passed as id to resume that agent later with a new task.`
+- **Parameters**: `{ purpose: string, agent: string, task: string, context: string, id: string, tasks: [] }`
+- **Schema**: `required: ["purpose"]`; if no `tasks` array, `agent` and `task` are required
+- **FormatArgs**: Purpose if present, otherwise first task truncated to 80 chars
+- **Execute**:
+  - Supports single task or ordered parallel tasks via `tasks` array
+  - Validates that current mode allows the requested agent
+  - Returns child result with agent name, child session id, and answer text
+  - See `20-agent-orchestration.md` for full orchestration details
+
+### agent_done
+
+- **Description**: `Required completion protocol for one-shot agents. Submit the final non-empty answer.`
+- **Parameters**: `{ answer: string }` (required, non-empty)
+- **Internal only** — registered only in child agent runtime, not in base tool registry
+- **Execute**: Records the final answer via callback; returns `"completed"`
+
 ## FormatArgs and Purpose Display
 
 All tools that receive a `purpose` parameter from the LLM expose it in `FormatArgs`:
 
 ```
 // Example: shell with purpose
-FormatArgs → "Search for config files…"
+FormatArgs → "Search for config files..."
 ```
 
 Rules:
@@ -209,3 +264,4 @@ Rules:
 - If `purpose` is absent or empty, a fallback string is generated from command/path/name
 - Fallback strings are truncated to 50 characters with `"..."` suffix
 - `FormatArgs` for tools without purpose (task_read, task_write) return a static label
+- read_file and write_file truncate fallback display to 100 characters

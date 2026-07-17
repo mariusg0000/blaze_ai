@@ -5,11 +5,16 @@
 | Package | File(s) | Role |
 |---------|---------|------|
 | `main.go` | `main.go`, `embed.go` | Entry point, CLI flags, wiring, embedded assets |
-| `internal/runtime/` | `runtime.go` | Agent core, Handler interface, RunTurn loop, model resolution, helper detection |
+| `internal/runtime/` | `runtime.go` | Agent core, Handler interface, RunTurn loop, model resolution |
+| `internal/runtime/` | `agent_orchestration.go` | One-shot child-agent execution, persistent child sessions |
+| `internal/runtime/` | `mode_capabilities.go` | Mode tool deny-list and sub-agent allow-list enforcement |
 | `internal/console/` | `console.go`, `reader.go` | Console transport (REPL, rendering, input) |
-| `internal/telegram/` | `telegram.go`, `handler.go`, `commands.go`, `config.go`, `state.go` | Telegram bridge transport (polling, message handling) |
-| `internal/tools/` | `tools.go`, `shell.go`, `skill_tools.go`, `replace_block.go`, `ask_friend.go`, `task_tools.go` | Native tool interface and implementations |
-| `internal/llmcall/` | `client.go` | OpenAI-compatible streaming chat completion client |
+| `internal/telegram/` | `telegram.go`, `handler.go`, `commands.go`, `config.go`, `state.go`, `image_messages.go` | Telegram bridge transport (polling, message handling) |
+| `internal/tools/` | `tools.go`, `shell.go`, `skill_tools.go`, `replace_block.go`, `ask_friend.go`, `task_tools.go`, `agent_tools.go`, `read_file.go`, `write_file.go`, `analyze_image.go`, `image_input.go`, `helper_exec.go` | Native tool interface and implementations |
+| `internal/agents/` | `agents.go` | Markdown agent definition discovery, parsing, validation |
+| `internal/provider/` | `provider.go` | OpenAI-compatible HTTP streaming client |
+| `internal/llmcall/` | `llmcall.go` | One-shot secondary LLM consultation (role-based) |
+| `internal/usage/` | `usage.go` | Provider-agnostic token usage extraction and normalization |
 | `internal/config/` | `config.go`, `modes.go` | Configuration load/save/validate, work mode management |
 | `internal/session/` | `session.go` | File-based session persistence |
 | `internal/skills/` | `skills.go` | Skill parsing, discovery, active list management |
@@ -17,8 +22,7 @@
 | `internal/compaction/` | `compaction.go` | Context compaction, pruning, summarization, reasoning stripping |
 | `internal/platform/` | `platform.go` | OS detection, app home, bootstrap, shell selection |
 | `internal/helpers/` | `helpers.go` | Host helper detection (rg, fd, jq, git, etc.) |
-| `internal/provider/` | (provider package) | LLM provider client creation from config |
-| `prompts/` | `sysprompt.md`, `sysprompt.linux.md`, `sysprompt.darwin.md`, `sysprompt.windows.md` | System prompt templates (embedded in binary) |
+| `prompts/` | `sysprompt.md`, `sysprompt.agent.md`, `sysprompt.linux.md`, `sysprompt.darwin.md`, `sysprompt.windows.md`, `transport.console.md`, `transport.telegram.md` | System prompt templates (embedded in binary) |
 | `skills/` | `skill-manager.md`, `config-manager.md`, `audit-manager.md` | Builtin skill templates (embedded, seeded to app_home) |
 
 ## Module Dependency Graph
@@ -29,6 +33,7 @@ main.go
   ├── internal/config         (config load/save, first-run detection)
   ├── internal/session        (session create/resume)
   ├── internal/skills         (skill seeding)
+  ├── internal/agents         (agent definition loading)
   ├── internal/console        (OR)
   ├── internal/telegram       (OR)
   └── internal/runtime        (agent core)
@@ -39,6 +44,7 @@ main.go
         │     ├── internal/skills
         │     ├── internal/helpers
         │     ├── internal/platform
+        │     ├── internal/agents
         │     └── internal/session
         ├── internal/tools
         │     ├── internal/skills
@@ -47,44 +53,55 @@ main.go
         │     ├── internal/session
         │     ├── internal/provider
         │     └── internal/config
-        └── internal/llmcall
-              └── internal/provider
+        ├── internal/provider
+        │     ├── internal/config
+        │     ├── internal/session
+        │     ├── internal/tools
+        │     └── internal/usage
+        ├── internal/llmcall
+        │     ├── internal/config
+        │     ├── internal/provider
+        │     ├── internal/session
+        │     └── internal/tools
+        └── internal/agents
+              ├── internal/config
+              └── internal/tools
 ```
 
 Dependencies are acyclic. No circular imports. The dependency rule is: `main` → everything,
-`runtime` depends on most internal packages, `prompt` is the leaf-most package with no
-runtime dependency.
+`runtime` depends on most internal packages, `prompt` depends on `skills`, `helpers`, `agents`,
+and `session`. `provider` depends on `config`, `session`, `tools`, and `usage`.
 
 ## Layer Stack
 
 ### Layer 0 — Application Entry (`main.go`)
 - Single entry point (no `cmd/` tree)
 - Flag parsing: `-c` (continue last clean), `-r` (resume last), `--console`, `--telegram <instance>`
-- Startup sequence: detect OS → bootstrap app home → load/first-run config → prepare builtin assets → create/resume session → agent → transport
+- Startup sequence: detect OS → bootstrap app home → load/first-run config → prepare builtin assets → load agent definitions → create/resume session → agent → transport
 - Two transport entry points: `runConsole()` or `telegram.Run()`
 - Embedded assets via `//go:embed` directives in `embed.go`
 
 ### Layer 1 — Agent Core (`internal/runtime/`)
-Single file `runtime.go` containing:
-- `Handler` interface — the only contract between agent core and transports
-- `Agent` struct — holds all runtime state: config, session, skills, tools, prompt builder, provider client, handler
-- `NewAgent()` — constructs the agent with all dependencies wired. Tool registry built here with 10 base tools plus conditional run_agent
-- `RunTurn()` — one conversation turn: build prompt → stream LLM → execute tool calls → loop
-- `SetModel()`, `SetModelLocal()`, `SetMode()` — model switching with compactor sync
-- HandleXxx methods for slash commands (`/exit`, `/model`, `/cd`)
+Three files:
+- `runtime.go` — Handler interface, Agent struct, NewAgent, RunTurn, model switching, command handlers
+- `agent_orchestration.go` — One-shot child-agent execution, persistent sessions, dual timeout, activity forwarding
+- `mode_capabilities.go` — Mode tool deny-list and sub-agent allow-list enforcement
 
 ### Layer 2 — Tools (`internal/tools/`)
 - `Tool` interface — 5 methods: Name, Description, Parameters, Execute, FormatArgs
 - `Registry` — map[string]Tool, built at agent construction, never modified at runtime
-- All 10 base tools registered in `NewAgent()` plus conditional `run_agent`:
+- All 12 base tools registered in `NewAgent()` plus conditional `run_agent`:
   - `shell` — command execution via platform shell
   - `load_skill` / `unload_skill` — in-memory active skills management
   - `replace_block` — exact text replacement in files
   - `ask_a_friend` — delegate to secondary model role
+  - `analyze_image` — vision role image analysis
   - `task_read` / `task_write` — task tracking file I/O
-  - `read_file` / `write_file` — file reading and writing
+  - `read_file` / `write_file` — file reading and writing (300KB read limit)
   - `run_agent` — one-shot sub-agent delegation (added only when valid agent definitions exist)
+- `agent_done` — internal completion protocol for one-shot children (not a registered base tool)
 - Default timeout: 60s per tool call
+- `Registry.Clone()` and `Registry.Filter()` for mode policy and child agent tool selection
 
 ### Layer 3 — Transports
 
@@ -94,6 +111,7 @@ Single file `runtime.go` containing:
 - TTY-only (no pipe/non-TTY support)
 - Raw terminal mode via `golang.org/x/term`
 - Ctrl-C aborts current turn, Ctrl-D cancels input, Tab cycles modes
+- Renders child agent activity via `AgentActivityHandler` interface
 
 #### Telegram (`internal/telegram/`)
 - Secondary transport. Implements `runtime.Handler`
@@ -102,43 +120,57 @@ Single file `runtime.go` containing:
 - Instance config in `app_home/telegram/<instance>/bridge.json`
 - Buffered streaming: flushes to Telegram every 500ms, splits messages >3500 chars
 - Local slash commands: `/help`, `/start`, `/model`, `/clear`, `/new`, `/exit`
+- Sudo always denied (no password channel over chat)
 
-### Layer 4 — LLM Client (`internal/llmcall/`)
-- OpenAI-compatible chat completion API client
+### Layer 4 — LLM Client (`internal/provider/`)
+- OpenAI-compatible HTTP streaming client
 - Streaming support via SSE parsing
 - Tool call extraction from response
-- Usage token reporting
+- Usage token reporting via `internal/usage`
 - Reasoning/thinking token extraction
 - No model-specific logic — works with any OpenAI-compatible endpoint
+- Supports both Chat Completions and Responses API formats
+- Prompt cache key and Responses identity for session-level caching
+- OAuth credential refresh support
 
 ### Layer 5 — Prompt Assembly (`internal/prompt/`)
 - `Builder` struct with `Build()` and `BuildRuntimePart()` methods
 - Prompt rebuilt on every LLM call from disk sources
-- Build order: universal sysprompt → OS sysprompt → host helpers → skills (available + active) → specs.md → AGENTS.md → conversation history
+- Build order: universal sysprompt → OS sysprompt → transport prompt → host helpers → skills → agents → specs.md → AGENTS.md → conversation history
 - Variable injection: `{APP_HOME}`, `{WORK_DIR}`, `{OS_INFO}`, `{SKILLS_AVAILABLE}`, `{SKILLS_ACTIVE}`, `{AGENTS_CONTENT}`, `{PROJECT_CONTENT}`, `{HOST_HELPERS_*}`, `{TRANSPORT_CONTEXT}`, `{SKILL_DIR}`
+- Agent definitions inject `{AGENT_INSTRUCTIONS}` and `{AGENT_TASK}` into `sysprompt.agent.md`
 
 ### Layer 6 — Supporting Packages
 
 #### Config (`internal/config/`)
 - `config.json` — providers, favorite_models, roles, compaction, stripReasoning, last_model, helperSetup, debugPrompt
-- `modes.json` (separate file) — work modes with name/model/directive, last_mode
+- `modes.json` (separate file) — work modes with name/model/directive/denied_tools/agents, last_mode
 - Atomic saves with corruption fallback on modes
 - Migration from legacy config-embedded modes
+- Known conflict: `modes.go` falls back to `DefaultMode()` when `modes.json` is missing/invalid (violates no-fallback spec)
 
 #### Session (`internal/session/`)
-- File-based: `session.json` in random folder under `app_home/sessions/` or project dir
+- File-based: `session.json` in random folder under `app_home/projects/<project>/sessions/`
 - Full message array exactly as sent to/received from LLM
 - Reasoning parts preserved intact on disk
 - `closed_cleanly` boolean — set true only on `/exit`
-- Project-scoped sessions: `app_home/projects/<hash>/sessions/<random>/session.json`
 - `Sanitize()` strips secrets from messages
+- `SanitizeMessages()` enforces tool-call/result pairing
 
 #### Skills (`internal/skills/`)
 - Markdown parsing: `[DESCRIPTION]`, `[BEHAVIOR]`, `[DATA]`
-- Three scopes: builtin (embedded), global (app_home/skills/), project (.blazeai/skills/)
+- Three scopes: builtin (embedded), global (app_home/skills/), project (project skills/)
 - `ActiveList` — in-memory, starts empty, not persisted
 - `DiscoverAll()` — reads all three scopes, returns map[id → Skill]
 - `Resolve()` — resolves name to scoped ID, errors on ambiguity
+
+#### Agents (`internal/agents/`)
+- Markdown definition files with `---` front matter
+- Required: `name`, `description`, `kind: "one-shot"`, `tools` (explicit allowlist)
+- Optional: `model`, `timeout`
+- `Load()` discovers and validates definitions from `app_home/agents/`
+- Strict validation: unknown tools rejected, empty allowlists rejected, duplicate names rejected
+- `KindOneShot` is the only supported agent kind
 
 #### Compaction (`internal/compaction/`)
 - Triggered on `usage.prompt_tokens >= maxContextTokens`
@@ -150,9 +182,10 @@ Single file `runtime.go` containing:
 #### Platform (`internal/platform/`)
 - OS detection: Linux, Darwin, Windows
 - App home resolution: `$HOME/blazeai`
-- Bootstrap: create standard subfolder tree
+- Bootstrap: create standard subfolder tree (including `agents/`)
 - Shell selection per OS
 - `ProjectDir()` resolves project dir from work folder
+- App home README seeding into subfolders
 
 #### Helpers (`internal/helpers/`)
 - Live binary detection via `exec.LookPath`
@@ -172,41 +205,44 @@ Transport (console/telegram)
     ▼
 Agent.RunTurn(ctx, userInput)
     │
-    ├─ 1. Sanitize session (strip secrets)
-    ├─ 2. Builder.Build(session, activeSkills)
-    │       ├─ Read universal sysprompt (fs.FS)
-    │       ├─ Read OS sysprompt (fs.FS)
-    │       ├─ Detect host helpers (exec.LookPath)
-    │       ├─ Discover skills (filesystem scan)
-    │       ├─ Read specs.md (optional)
-    │       ├─ Read AGENTS.md (optional)
-    │       ├─ Inject variables → runtime prompt part
-    │       └─ Prepend as system message + session messages → []Message
+    ├─ 1. Append user message to session
     │
-    ├─ 3. Compactor.StripReasoningFromPayload(messages)
-    │       └─ Replace old reasoning parts with empty text
-    │
-    ├─ 4. Write prompt.json only when config.debugPrompt is true
-    ├─ 5. Inject mode directive into latest user message
-    │
-    ├─ 6. Provider.Stream(ctx, messages, tools, onContent, onReasoning)
-    │       └─ SSE stream → Handler.OnContent() / Handler.OnReasoning()
-    │
-    ├─ 7. Extract assistant message (content + tool_calls + reasoning)
-    ├─ 8. Append assistant message to session
-    ├─ 9. Handler.OnUsage(promptTokens)
-    │
-    ├─ 10. For each tool call:
-    │       ├─ Handler.OnToolCall(name, args)
-    │       ├─ tools.Registry.Execute(name, args)
-    │       ├─ Handler.OnToolResult(name, result)
-    │       └─ Append tool result to session
-    │
-    ├─ 11. Compactor.ShouldCompact(usage)?
-    │       └─ If yes: prune + summarize + inject synthetic
-    │
-    └─ 12. Loop: if LLM produced tool_calls AND any result has content → back to step 2
-         If LLM produced content (no tool_calls) → turn done
+    └─ for {  (tool call loop)
+         │
+         ├─ 2. sanitizeSession() → drop invalid tool rounds
+         ├─ 3. Builder.Build(session, activeSkills)
+         │       ├─ Read universal sysprompt (fs.FS)
+         │       ├─ Read OS sysprompt (fs.FS)
+         │       ├─ Read transport prompt (fs.FS)
+         │       ├─ Detect host helpers (exec.LookPath)
+         │       ├─ Discover skills (filesystem scan)
+         │       ├─ Read specs.md (optional)
+         │       ├─ Read AGENTS.md (optional)
+         │       ├─ Inject variables → runtime prompt part
+         │       └─ Prepend as system message + session messages → []Message
+         │
+         ├─ 4. Compactor.StripReasoningFromPayload(messages)
+         │       └─ Replace old reasoning parts with empty text
+         │
+         ├─ 5. Write prompt.json only when config.debugPrompt is true
+         ├─ 6. injectDirective(messages, mode.Directive)  → volatile mode injection
+         │
+         ├─ 7. Provider.Stream(ctx, messages, tools, onContent, onReasoning)
+         │       └─ SSE stream → Handler.OnContent() / Handler.OnSystem()
+         │
+         ├─ 8. Extract assistant message (content + tool_calls + reasoning)
+         ├─ 9. Append assistant message to session
+         ├─ 10. Handler.OnUsage(promptTokens, cachedTokens, uncachedTokens)
+         │
+         ├─ 11. For each tool call:
+         │       ├─ Handler.OnToolCall(name, formattedArgs)
+         │       ├─ tools.Registry.Execute(name, args)
+         │       ├─ Handler.OnToolResult(name, result)
+         │       └─ Append tool result to session
+         │
+         ├─ 12. Compactor.Compact(session, usage)? → check after tool execution
+         └─ }  (loop back — tool results are now in session history)
+              If LLM produced no tool calls → turn done
 ```
 
 ## Startup Sequence
@@ -215,8 +251,8 @@ Agent.RunTurn(ctx, userInput)
 main()
   │
   ├─ flag.Parse()  → -c, -r, --telegram
-  ├─ platformOS()  → Linux / Darwin / Windows
-  ├─ platform.Bootstrap()  → create app home dirs
+  ├─ platform.Detect()  → Linux / Darwin / Windows
+  ├─ platform.Bootstrap()  → create app home dirs (including agents/)
   ├─ config.NeedsFirstRun()?
   │    ├─ yes → runFirstRun()  → interactive config
   │    └─ no  → config.Load()  → from config.json
@@ -227,15 +263,18 @@ main()
   │
   ├─ os.Getwd()  → workDir
   ├─ session.Create() / session.LastClean() / session.Last()
+  ├─ agents.Load(appHome/agents, registry)  → agent definitions
   ├─ runtime.NewAgent(cfg, sess, osType, promptsFS, workDir, handler=nil, transportName="console")
+  │    ├─ Migrate modes from config.json if present
   │    ├─ Load modes (modes.json) or create default
-  │    ├─ Resolve model: mode model > last_mode > roles.default
+  │    ├─ Resolve active mode: lastMode > firstMode
   │    ├─ Create provider client
   │    ├─ Create summarization provider client (if separate role)
   │    ├─ Create prompt.Builder
   │    ├─ Create compaction.Manager
-  │    ├─ Build tool registry (10 base tools + conditional run_agent)
-  │    └─ Require a transport prompt via Builder.TransportName
+  │    ├─ Build tool registry (12 base tools + conditional run_agent)
+  │    ├─ Load agent definitions
+  │    ├─ Apply mode capabilities (deny tools, filter agents)
   │    └─ Return Agent
   │
   ├─ Compactor.RebuildForResume() if -c or -r
@@ -246,15 +285,16 @@ main()
 
 ## Key Design Decisions
 
-### Single-file Runtime
-The entire agent core (Agent, Handler, RunTurn, model switching, command handlers,
-helper detection) is in `internal/runtime/runtime.go`. No separate agent.go,
-handler.go, or turn_loop.go files. Keeps internal coupling visible in one place.
+### Multi-File Runtime
+The agent core is split across three files: `runtime.go` (core loop and handler),
+`agent_orchestration.go` (one-shot child execution), and `mode_capabilities.go`
+(mode policy enforcement). Keeps concerns separated while maintaining visibility.
 
 ### Transport-Agnostic Core
 The `Handler` interface is the only boundary. Transports know nothing about each other.
 Commands with distinct transport UX (console vs Telegram) are handled at the
-transport level, not shared.
+transport level, not shared. Optional extensions (`AgentActivityHandler`,
+`StreamPhaseHandler`) allow richer transport behavior without polluting the core contract.
 
 ### Prompt-First Design
 Most agent behavior is shaped by prompt templates, not runtime logic. The prompt
@@ -266,7 +306,7 @@ Transport selection in main.go is a plain if-branch (`--telegram` flag), not a
 transport registry or factory. `main.go` startup helpers are plain functions, not
 a bootstrap package. Keeps complexity low.
 
-### Two External Dependencies
+### Minimal External Dependencies
 Standard library first; direct external dependencies are `github.com/reeflective/readline`, `golang.org/x/image`, and `golang.org/x/term`; indirect dependencies are `github.com/rivo/uniseg` and `golang.org/x/sys`.
 
 ### Skills Replace Memory
@@ -276,5 +316,5 @@ knowledge storage. Skills with `[BEHAVIOR]` sections extend agent behavior.
 ### Model Switching Paths
 - `SetModel()` — transport model switch with global persistence (config.json + modes.json)
 - `SetModelLocal()` — transport-local switch without global persistence
-- `SetMode()` — switch work mode with model resolution
+- `SetMode()` — switch work mode with model resolution and mode capabilities refresh
 - All three go through `applyModel()` which syncs the compactor and provider client
