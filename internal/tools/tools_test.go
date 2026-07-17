@@ -131,6 +131,30 @@ func TestAllToOpenAI(t *testing.T) {
 	}
 }
 
+// TestAllToOpenAICacheInvalidationAndCopy verifies registry refresh and isolation.
+func TestAllToOpenAICacheInvalidationAndCopy(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&dummyTool{name: "b"})
+	first := AllToOpenAI(r)
+	first[0].Function.Name = "mutated"
+	first = append(first, OpenAITool{})
+	r.Register(&dummyTool{name: "a"})
+	second := AllToOpenAI(r)
+	if len(second) != 2 || second[0].Function.Name != "a" || second[1].Function.Name != "b" {
+		t.Fatalf("registered tools = %#v", second)
+	}
+	r.Remove("a")
+	third := AllToOpenAI(r)
+	if len(third) != 1 || third[0].Function.Name != "b" {
+		t.Fatalf("removed tools = %#v", third)
+	}
+	third[0].Function.Name = "changed"
+	fourth := AllToOpenAI(r)
+	if fourth[0].Function.Name != "b" {
+		t.Fatalf("defensive copy failed: %#v", fourth)
+	}
+}
+
 // TestParseToolCallArgs verifies typed argument parsing from raw JSON.
 func TestParseToolCallArgs(t *testing.T) {
 	args := json.RawMessage(`{"command":"ls -la","timeout":30}`)

@@ -28,9 +28,11 @@ build environment.
 
 ```
 require (
+    github.com/reeflective/readline v1.1.3   // direct — interactive terminal input
+    github.com/rivo/uniseg v1.2.2           // indirect — Unicode segmentation
     golang.org/x/image v0.43.0   // direct — high-quality image resize for analyze_image
     golang.org/x/sys v0.46.0   // indirect — syscall wrappers (process group kill)
-    golang.org/x/term v0.44.0   // indirect — raw terminal mode (hidden input)
+    golang.org/x/term v0.44.0   // direct — raw terminal mode (hidden input)
 )
 ```
 
@@ -176,14 +178,9 @@ The current local development workflow uses a user-local wrapper script at
 Current behavior:
 
 - `blazeai` builds the main Go binary from the repo root to `/tmp/blazeai` and runs it in console mode
-- `blazeai desktop` and `blazeai --desktop` run `npm start --prefix desktop_electron`, which rebuilds the Go desktop backend and starts the Electron shell
-- `blazeai desktop` and `blazeai --desktop` export `BLAZEAI_DESKTOP_PROJECT` from the caller current directory by default, so the desktop session starts in the directory where the command was launched
-- `blazeai desktop --project <path>` overrides that default and passes the explicit project path to the desktop backend
-- `blazeai desktop --last-session` also exports `BLAZEAI_DESKTOP_LAST_SESSION=1`, which requests the last clean desktop session on the first message
 
 This wrapper is a local convenience entrypoint, not the shipped application
-binary. The main Go CLI still exposes only the binary flags documented above,
-while desktop startup is routed through the Electron app in `desktop_electron/`.
+binary. The main Go CLI still exposes only the binary flags documented above.
 
 ### Simple Build And Run
 

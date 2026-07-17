@@ -51,8 +51,7 @@ func (h *mockHandler) OnToolResult(name string, result string) {
 func (h *mockHandler) OnUsage(promptTokens, cachedTokens, uncachedTokens int) {
 	h.usages = append(h.usages, promptTokens)
 }
-func (h *mockHandler) OnReasoning(delta string) {}
-func (h *mockHandler) OnSystem(message string)  { h.systemMsgs = append(h.systemMsgs, message) }
+func (h *mockHandler) OnSystem(message string) { h.systemMsgs = append(h.systemMsgs, message) }
 func (h *mockHandler) OnMaintenanceCall(name string, args string) {
 	h.maintenanceCalls = append(h.maintenanceCalls, name+": "+args)
 }
@@ -97,7 +96,7 @@ func setupAgent(t *testing.T, handler http.HandlerFunc) (*Agent, *mockHandler, *
 // writePromptFixtures creates the prompt templates required by runtime prompt assembly.
 func writePromptFixtures(t *testing.T, promptsDir string) {
 	t.Helper()
-	os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\nEach app-home folder has a `README.md` that documents its structure, use, and rules. When a task involves any of these folders, you MUST read its `README.md` first before inspecting or modifying any other file in that folder.\n\n## Tool Discipline\n- Keep relevant loaded skills active across follow-up turns on the same topic or task.\n- Do not unload a skill immediately after one successful action if the user is likely to continue in the same domain.\n- Unload a skill only when the user clearly changes topic or task, or when the loaded skill would interfere with the next turn.\n\n## Active State Rules\n- Only skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.\n- Only memories listed under `## Active Memories` are active right now. Do not infer current active memories from older `load_memory` or `unload_memory` tool results in the conversation history. If there is no `## Active Memories` section below, then no memories are currently active.\n\n{OS_PROMPT}\n\n## Transport\n{TRANSPORT_PROMPT}\n\n{TRANSPORT_CONTEXT}\n\n## Host Environment Helpers\n{HOST_HELPERS_ADVISORY}\n\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nBefore performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first. Do not act on an unfamiliar domain without loading the relevant skill.\n\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n## Memories\nAvailable memories:\n{MEMORIES_AVAILABLE}\n\nActive memories:\n{MEMORIES_ACTIVE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n"), 0644)
+	os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\nEach app-home folder has a `README.md` that documents its structure, use, and rules. When a task involves any of these folders, you MUST read its `README.md` first before inspecting or modifying any other file in that folder.\n\n## Tool Discipline\n- Keep relevant loaded skills active across follow-up turns on the same topic or task.\n- Do not unload a skill immediately after one successful action if the user is likely to continue in the same domain.\n- Unload a skill only when the user clearly changes topic or task, or when the loaded skill would interfere with the next turn.\n\n## Active State Rules\n- Only skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.\n\n{OS_PROMPT}\n\n## Transport\n{TRANSPORT_PROMPT}\n\n{TRANSPORT_CONTEXT}\n\n## Host Environment Helpers\n{HOST_HELPERS_ADVISORY}\n\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nBefore performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first. Do not act on an unfamiliar domain without loading the relevant skill.\n\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n"), 0644)
 	os.WriteFile(filepath.Join(promptsDir, "sysprompt.linux.md"), []byte("linux"), 0644)
 	os.WriteFile(filepath.Join(promptsDir, "transport.console.md"), []byte("console transport"), 0644)
 	os.WriteFile(filepath.Join(promptsDir, "transport.telegram.md"), []byte("telegram transport"), 0644)
@@ -125,6 +124,72 @@ func TestRunTurnTextResponse(t *testing.T) {
 	}
 	if len(agent.Session.Messages) != 2 {
 		t.Errorf("session has %d messages, want 2 (user + assistant)", len(agent.Session.Messages))
+	}
+}
+
+// TestRunTurnDebugPromptGate verifies prompt.json is controlled only by DebugPrompt.
+func TestRunTurnDebugPromptGate(t *testing.T) {
+	var providerMessages []map[string]interface{}
+	response := func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Messages []map[string]interface{} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode provider request: %v", err)
+		}
+		providerMessages = payload.Messages
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"ok"}}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "data: [DONE]")
+		fmt.Fprintln(w)
+	}
+	for _, tc := range []struct {
+		name     string
+		debug    bool
+		wantFile bool
+	}{
+		{name: "omitted", wantFile: false},
+		{name: "enabled", debug: true, wantFile: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agent, _, server := setupAgent(t, response)
+			defer server.Close()
+			agent.Config.DebugPrompt = tc.debug
+			if tc.debug {
+				agent.CurrentMode.Directive = "use concise mode"
+			}
+			if err := agent.RunTurn(context.Background(), "debug gate"); err != nil {
+				t.Fatalf("RunTurn() error: %v", err)
+			}
+			path := filepath.Join(agent.Session.Folder, "prompt.json")
+			data, err := os.ReadFile(path)
+			if !tc.wantFile {
+				if !os.IsNotExist(err) {
+					t.Fatalf("prompt.json error = %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ReadFile(prompt.json) error: %v", err)
+			}
+			if len(data) == 0 {
+				t.Fatal("prompt.json is empty")
+			}
+			if !strings.Contains(string(data), "debug gate") {
+				t.Fatalf("prompt.json does not contain built user message: %q", data)
+			}
+			if !strings.Contains(string(data), "use concise mode") {
+				t.Fatalf("prompt.json does not contain mode directive: %q", data)
+			}
+			providerData, err := json.Marshal(providerMessages)
+			if err != nil {
+				t.Fatalf("marshal provider messages: %v", err)
+			}
+			if !strings.Contains(string(providerData), "use concise mode") {
+				t.Fatalf("provider-bound messages do not contain mode directive: %s", providerData)
+			}
+		})
 	}
 }
 
@@ -232,17 +297,14 @@ func TestRunTurnSanitizesIncompleteToolCalls(t *testing.T) {
 		t.Fatalf("RunTurn() error: %v", err)
 	}
 
-	if len(lastMessages) < 3 {
-		t.Fatalf("provider received %d messages, want at least 3", len(lastMessages))
-	}
-	if got := lastMessages[len(lastMessages)-2]["role"]; got != "user" {
-		t.Fatalf("expected last preserved session message to be user, got %v", got)
+	if len(lastMessages) < 2 {
+		t.Fatalf("provider received %d messages, want at least 2", len(lastMessages))
 	}
 	if got := lastMessages[len(lastMessages)-1]["role"]; got != "user" {
 		t.Fatalf("expected new user message at end of payload, got %v", got)
 	}
-	if len(agent.Session.Messages) != 3 {
-		t.Fatalf("session has %d messages, want 3 after sanitize + response", len(agent.Session.Messages))
+	if len(agent.Session.Messages) != 2 {
+		t.Fatalf("session has %d messages, want 2 after sanitize + response", len(agent.Session.Messages))
 	}
 }
 

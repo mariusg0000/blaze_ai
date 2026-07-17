@@ -115,8 +115,12 @@ func (c *Client) streamChatGPT(ctx context.Context, messages []session.Message, 
 	if onPhase != nil {
 		onPhase(PhaseConnecting)
 	}
+	var capture *session.RawCapture
 	if c.RawCaptureFolder != "" {
-		_ = session.ResetRawJSON(c.RawCaptureFolder, "llm-raw.json")
+		capture, _ = session.NewRawCapture(c.RawCaptureFolder, "llm-raw.json")
+		if capture != nil {
+			defer capture.Close()
+		}
 	}
 	token, err := c.oauthAccessToken(ctx)
 	if err != nil {
@@ -181,7 +185,7 @@ func (c *Client) streamChatGPT(ctx context.Context, messages []session.Message, 
 	if onPhase != nil {
 		onPhase(PhaseWaitingFirstEvent)
 	}
-	return parseChatGPTSSE(ctx, response.Body, onContent, onReasoning, onPhase, c.RawCaptureFolder)
+	return parseChatGPTSSE(ctx, response.Body, onContent, onReasoning, onPhase, capture)
 }
 
 func buildChatGPTRequest(model string, messages []session.Message, toolDefs []tools.OpenAITool) (chatGPTResponsesRequest, error) {
@@ -376,22 +380,6 @@ func ptr(b bool) *bool {
 	return &b
 }
 
-// resolveReasoningEffort converts a standard reasoning level to a wire-level
-// effort string using the Responses API descriptor.
-//
-// WHAT:  Transforms the user-facing standard level to the API parameter value.
-// WHY:   The Responses API descriptor maps each standard level to its OpenAI
-//
-//	wire value (min→minimal, med→medium, max→max, etc.).
-//
-// HOW:   Calls reasoning.Normalize for the openai_responses descriptor.
-//
-//	When level is empty, returns empty string so the caller can omit the
-//	entire reasoning field from the request.
-//	When level is set but normalization fails, returns an error (no fallback).
-//
-// PARAMS: modelID — bare model name for capability check; level — standard reasoning level.
-// RETURNS: wire-level effort string; error if normalization fails for a non-empty level.
 func decodeOpenAIToolCalls(value interface{}) ([]tools.OpenAIToolCall, error) {
 	if value == nil {
 		return nil, nil
@@ -490,7 +478,7 @@ func mustJSON(value interface{}) json.RawMessage {
 	return data
 }
 
-func parseChatGPTSSE(ctx context.Context, reader io.ReadCloser, onContent func(string), onReasoning func(string), onPhase func(StreamPhase), captureFolder string) (*Response, error) {
+func parseChatGPTSSE(ctx context.Context, reader io.ReadCloser, onContent func(string), onReasoning func(string), onPhase func(StreamPhase), capture *session.RawCapture) (*Response, error) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
 	result := &Response{}
@@ -518,8 +506,8 @@ func parseChatGPTSSE(ctx context.Context, reader io.ReadCloser, onContent func(s
 			finalizeChatGPTToolCalls(result, toolCalls, toolOrder)
 			return result, nil
 		}
-		if captureFolder != "" {
-			_ = session.AppendRawJSON(captureFolder, "llm-raw.json", []byte(data))
+		if capture != nil {
+			_ = capture.Append([]byte(data))
 		}
 		var event chatGPTStreamEvent
 		if err := json.Unmarshal([]byte(data), &event); err != nil {

@@ -43,6 +43,7 @@ Do not use this skill for:
 The source for per-session analysis is `<session_dir>/prompt.json`, not `session.json`.
 
 `prompt.json` is the final payload sent to the LLM, including sysprompt, compaction summaries, and conversation messages. If `prompt.json` is missing, report the error and stop unless the user explicitly chooses a different review scope.
+- Session auditing requires `debugPrompt: true` in `config.json`; if it is disabled, report the missing debug artifact and stop.
 
 ## Workflow
 
@@ -69,7 +70,7 @@ The source for per-session analysis is `<session_dir>/prompt.json`, not `session
 - If `shell` or `ask_a_friend` returns a hard error, surface it clearly and stop unless the user explicitly asks for partial review.
 - Keep per-session reports concise and evidence-based.
 - Separate missing-skill recommendations from skill-optimization recommendations.
-- Distinguish memory-bank opportunities from runnable-skill opportunities.
+- Distinguish [DATA] skill opportunities from native-tool opportunities.
 - Keep Telegram bridge findings separate from terminal findings when the usage pattern or UX constraints differ.
 - Prefer high-payoff improvements over exhaustive lists.
 - Do not invent missing skills from weak evidence.
@@ -106,8 +107,8 @@ per_session_report_format:
 - existing skills used poorly
 - missing skill opportunities
 - over-broad or unclear skill triggers
-- memory-bank opportunities
-- runnable-skill opportunities
+- [DATA] skill opportunities
+- native-tool opportunities
 
 ## Inefficiencies
 - repeated tool calls
@@ -119,7 +120,7 @@ per_session_report_format:
 ## Recommendations
 - create skill X
 - optimize skill Y
-- add memory bank Z
+- add [DATA] skill Z
 - leave unchanged if nothing useful was found
 ```
 
@@ -134,7 +135,7 @@ cross_session_output_format:
 ## New Skill Candidates
 - candidate
 - evidence
-- proposed type: memory / behavior / runnable
+- proposed type: data / behavior
 - expected payoff
 
 ## Skill Updates

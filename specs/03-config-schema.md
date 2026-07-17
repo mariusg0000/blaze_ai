@@ -51,7 +51,8 @@ Separation rationale: `modes.json` contains frequently-edited mode data, isolate
   "helperSetup": {
     "dismissed": false,
     "declined": []
-  }
+  },
+  "debugPrompt": false
 }
 ```
 
@@ -66,6 +67,7 @@ type Config struct {
     StripReasoning StripReasoning `json:"stripReasoning"`
     LastModel      string         `json:"last_model,omitempty"`
     HelperSetup    HelperSetup    `json:"helperSetup,omitempty"`
+    DebugPrompt    bool           `json:"debugPrompt,omitempty"`
 }
 ```
 
@@ -161,6 +163,7 @@ Distinct from live detection: this stores UX preferences only. Actual binary pre
 
 ### Other Fields
 
+- `debugPrompt` (boolean, optional, default `false`) — writes `prompt.json` before each LLM call only when enabled; intended for debugging and session audits.
 - `last_model` (string, optional) — persists the last selected model across sessions. Format: `provider/model_name`. Used as fallback when no active mode is set.
 - Model IDs are plain `provider/model_name` strings; providers use their default reasoning behavior.
 

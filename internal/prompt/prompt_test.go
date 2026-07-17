@@ -264,9 +264,6 @@ func TestBuildRuntimePartFull(t *testing.T) {
 	if !strings.Contains(result, "skill-manager") {
 		t.Error("runtime part missing skill name")
 	}
-	if strings.Contains(result, "[SYNTAX]") {
-		t.Error("runtime part should not expose runnable skill layout tags")
-	}
 }
 
 // TestBuildRuntimePartMissingUniversal verifies error when universal prompt is missing.
@@ -449,41 +446,6 @@ func TestBuildRuntimePartNoSkills(t *testing.T) {
 	}
 	if !strings.Contains(result, "Available skills:\nNULL") {
 		t.Error("runtime part should render NULL for missing skills")
-	}
-	if strings.Contains(result, "[RUNNABLE SKILLS]") {
-		t.Error("runtime part should omit runnable skills section when none exist")
-	}
-	if strings.Contains(result, "\nNULL\n\n## Project Rules") {
-		t.Error("runtime part should not render standalone NULL for missing runnable skills section")
-	}
-}
-
-// TestBuildRuntimePartNoRunnableSkillsSection verifies that a missing runnable section disappears cleanly.
-func TestBuildRuntimePartNoRunnableSkillsSection(t *testing.T) {
-	promptsFS, workDir := setupTestDirs(t)
-	home, err := platform.AppHome()
-	if err != nil {
-		t.Fatalf("platform.AppHome() error: %v", err)
-	}
-	if err := os.RemoveAll(filepath.Join(home, "skills", "echo-runner")); err != nil {
-		t.Fatalf("RemoveAll(echo-runner) error: %v", err)
-	}
-
-	b := &Builder{
-		PromptsFS:     promptsFS,
-		WorkDir:       workDir,
-		OS:            platform.Linux,
-		TransportName: "console",
-	}
-	result, err := b.BuildRuntimePart(skills.NewActiveList())
-	if err != nil {
-		t.Fatalf("BuildRuntimePart() error: %v", err)
-	}
-	if strings.Contains(result, "[RUNNABLE SKILLS]") {
-		t.Fatal("runtime part should omit runnable skills section when no runnable skills exist")
-	}
-	if strings.Contains(result, "\nNULL\n\n## Project Rules") {
-		t.Fatal("runtime part should not leave a NULL placeholder when runnable section is omitted")
 	}
 }
 

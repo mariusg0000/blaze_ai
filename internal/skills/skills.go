@@ -42,9 +42,7 @@ var ErrMissingBehaviorOrData = errors.New("skill missing [BEHAVIOR] and [DATA]")
 // Fields: Name — folder name; Description — [DESCRIPTION] content;
 //
 //	Behavior — [BEHAVIOR] content (optional); Data — [DATA] content (optional);
-//	Syntax — [SYNTAX] content (optional); CodeLang/Code — parsed [CODE] fence content
-//	(optional); CodeError — [CODE] parse failure message when present; Dir — folder
-//	path; Scope — global or project.
+//	Dir — folder path; Scope — global or project.
 type Skill struct {
 	Name        string
 	Description string

@@ -65,13 +65,12 @@ func LoadStateFrom(path string, cfg *config.Config) (*State, error) {
 // Validate checks the selected model against global provider config.
 //
 // WHAT:  Validates the selected model using the canonical format and provider check.
-// WHY:   The model string may include a |reasoning_level suffix; the canonical
+// WHY:   The model string must use the canonical provider/model_name format
+// before the bridge uses the model.
 //
-//	validation must parse and accept it before the bridge uses the model.
+// HOW:   Calls config.ValidateModelFormat to verify the provider/model_name format,
+// then checks that the
 //
-// HOW:   Calls config.ValidateModelFormat to parse the model identifier (stripping
-//
-//	any suffix) and verify the provider/model_name format, then checks that the
 //	provider exists in the config.
 func (s *State) Validate(cfg *config.Config) error {
 	if cfg == nil {

@@ -181,11 +181,7 @@ Builder.Build(session, activeSkills)
 
 ## Debug Artifact
 
-After the full prompt is built and reasoning is stripped (the exact payload the
-LLM receives), an artifact is written to `{session_folder}/prompt.json`. This is
-a human-readable version of the message array with `\n` unescaped (technically
-invalid JSON but readable). Write errors are silently ignored — the debug file
-must never break the runtime.
+When `config.debugPrompt` is `true`, the runtime writes the exact fully built payload sent to the LLM to `{session_folder}/prompt.json` before each LLM call. When the field is omitted or `false`, no prompt debug artifact is written.
 
 ## Skill Content in Prompts
 
@@ -224,7 +220,7 @@ Active skills are sorted by their scoped ID (project/ prefix before global/built
 ```
 helper_setup = unverified
 task could benefit from host helpers → suggest verification_or_setup
-guidance needed → load_skill setup_helpers
+guidance needed → load_skill config-manager
 all helpers verified ∨ user declines → reminder stops
 ```
 
@@ -244,6 +240,6 @@ Only helpers found on PATH via `exec.LookPath`.
 
 Same format but for missing helpers. Only shown if `HelperSetup.Dismissed` is false.
 Includes guidance line: "helper would materially help → explain benefit + ask user
-before install" and "install guidance → load_skill setup_helpers".
+before install" and "install guidance → load_skill config-manager".
 
 Empty if all core helpers are present or user dismissed.

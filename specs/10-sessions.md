@@ -151,7 +151,7 @@ Key decisions:
   the on-disk JSON. The LLM receives correct data regardless (unescape on read),
   but on-disk readability matters for debugging.
 - Full file rewrite on every save. No append-log or diff approach.
-- `prompt.json` debug artifact is saved alongside `session.json` in the same folder.
+- `prompt.json` is an optional debug artifact saved beside `session.json` only when `config.debugPrompt` is true.
 
 ## Session Sanitization
 

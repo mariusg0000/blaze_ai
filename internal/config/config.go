@@ -154,6 +154,7 @@ type Config struct {
 	StripReasoning StripReasoning `json:"stripReasoning"`
 	LastModel      string         `json:"last_model,omitempty"`
 	HelperSetup    HelperSetup    `json:"helperSetup,omitempty"`
+	DebugPrompt    bool           `json:"debugPrompt,omitempty"`
 }
 
 // DefaultCompaction returns the pre-filled compaction thresholds from spec 05.
@@ -400,10 +401,9 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// validateModelFormat checks that a model identifier is in provider/model_name form,
-// optionally with a |reasoning_level suffix.
+// validateModelFormat checks that a model identifier is in provider/model_name form.
 //
-// WHAT:  Parses any |reasoning_level suffix, then verifies the model ID part
+// WHAT:  Verifies the model ID part
 //
 //	starts with a provider prefix and has a non-empty model name.
 //	Multiple slashes in the model name are allowed (e.g., "openrouter/openai/o3").
@@ -482,7 +482,7 @@ func providerNameSet(providers []Provider) map[string]bool {
 //
 // WHAT:  Verifies that a model's provider prefix matches an existing provider.
 //
-//	Strips any |reasoning_level suffix before extracting the provider prefix.
+//	Rejects unsupported suffixes before extracting the provider prefix.
 //
 // WHY:   A model identifier without a matching provider is a dangling reference.
 // PARAMS: model — the model identifier, optionally suffixed; providers — the provider name lookup table.
@@ -548,7 +548,7 @@ func (c *Config) ModelForRole(role string) (string, error) {
 //
 // WHAT:  Splits a model identifier into provider name and model name.
 //
-//	Strips any |reasoning_level suffix before splitting.
+//	Splits the plain model identifier.
 //
 // WHY:   API calls need the bare model name and the provider separately.
 // PARAMS: modelID — the full provider/model_name string, optionally suffixed.

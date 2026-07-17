@@ -47,7 +47,6 @@ func (h childHandler) OnToolResult(name, result string) {
 func (h *childHandler) OnUsage(promptTokens, cachedTokens, uncachedTokens int) {
 	h.lastPromptTokens = promptTokens
 }
-func (h childHandler) OnReasoning(string) {}
 func (h childHandler) OnSystem(message string) {
 	h.emit(AgentActivity{Agent: h.agentID, Kind: "system", Status: "info", Text: message})
 }
@@ -69,9 +68,8 @@ type activityForwarder struct {
 	activity chan<- struct{}
 }
 
-func (f *activityForwarder) OnContent(delta string)   { f.inner.OnContent(delta) }
-func (f *activityForwarder) OnReasoning(delta string) { f.inner.OnReasoning(delta) }
-func (f *activityForwarder) OnUsage(p, c, u int)      { f.inner.OnUsage(p, c, u) }
+func (f *activityForwarder) OnContent(delta string) { f.inner.OnContent(delta) }
+func (f *activityForwarder) OnUsage(p, c, u int)    { f.inner.OnUsage(p, c, u) }
 func (f *activityForwarder) OnToolResult(name, result string) {
 	f.inner.OnToolResult(name, result)
 	f.signal()

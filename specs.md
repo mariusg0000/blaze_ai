@@ -15,7 +15,7 @@
 
 ### Technology Stack
 - Go module with `go 1.25.0` and `toolchain go1.26.4`.
-- Standard library first; current external deps are `golang.org/x/image`, `golang.org/x/term`, and `golang.org/x/sys`.
+- Standard library first; direct external dependencies are `github.com/reeflective/readline`, `golang.org/x/image`, and `golang.org/x/term`; indirect dependencies are `github.com/rivo/uniseg` and `golang.org/x/sys`.
 - Runtime integration is OpenAI-compatible HTTP streaming with shell execution on the host OS.
 
 ### Active Scope
@@ -36,12 +36,12 @@
 - `internal/console/` is a terminal-only REPL transport with raw input, slash commands, Markdown rendering, and streaming output.
 - `internal/telegram/` is a long-polling bridge that enforces one chat, accepts text and images, and adapts runtime streaming into Telegram messages.
 - `internal/llmcall/` provides one-shot secondary model calls for role-based delegation.
-- `internal/memory/` reads persistent memory text into prompt builds without automatic writes.
 
 ### Configuration
 - Runtime config lives in `app_home/config/config.json`.
 - Work modes live in `app_home/config/modes.json`.
 - `config.json` stores providers, favorite models, role assignments, API keys, compaction thresholds, reasoning strip settings, helper preferences, and the last selected model.
+- `debugPrompt` is optional and defaults to `false`; when enabled, the runtime writes the fully built request payload to `prompt.json` before each LLM call.
 - Providers are OpenAI-compatible and use `name`, `endpoint`, and `api_key`.
 - Model roles are `default`, `vision`, `summarization`, and `advisor`.
 - First-run setup triggers when config is missing or the default role is unassigned, then asks for provider, API key, model, and optional roles.
@@ -89,7 +89,6 @@
 - `internal/platform/` - OS detection, shell selection, app home bootstrap (including `agents/`), and project directory resolution. Keywords: platform, OS, app-home, agents, shell, paths, bootstrap
 - `internal/provider/` - OpenAI-compatible HTTP client, streaming response parsing, tool-call decoding, and usage reporting. Keywords: provider, HTTP, SSE, OpenAI-compatible, usage, tool-calls
 - `internal/llmcall/` - One-shot secondary LLM calls routed by role. Keywords: delegation, advisor, summarization, secondary-call
-- `internal/memory/` - Reads persistent memory text into prompt builds without automatic writes. Keywords: memory, prompt-input, read-only, persistence
 - `prompts/` - Embedded universal, OS, and transport prompt templates. Keywords: prompts, sysprompt, transport, embedded, runtime
 - `skills/` - Builtin skill definitions seeded into app home on startup. Keywords: builtin-skills, seed, prompt-content
 - `specs/` - Specification fragments that describe the rebuilt product scope and runtime behavior. Keywords: specs, requirements, runtime, architecture

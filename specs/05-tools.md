@@ -48,7 +48,7 @@ type Registry struct {
 - `All()` — returns all registered tools
 - `FormatArgs(name, args)` — delegates to tool's FormatArgs, falls back to raw JSON string
 
-All 9 tools are registered at agent construction in `runtime.NewAgent()`:
+All 10 base tools are registered at agent construction in `runtime.NewAgent()`; `run_agent` is added only when valid one-shot agent definitions exist:
 
 ```go
 registry.Register(NewShellTool(os))
@@ -59,6 +59,9 @@ registry.Register(NewAskFriendTool(oneShotCaller))
 registry.Register(NewReplaceBlockTool(workDirGetter))
 registry.Register(NewTaskWriteTool(workDirGetter))
 registry.Register(NewTaskReadTool(workDirGetter))
+registry.Register(NewReadFileTool())
+registry.Register(NewWriteFileTool())
+// run_agent added conditionally when valid agent definitions exist
 ```
 
 ## OpenAI Tool Calling Format
@@ -141,6 +144,8 @@ Each tool has a dedicated emoji for console and Telegram display:
 | `analyze_image` | `🖼` | `🖼 image analysis …` |
 | `task_read` | `📋` | `📋 purpose …` |
 | `task_write` | `📋` | `📋 purpose …` |
+| `read_file` | `📖` | `📖 purpose …` |
+| `write_file` | `✍️` | `✍️ purpose …` |
 | Unknown | `🔧` | `🔧 name …` (generic fallback) |
 
 Mappings are defined in both `internal/console/console.go` and

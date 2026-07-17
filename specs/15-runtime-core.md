@@ -50,7 +50,7 @@ RunTurn(ctx, userInput)
        ├─ sanitizeSession()
        ├─ Builder.Build(session, active)    → full prompt from disk + history
        ├─ Compactor.StripReasoningFromPayload(messages)  → keep newest N reasoning
-       ├─ Write prompt.json debug file
+        ├─ Write prompt.json debug file when config.debugPrompt is true
        ├─ injectDirective(messages, mode.Directive)  → volatile mode injection
        │
         ├─ Provider.Stream(ctx, messages, tools, onContent, onReasoning)
@@ -156,8 +156,8 @@ written to session.json.
 
 ## Prompt Debug File
 
-`prompt.json` is written to `session_folder/prompt.json` before every LLM call.
-Contains the full built prompt after reasoning stripping and mode injection.
+When `Config.DebugPrompt` is true, `prompt.json` is written to `session_folder/prompt.json` before every LLM call. It is omitted when the flag is false or absent.
+
 Saved with `SetEscapeHTML(false)` and `SetIndent("", "  ")`. `\n` is unescaped
 for readability.
 
@@ -252,5 +252,7 @@ NewAgent(cfg, sess, os, promptsFS, workDir, handler)
   │    ├─ analyze_image (with oneShotCaller via llmcall, forced vision role)
   │    ├─ ask_a_friend (with oneShotCaller via llmcall)
   │    ├─ replace_block, task_write, task_read
+  │    ├─ read_file, write_file
+  │    ├─ run_agent (added only when valid one-shot agent definitions exist)
   └─ Return agent
 ```

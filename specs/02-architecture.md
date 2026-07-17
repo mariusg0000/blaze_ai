@@ -8,7 +8,6 @@
 | `internal/runtime/` | `runtime.go` | Agent core, Handler interface, RunTurn loop, model resolution, helper detection |
 | `internal/console/` | `console.go`, `reader.go` | Console transport (REPL, rendering, input) |
 | `internal/telegram/` | `telegram.go`, `handler.go`, `commands.go`, `config.go`, `state.go` | Telegram bridge transport (polling, message handling) |
-| `internal/desktop_old/` | archived desktop package | Removed Go WebView desktop transport kept only as migration reference |
 | `internal/tools/` | `tools.go`, `shell.go`, `skill_tools.go`, `replace_block.go`, `ask_friend.go`, `task_tools.go` | Native tool interface and implementations |
 | `internal/llmcall/` | `client.go` | OpenAI-compatible streaming chat completion client |
 | `internal/config/` | `config.go`, `modes.go` | Configuration load/save/validate, work mode management |
@@ -69,7 +68,7 @@ runtime dependency.
 Single file `runtime.go` containing:
 - `Handler` interface — the only contract between agent core and transports
 - `Agent` struct — holds all runtime state: config, session, skills, tools, prompt builder, provider client, handler
-- `NewAgent()` — constructs the agent with all dependencies wired. Tool registry built here with all 8 tools
+- `NewAgent()` — constructs the agent with all dependencies wired. Tool registry built here with 10 base tools plus conditional run_agent
 - `RunTurn()` — one conversation turn: build prompt → stream LLM → execute tool calls → loop
 - `SetModel()`, `SetModelLocal()`, `SetMode()` — model switching with compactor sync
 - HandleXxx methods for slash commands (`/exit`, `/model`, `/cd`)
@@ -77,12 +76,14 @@ Single file `runtime.go` containing:
 ### Layer 2 — Tools (`internal/tools/`)
 - `Tool` interface — 5 methods: Name, Description, Parameters, Execute, FormatArgs
 - `Registry` — map[string]Tool, built at agent construction, never modified at runtime
-- All 9 tools registered in `NewAgent()`:
+- All 10 base tools registered in `NewAgent()` plus conditional `run_agent`:
   - `shell` — command execution via platform shell
   - `load_skill` / `unload_skill` — in-memory active skills management
   - `replace_block` — exact text replacement in files
   - `ask_a_friend` — delegate to secondary model role
   - `task_read` / `task_write` — task tracking file I/O
+  - `read_file` / `write_file` — file reading and writing
+  - `run_agent` — one-shot sub-agent delegation (added only when valid agent definitions exist)
 - Default timeout: 60s per tool call
 
 ### Layer 3 — Transports
@@ -102,11 +103,6 @@ Single file `runtime.go` containing:
 - Buffered streaming: flushes to Telegram every 500ms, splits messages >3500 chars
 - Local slash commands: `/help`, `/start`, `/model`, `/clear`, `/new`, `/exit`
 
-#### Archived Desktop Reference (`internal/desktop_old/`)
-- Removed from the active build
-- Preserved only as source reference for the future Electron desktop transport
-- Contains the old HTML/CSS/JS UI, desktop-local state model, tray/hotkey integration, and Handler adapter
-
 ### Layer 4 — LLM Client (`internal/llmcall/`)
 - OpenAI-compatible chat completion API client
 - Streaming support via SSE parsing
@@ -124,7 +120,7 @@ Single file `runtime.go` containing:
 ### Layer 6 — Supporting Packages
 
 #### Config (`internal/config/`)
-- `config.json` — providers, favorite_models, roles, compaction, stripReasoning, lastModel, helperSetup
+- `config.json` — providers, favorite_models, roles, compaction, stripReasoning, last_model, helperSetup, debugPrompt
 - `modes.json` (separate file) — work modes with name/model/directive, last_mode
 - Atomic saves with corruption fallback on modes
 - Migration from legacy config-embedded modes
@@ -190,7 +186,7 @@ Agent.RunTurn(ctx, userInput)
     ├─ 3. Compactor.StripReasoningFromPayload(messages)
     │       └─ Replace old reasoning parts with empty text
     │
-    ├─ 4. Write prompt.json to session folder (debug artifact)
+    ├─ 4. Write prompt.json only when config.debugPrompt is true
     ├─ 5. Inject mode directive into latest user message
     │
     ├─ 6. Provider.Stream(ctx, messages, tools, onContent, onReasoning)
@@ -238,7 +234,7 @@ main()
   │    ├─ Create summarization provider client (if separate role)
   │    ├─ Create prompt.Builder
   │    ├─ Create compaction.Manager
-  │    ├─ Build tool registry (8 tools)
+  │    ├─ Build tool registry (10 base tools + conditional run_agent)
   │    └─ Require a transport prompt via Builder.TransportName
   │    └─ Return Agent
   │
@@ -271,8 +267,7 @@ transport registry or factory. `main.go` startup helpers are plain functions, no
 a bootstrap package. Keeps complexity low.
 
 ### Two External Dependencies
-Only `golang.org/x/sys` (OS primitives) and `golang.org/x/term` (raw terminal mode).
-Everything else is Go standard library.
+Standard library first; direct external dependencies are `github.com/reeflective/readline`, `golang.org/x/image`, and `golang.org/x/term`; indirect dependencies are `github.com/rivo/uniseg` and `golang.org/x/sys`.
 
 ### Skills Replace Memory
 No separate memory subsystem. Skills with `[DATA]` sections provide persistent

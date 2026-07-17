@@ -40,8 +40,7 @@ Known project patterns:
 ```
 
 A skill requires `[DESCRIPTION]` plus at least one of `[BEHAVIOR]` or `[DATA]`.
-Do not add executable `[SYNTAX]` or `[CODE]` sections; use native tools such as
-`shell` for execution.
+Execution uses native tools such as `shell`.
 
 ### Section Rules
 

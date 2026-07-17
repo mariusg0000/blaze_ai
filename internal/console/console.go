@@ -38,15 +38,14 @@ const (
 	colorReset       = "\033[0m"
 	colorBold        = "\033[1m"
 	colorItalic      = "\033[3m"
-	colorRed         = "\033[1;31m"     // bold red
-	colorGreen       = "\033[1;32m"     // bold green
-	colorBrightGreen = "\033[1;32m"     // bold green (same as colorGreen, for checkmark)
-	colorLightGray   = "\033[37m"       // standard white (subtle separators)
-	colorBlue        = "\033[1;34m"     // bold blue
-	colorPurple      = "\033[1;35m"     // bold magenta
-	colorOrange      = "\033[1;33m"     // bold yellow
-	colorBrightBlue  = "\033[1;34m"     // bold blue (same as colorBlue, for borders)
-	colorReasoning   = "\033[38;5;244m" // medium gray
+	colorRed         = "\033[1;31m" // bold red
+	colorGreen       = "\033[1;32m" // bold green
+	colorBrightGreen = "\033[1;32m" // bold green (same as colorGreen, for checkmark)
+	colorLightGray   = "\033[37m"   // standard white (subtle separators)
+	colorBlue        = "\033[1;34m" // bold blue
+	colorPurple      = "\033[1;35m" // bold magenta
+	colorOrange      = "\033[1;33m" // bold yellow
+	colorBrightBlue  = "\033[1;34m" // bold blue (same as colorBlue, for borders)
 	colorCtx         = "\033[1;96m"
 )
 
@@ -96,8 +95,6 @@ type Console struct {
 	turnAborting             atomic.Bool
 	lastToolArgs             string
 	agentToolAgent           string
-	reasoningStarted         bool
-	reasoningLines           int
 	spinnerActive            bool
 	spinnerVisible           bool
 	spinnerFrame             int
@@ -269,12 +266,6 @@ func (c *Console) runSpinner(stop <-chan struct{}, done chan<- struct{}) {
 // WHAT:  Forces separators and tool markers onto a fresh line after streamed content.
 func (c *Console) ensureLineBreakBeforeBlock() {
 	c.flushPendingContent()
-	if c.reasoningStarted {
-		fmt.Fprintln(c.Out)
-		fmt.Fprintln(c.Out) // blank line after reasoning
-		c.reasoningStarted = false
-		c.reasoningLines = 0
-	}
 	if c.lineOpen {
 		fmt.Fprintln(c.Out)
 		c.lineOpen = false
@@ -838,58 +829,6 @@ func (c *Console) OnUsage(promptTokens, cachedTokens, uncachedTokens int) {
 	c.updateStatusBar()
 }
 
-// OnReasoning accepts streaming reasoning chunks for Handler compatibility.
-//
-// WHAT:  Receives reasoning chunks without displaying them to the user.
-// WHY:   Reasoning remains available to provider/session handling while console output stays hidden.
-// PARAMS: delta — the reasoning text chunk from the LLM.
-func (c *Console) OnReasoning(delta string) {
-	_ = delta
-	return
-	/*
-		maxHeight := 0
-		if maxHeight > 0 && c.reasoningLines >= maxHeight {
-			return
-		}
-		if !c.reasoningStarted {
-			c.ensureLineBreakBeforeBlock()
-			// Blank line after tool group before reasoning.
-			if c.toolsStarted {
-				fmt.Fprintln(c.Out)
-				c.toolsStarted = false
-			}
-			c.reasoningLines = 0
-			fmt.Fprint(c.Out, c.color(colorReasoning, "🧠 "))
-			c.reasoningStarted = true
-		}
-		newLines := strings.Count(delta, "\n")
-		if maxHeight > 0 && c.reasoningLines+newLines > maxHeight {
-			idx := 0
-			for i := 0; i < maxHeight-c.reasoningLines; i++ {
-				nl := strings.IndexByte(delta[idx:], '\n')
-				if nl < 0 {
-					break
-				}
-				idx += nl + 1
-			}
-			if idx > 0 {
-				fmt.Fprint(c.Out, c.color(colorReasoning, delta[:idx]))
-			}
-			c.reasoningLines = maxHeight
-			fmt.Fprint(c.Out, c.color(colorReasoning, "[...truncated]\n"))
-			if bw, ok := c.Out.(*bufio.Writer); ok {
-				bw.Flush()
-			}
-			return
-		}
-		fmt.Fprint(c.Out, c.color(colorReasoning, delta))
-		c.reasoningLines += newLines
-		if bw, ok := c.Out.(*bufio.Writer); ok {
-			bw.Flush()
-		}
-	*/
-}
-
 // OnContent is called for each streaming text chunk from the LLM.
 //
 // WHAT:  Streams LLM text content to the console.
@@ -901,12 +840,6 @@ func (c *Console) OnContent(delta string) {
 	c.lockOutput()
 	defer c.unlockOutput()
 	c.setStatusPhaseLocked("Working", "")
-	if c.reasoningStarted {
-		fmt.Fprintln(c.Out)
-		fmt.Fprintln(c.Out) // blank line after reasoning
-		c.reasoningStarted = false
-		c.reasoningLines = 0
-	}
 	c.assistantContentRendered = true
 	if !c.contentStarted {
 		// Blank line after tool group before resuming content.
@@ -1703,8 +1636,6 @@ func (c *Console) resetTurnState() {
 	c.toolsStarted = false
 	c.lastToolArgs = ""
 	c.agentToolAgent = ""
-	c.reasoningStarted = false
-	c.reasoningLines = 0
 }
 
 // runAgentTurn executes one agent turn with Ctrl+C and ESC abort support.

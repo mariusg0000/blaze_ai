@@ -88,7 +88,7 @@ func StreamPhaseTimeout(phase StreamPhase) time.Duration {
 // WHY:   The runtime uses one client per provider to send chat completion requests.
 // PARAMS: Endpoint — base API URL; APIKey — secret key; Model — bare model name;
 //
-//	HTTP — HTTP client; ReasoningLevel — active reasoning level for reasoning-capable models.
+//	HTTP — HTTP client.
 type Client struct {
 	Endpoint         string
 	APIKey           string
@@ -110,14 +110,12 @@ type Client struct {
 //
 // WHAT:  Builds a provider client from config.
 // WHY:   The runtime resolves the provider and model from config to make API calls.
-// HOW:   Parses the full modelID with reasoning.ParseModelSpec to extract the bare
-//
-//	model ID and optional reasoning level suffix. Sets client.Model to the bare
-//	model name and client.ReasoningLevel to the parsed level.
+// HOW:   Validates and splits the plain provider/model_name identifier, then sets
+// client.Model to the provider-independent model name.
 //
 // PARAMS: cfg — the loaded config; modelID — full provider/model_name identifier,
 //
-//	optionally suffixed with |reasoning_level.
+//	with no suffix.
 //
 // RETURNS: *Client — configured client; error if provider not found or model invalid.
 func NewClient(cfg *config.Config, modelID string) (*Client, error) {
@@ -347,7 +345,6 @@ func (c *Client) listChatGPTModels() ([]string, error) {
 // chatRequest is the request body sent to the chat completions endpoint.
 //
 // WHAT:  OpenAI-compatible chat completion request with streaming and tools.
-// PARAMS: ReasoningEffort — optional reasoning level ("", "low", "medium", etc.).
 type chatRequest struct {
 	Model         string             `json:"model"`
 	Messages      []session.Message  `json:"messages"`
@@ -447,8 +444,12 @@ func (c *Client) StreamWithPhase(ctx context.Context, messages []session.Message
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	var capture *session.RawCapture
 	if c.RawCaptureFolder != "" {
-		_ = session.ResetRawJSON(c.RawCaptureFolder, "llm-raw.json")
+		capture, _ = session.NewRawCapture(c.RawCaptureFolder, "llm-raw.json")
+		if capture != nil {
+			defer capture.Close()
+		}
 	}
 	if onPhase != nil {
 		onPhase(PhaseConnecting)
@@ -460,7 +461,6 @@ func (c *Client) StreamWithPhase(ctx context.Context, messages []session.Message
 		Stream:        true,
 		StreamOptions: &streamOptions{IncludeUsage: true},
 	}
-	// Apply reasoning level if configured for this model.
 	bodyData, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("cannot marshal request: %w", err)
@@ -493,7 +493,7 @@ func (c *Client) StreamWithPhase(ctx context.Context, messages []session.Message
 		onPhase(PhaseWaitingFirstEvent)
 	}
 
-	return parseSSEStream(ctx, resp.Body, onContent, onReasoning, onPhase, c.RawCaptureFolder)
+	return parseSSEStream(ctx, resp.Body, onContent, onReasoning, onPhase, capture)
 }
 
 // oauthAccessToken returns a valid ChatGPT access token, refreshing and persisting it when needed.
@@ -535,7 +535,7 @@ func (c *Client) oauthAccessToken(ctx context.Context) (string, error) {
 //	onReasoning — callback for reasoning deltas (may be nil).
 //
 // RETURNS: *Response — accumulated response; error on parse failure.
-func parseSSEStream(ctx context.Context, reader io.ReadCloser, onContent func(string), onReasoning func(string), onPhase func(StreamPhase), captureFolder string) (*Response, error) {
+func parseSSEStream(ctx context.Context, reader io.ReadCloser, onContent func(string), onReasoning func(string), onPhase func(StreamPhase), capture *session.RawCapture) (*Response, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -597,8 +597,8 @@ func parseSSEStream(ctx context.Context, reader io.ReadCloser, onContent func(st
 				finalizeToolCalls(result, toolCallMap, toolCallOrder)
 				return result, nil
 			}
-			if captureFolder != "" {
-				_ = session.AppendRawJSON(captureFolder, "llm-raw.json", []byte(data))
+			if capture != nil {
+				_ = capture.Append([]byte(data))
 			}
 
 			var chunk streamChunk

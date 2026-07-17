@@ -58,8 +58,8 @@ Git workflows.
 - **Python**: last resort only, in a lazily-created venv under `app_home/scripts/venv/`
 - **Host helpers** (rg, fd, jq, git, xh, pandoc, sqlite3): detected at startup,
   listed in prompt so the LLM knows they are available without checking
-- **Native tools**: 8 hardcoded tools (shell, load_skill, unload_skill,
-  replace_block, ask_a_friend, analyze_image, task_read, task_write)
+- **Native tools**: 10 base native tools plus conditional run_agent (shell, load_skill, unload_skill,
+  replace_block, ask_a_friend, analyze_image, task_read, task_write, read_file, write_file, and conditional run_agent)
 - OpenAI-compatible tool calling with multi-tool-call per turn
 - Default tool timeout: 60s. Timeout returns `"timeout <N>s exceeded"`
 - Shell output capped at 150kB (combined stdout + stderr)
@@ -90,13 +90,12 @@ auto-provisioning beyond the explicit first-run setup flow.
   - Application entry: `main.go` — flag parsing, wiring, transport startup
   - Agent core: `internal/runtime/` — RunTurn, tool loop, prompt builder, compactor
   - Transports: `internal/console/`, `internal/telegram/` — implement Handler
-  - Tools: `internal/tools/` — 8 hardcoded native tool implementations
+  - Tools: `internal/tools/` — 10 base native tool implementations plus conditional run_agent
   - LLM client: `internal/llmcall/` — OpenAI-compatible chat completions
   - Session persistence: `internal/session/` — file-based, no database
   - Skills: `internal/skills/` — parsing, discovery, active list
   - Config: `internal/config/` — load/save/validate
   - Platform: `internal/platform/` — OS detection, app home, shell selection
-- **Archived reference**: old Go WebView desktop UI kept under `internal/desktop_old/` for the Electron migration
 
 ## App Home
 
@@ -172,7 +171,6 @@ Conservative Linux targets — minimal libc dependency, validate on older system
 - BlazeAI is not Python-first
 - BlazeAI is not designed for non-technical users
 - Automatic session cleanup is not in scope
-- Web transport is postponed
 - No fallback providers or models
 - No separate memory subsystem — skills `[DATA]` sections serve as memory and persistent knowledge storage
 - No native plugin system beyond skills — skills with `[BEHAVIOR]` extend agent behavior at runtime

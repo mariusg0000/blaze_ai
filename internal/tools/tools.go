@@ -15,8 +15,7 @@ const DefaultTimeout = 60
 
 // Tool defines the contract for a native tool executable by the runtime.
 //
-// WHAT:  Interface for all native tools (shell, load_skill, unload_skill,
-// load_memory, unload_memory, replace_block).
+// WHAT:  Interface for all native tools (shell, load_skill, unload_skill, replace_block).
 // WHY:   The runtime executes tools through this uniform interface regardless of implementation.
 type Tool interface {
 	// Name returns the tool's unique identifier.
@@ -36,7 +35,9 @@ type Tool interface {
 // WHAT:  Maps tool names to tool implementations.
 // WHY:   The runtime looks up tools by name when processing LLM tool calls.
 type Registry struct {
-	tools map[string]Tool
+	tools            map[string]Tool
+	openAICache      []OpenAITool
+	openAICacheValid bool
 }
 
 // NewRegistry returns an empty Registry.
@@ -58,6 +59,7 @@ func (r *Registry) Register(tool Tool) {
 		panic(fmt.Sprintf("duplicate tool registration: %s", name))
 	}
 	r.tools[name] = tool
+	r.openAICacheValid = false
 }
 
 // Get returns a tool by name, or nil if not found.
@@ -85,7 +87,7 @@ func (r *Registry) Filter(names []string) (*Registry, error) {
 }
 
 // Remove deletes one tool from the registry when assembling an explicit capability set.
-func (r *Registry) Remove(name string) { delete(r.tools, name) }
+func (r *Registry) Remove(name string) { delete(r.tools, name); r.openAICacheValid = false }
 
 // Clone returns a shallow registry copy that reuses immutable tool implementations.
 func (r *Registry) Clone() *Registry {
@@ -166,12 +168,15 @@ func ToOpenAI(tool Tool) OpenAITool {
 // PARAMS: r — the registry to convert.
 // RETURNS: []OpenAITool — all tools in API format.
 func AllToOpenAI(r *Registry) []OpenAITool {
-	tools := r.All()
-	result := make([]OpenAITool, len(tools))
-	for i, t := range tools {
-		result[i] = ToOpenAI(t)
+	if !r.openAICacheValid {
+		registered := r.All()
+		r.openAICache = make([]OpenAITool, len(registered))
+		for i, t := range registered {
+			r.openAICache[i] = ToOpenAI(t)
+		}
+		r.openAICacheValid = true
 	}
-	return result
+	return append([]OpenAITool(nil), r.openAICache...)
 }
 
 // OpenAIToolCall matches the OpenAI tool call format that must be sent back to the API.

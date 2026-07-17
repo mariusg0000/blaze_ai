@@ -252,8 +252,7 @@ the retained side of the cut.
 
 ## Debug and Observability
 
-- A `prompt.json` file is saved in the session folder after compaction and
-  reasoning stripping, showing the exact payload the LLM receives
+- When `config.debugPrompt` is true, the next LLM call rewrites `prompt.json` from the compacted session; otherwise no prompt debug artifact is written.
 - Error messages from summarization failures include the underlying error
 - Success/failure of each compaction is visible through the `Compact()` return
   value (bool — true if compaction occurred)

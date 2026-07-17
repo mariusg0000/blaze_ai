@@ -147,11 +147,6 @@ func (h *Handler) OnMaintenanceResult(name string, result string) {
 	h.OnToolResult(name, result)
 }
 
-// OnReasoning is a no-op for Telegram transport (reasoning not displayed via Telegram).
-func (h *Handler) OnReasoning(delta string) {
-	// No-op — Telegram does not display reasoning blocks.
-}
-
 // RequestSudoApproval is not supported in the Telegram transport.
 // Sudo commands are not allowed via Telegram for security.
 func (h *Handler) RequestSudoApproval(command string) (bool, string) {

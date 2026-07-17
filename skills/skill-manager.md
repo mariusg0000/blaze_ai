@@ -13,7 +13,7 @@ Every skill is a folder containing `skill.md`.
 
 Required sections: `[DESCRIPTION]` plus `[BEHAVIOR]`, `[DATA]`, or both.
 
-Skills are loaded with `load_skill`. Their `[BEHAVIOR]` and `[DATA]` enter the prompt context and guide the agent's decisions. Do not add executable `[SYNTAX]` or `[CODE]` sections; use native tools such as `shell` for execution.
+Skills are loaded with `load_skill`. Their `[BEHAVIOR]` and `[DATA]` enter the prompt context and guide the agent's decisions. Use native tools such as `shell` for execution.
 
 ### DESCRIPTION
 
@@ -128,7 +128,7 @@ If promoting a project skill to global:
 
 ## Restoring Builtin Skills
 
-Builtin skills (`skill-manager`, `config-manager`, `setup_helpers`, `audit-manager`, `telegram_bridge`) are seeded into `\{GLOBAL_SKILLS_DIR\}` on startup. To restore a builtin to its factory version, delete its folder and restart BlazeAI.
+Builtin skills (`skill-manager`, `config-manager`, `audit-manager`) are seeded into `\{GLOBAL_SKILLS_DIR\}` on startup. To restore a builtin to its factory version, delete its folder and restart BlazeAI.
 
 [DATA]
 skill.format=folder/<name>/skill.md with \[DESCRIPTION\] (required) and at least one of \[BEHAVIOR\] or \[DATA\]

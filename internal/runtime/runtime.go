@@ -37,7 +37,7 @@ const userAbortMessage = "User requested an urgent abort. The previous assistant
 // Handler is the contract between the agent core and transports.
 //
 // WHAT:  The only boundary between agent core and user-facing transport.
-// WHY:   Console and web both implement this interface over the same core.
+// WHY:   Console and Telegram both implement this interface over the same core.
 type Handler interface {
 	// OnContent is called for each streaming text chunk from the LLM.
 	OnContent(delta string)
@@ -47,9 +47,6 @@ type Handler interface {
 	OnToolResult(name string, result string)
 	// OnUsage is called after each provider response with prompt token count.
 	OnUsage(promptTokens, cachedTokens, uncachedTokens int)
-	// OnReasoning is called for each streaming reasoning/thinking chunk from the LLM.
-	OnReasoning(delta string)
-
 	// OnSystem is called when the runtime needs to display a system-level notification
 	// to the user.
 	OnSystem(message string)
@@ -327,10 +324,6 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		ctx = context.Background()
 	}
 
-	if err := a.sanitizeSession(); err != nil {
-		return err
-	}
-
 	// Append user message to session.
 	if err := a.Session.Append(session.Message{
 		Role:    "user",
@@ -353,30 +346,30 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		// Strip reasoning parts from payload (keep newest N, global count).
 		messages = a.Compactor.StripReasoningFromPayload(messages)
 
-		// Write full built prompt to session folder for debugging.
-		promptPath := filepath.Join(a.Session.Folder, "prompt.json")
-		var buf bytes.Buffer
-		enc := json.NewEncoder(&buf)
-		enc.SetEscapeHTML(false)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(messages); err == nil {
-			raw := strings.ReplaceAll(buf.String(), "\\n", "\n")
-			_ = os.WriteFile(promptPath, []byte(raw), 0644)
-		}
-
 		// Inject volatile mode directive into the latest user message only (copy, never mutate session).
 		if a.CurrentMode != nil && strings.TrimSpace(a.CurrentMode.Directive) != "" {
 			messages = injectDirective(messages, a.CurrentMode.Directive)
 		}
 
+		if a.Config.DebugPrompt {
+			promptPath := filepath.Join(a.Session.Folder, "prompt.json")
+			var buf bytes.Buffer
+			enc := json.NewEncoder(&buf)
+			enc.SetEscapeHTML(false)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(messages); err == nil {
+				raw := strings.ReplaceAll(buf.String(), "\\n", "\n")
+				_ = os.WriteFile(promptPath, []byte(raw), 0644)
+			}
+		}
+
 		// Stream LLM response.
 		toolDefs := tools.AllToOpenAI(a.Tools)
-		var onReasoning func(string)
 		var onPhase func(provider.StreamPhase)
 		if phaseHandler, ok := a.Handler.(StreamPhaseHandler); ok {
 			onPhase = phaseHandler.OnStreamPhase
 		}
-		resp, err := a.Provider.StreamWithPhase(ctx, messages, toolDefs, a.Handler.OnContent, onReasoning, onPhase)
+		resp, err := a.Provider.StreamWithPhase(ctx, messages, toolDefs, a.Handler.OnContent, nil, onPhase)
 		if err != nil && !errors.Is(err, provider.ErrAborted) {
 			return fmt.Errorf("LLM stream failed: %w", err)
 		}

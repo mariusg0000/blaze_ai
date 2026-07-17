@@ -294,6 +294,9 @@ func TestDefaultStripReasoning(t *testing.T) {
 // TestDefault verifies that Default returns a config with populated defaults and empty roles.
 func TestDefault(t *testing.T) {
 	cfg := Default()
+	if cfg.DebugPrompt {
+		t.Error("Default() DebugPrompt = true, want false")
+	}
 	if cfg.Roles.Default != "" {
 		t.Errorf("Default() Roles.Default = %q, want empty", cfg.Roles.Default)
 	}
@@ -305,6 +308,35 @@ func TestDefault(t *testing.T) {
 	}
 	if !cfg.StripReasoning.Enable {
 		t.Error("Default() StripReasoning.Enable = false, want true")
+	}
+}
+
+// TestDebugPromptRoundTrip verifies the explicit prompt-debug configuration flag.
+func TestDebugPromptRoundTrip(t *testing.T) {
+	cfg := validConfig()
+	cfg.DebugPrompt = true
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo() error: %v", err)
+	}
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom() error: %v", err)
+	}
+	if !loaded.DebugPrompt {
+		t.Fatal("loaded DebugPrompt = false, want true")
+	}
+
+	data, err := json.Marshal(Default())
+	if err != nil {
+		t.Fatalf("Marshal(Default()) error: %v", err)
+	}
+	var decoded Config
+	if err := json.Unmarshal(append(data[:len(data)-1], []byte(`,"debugPrompt":true}`)...), &decoded); err != nil {
+		t.Fatalf("Unmarshal(debugPrompt) error: %v", err)
+	}
+	if !decoded.DebugPrompt {
+		t.Fatal("decoded DebugPrompt = false, want true")
 	}
 }
 
