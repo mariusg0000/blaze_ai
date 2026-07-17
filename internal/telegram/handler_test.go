@@ -151,7 +151,6 @@ func TestToolEmojiMapping(t *testing.T) {
 		"load_skill":    "📥",
 		"unload_skill":  "📤",
 		"replace_block": "📝",
-		"run_skill":     "🚀",
 		"ask_a_friend":  "🤝",
 		"analyze_image": "🖼",
 		"unknown":       "🔧",

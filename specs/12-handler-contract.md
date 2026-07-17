@@ -105,7 +105,7 @@ never stored in session JSON or prompt text.
 File: `internal/console/console.go`
 
 Console is the primary transport. It renders:
-- `OnReasoning` → `🧠` prefix, streaming text (colored dim)
+- `OnReasoning` → captured internally for session/provider compatibility; not displayed to user
 - `OnContent` → `[BLAZE]` label, streaming text
 - `OnToolCall` → emoji + purpose on its own line (e.g., `💻 Search files...`)
 - `OnToolResult` → status badge + CTX on same line (` ✔️ CTX: 45K`)

@@ -10,7 +10,7 @@
 
 ### Purpose
 - BlazeAI is a cross-platform AI terminal agent for experienced users.
-- The current implementation is a Go shell-native runtime with console, Telegram, and web transports.
+- The current implementation is a Go shell-native runtime with console and Telegram transports.
 - The system favors fast interaction, low overhead, and explicit failure over silent degradation.
 
 ### Technology Stack
@@ -20,7 +20,7 @@
 
 ### Active Scope
 - Greenfield rebuild driven by the spec fragments in `specs/`.
-- Console is the primary transport; Telegram transport is implemented; web transport is a minimal HTTP server with SSE streaming that mirrors the console output in a browser.
+- Console is the primary transport; Telegram transport is implemented.
 - User-facing behavior should stop on missing configuration or model selection errors rather than degrade silently.
 
 ### Architecture And Runtime
@@ -35,7 +35,6 @@
 - `internal/tools/` implements shell execution, skill tools, ask_a_friend, analyze_image, replace_block, task tools, and filtered registries.
 - `internal/console/` is a terminal-only REPL transport with raw input, slash commands, Markdown rendering, and streaming output.
 - `internal/telegram/` is a long-polling bridge that enforces one chat, accepts text and images, and adapts runtime streaming into Telegram messages.
-- `internal/web/` is a minimal HTTP server with SSE streaming that renders the transcript as terminal-like HTML rows.
 - `internal/llmcall/` provides one-shot secondary model calls for role-based delegation.
 - `internal/memory/` reads persistent memory text into prompt builds without automatic writes.
 
@@ -71,7 +70,7 @@
 - `go.mod` pins `GOTOOLCHAIN=auto`, so a Go 1.21+ host can download the pinned toolchain on demand.
 
 ### Project Map
-- `main.go` - CLI entrypoint. Parses `-c`, `-r`, `--console`, `-telegram`, and `-web`, bootstraps app home, loads config or first-run setup, opens a session, and starts the selected transport over the agent core. Keywords: entrypoint, flags, bootstrap, session, console, telegram, web
+- `main.go` - CLI entrypoint. Parses `-c`, `-r`, `--console`, and `--telegram`, bootstraps app home, loads config or first-run setup, opens a session, and starts the selected transport over the agent core. Keywords: entrypoint, flags, bootstrap, session, console, telegram
 - `embed.go` - Embeds `prompts/` and `skills/` into the binary with `go:embed`. Keywords: embed, assets, prompts, skills, binary, startup
 - `firstrun.go` - Interactive first-run provider, API key, model, and role setup. Keywords: first-run, config, providers, API keys, models, roles
 - `go.mod` - Module root and Go toolchain declaration. Keywords: module, toolchain, dependencies, build, Go
@@ -81,19 +80,18 @@
 - `internal/runtime/mode_capabilities.go` - Applies config/modes.json denied_tools to direct runtime tools and limits run_agent to explicitly allowed one-shot agents. Keywords: modes, permissions, delegation, denied-tools, agents
 - `internal/console/` - Terminal REPL transport implementing `OnContent`, `OnToolCall`, and `OnToolResult`. Handles raw input, slash commands, and Markdown rendering. Keywords: console, REPL, ANSI, raw mode, streaming, slash-commands
 - `internal/telegram/` - Telegram bridge transport with long polling, single-chat enforcement, text/image handling, and streaming output adaptation. Keywords: telegram, bridge, polling, images, handler, transport
-- `internal/web/` - Minimal HTTP server with SSE streaming that mirrors the console output in a browser with terminal-like rendering. Keywords: web, SSE, streaming, terminal, browser, HTML
 - `internal/prompt/` - Rebuilds the runtime prompt from disk sources on every LLM call and injects variables. Keywords: prompt, sysprompt, variables, skills, AGENTS, specs
 - `internal/config/` - Loads and validates runtime config and work modes, including providers, roles, compaction settings, and first-run conditions. Keywords: config, validation, modes, roles, providers, compaction, first-run
 - `internal/session/` - File-based session persistence under project-scoped session folders. Keywords: sessions, JSON, persistence, resume, clean-close
 - `internal/compaction/` - Context compaction, pruning, summary file management, and reasoning stripping. Keywords: compaction, summaries, pruning, reasoning, token budget
 - `internal/tools/` - Native tools: shell, skill tools, ask_a_friend, analyze_image, replace_block, task tools, run_agent, agent_done, and filtered registries. Keywords: tools, shell, editing, image, delegation, agents, timeout
-- `internal/skills/` - Skill discovery, parsing, validation, scoping, and active list management. Keywords: skills, discovery, parsing, scopes, active-list, runnable
+- `internal/skills/` - Skill discovery, parsing, validation, scoping, and active list management. Keywords: skills, discovery, parsing, scopes, active-list
 - `internal/platform/` - OS detection, shell selection, app home bootstrap (including `agents/`), and project directory resolution. Keywords: platform, OS, app-home, agents, shell, paths, bootstrap
 - `internal/provider/` - OpenAI-compatible HTTP client, streaming response parsing, tool-call decoding, and usage reporting. Keywords: provider, HTTP, SSE, OpenAI-compatible, usage, tool-calls
 - `internal/llmcall/` - One-shot secondary LLM calls routed by role. Keywords: delegation, advisor, summarization, secondary-call
 - `internal/memory/` - Reads persistent memory text into prompt builds without automatic writes. Keywords: memory, prompt-input, read-only, persistence
 - `prompts/` - Embedded universal, OS, and transport prompt templates. Keywords: prompts, sysprompt, transport, embedded, runtime
-- `skills/` - Builtin skill definitions seeded into app home on startup. Keywords: builtin-skills, seed, prompt-content, runnable-skills
+- `skills/` - Builtin skill definitions seeded into app home on startup. Keywords: builtin-skills, seed, prompt-content
 - `specs/` - Specification fragments that describe the rebuilt product scope and runtime behavior. Keywords: specs, requirements, runtime, architecture
 - `decisions/` - Timestamped session decision summaries used to keep rationale attached to changes. Keywords: decisions, rationale, history, change-log
 

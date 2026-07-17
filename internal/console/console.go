@@ -23,7 +23,6 @@ import (
 	"blazeai/internal/config"
 	"blazeai/internal/helpers"
 	"blazeai/internal/provider"
-	"blazeai/internal/reasoning"
 	"blazeai/internal/runtime"
 	"blazeai/internal/skills"
 
@@ -397,20 +396,8 @@ func (c *Console) buildStatusBar() string {
 	}
 	phase = fmt.Sprintf("%-*s", phaseWidth, phase)
 
-	// Dynamic reasoning level: only show for reasoning-capable models.
-	reasoningSeg := ""
-	if reasoning.IsReasoningCapableForModel(c.Agent.ModelID) {
-		level := c.Agent.ActiveReasoningLevel()
-		if level == "" {
-			level = reasoning.DefaultForModel(c.Agent.ModelID)
-		}
-		if level != "" {
-			reasoningSeg = " | " + level
-		}
-	}
-
 	// Visible text (ASCII only) for width calculation.
-	vis := " " + phase + " | " + modeName + " | " + model + reasoningSeg + " | " + workDir + " | CTX " + ctx + "(H:" + cacheHit + "|M:" + cacheMiss + "|S:" + summaries + ") "
+	vis := " " + phase + " | " + modeName + " | " + model + " | " + workDir + " | CTX " + ctx + "(H:" + cacheHit + "|M:" + cacheMiss + "|S:" + summaries + ") "
 	visLen := len(vis)
 
 	// Build ANSI-colored text.
@@ -434,12 +421,6 @@ func (c *Console) buildStatusBar() string {
 	b.WriteString(" | ")
 	b.WriteString(acc)
 	b.WriteString(model)
-	if reasoningSeg != "" {
-		b.WriteString(sep)
-		b.WriteString(" | ")
-		b.WriteString(val)
-		b.WriteString(reasoningSeg[3:]) // skip " | " prefix
-	}
 	b.WriteString(sep)
 	b.WriteString(" | ")
 	b.WriteString(dir)
@@ -492,47 +473,6 @@ func (c *Console) updateStatusBar() {
 		return
 	}
 	c.rl.Hint.Persist(c.buildStatusBar())
-}
-
-// cycleReasoningLevel advances the active reasoning level to the next supported
-// level for the current model, wrapping to the first level after the last.
-// If no level is set, it selects the first supported level.
-//
-// WHAT:  Cycles the reasoning level for Ctrl+] hotkey.
-// WHY:   Users need fast keyboard-level cycling for reasoning-capable models.
-// HOW:   Gets the supported levels from the reasoning descriptor, finds the
-//
-//	index of the current level, and advances by one with wrap-around.
-//	When the current level is empty, starts with the first supported level.
-//	Delegates persistence and provider-state mutation to SetActiveReasoningLevel.
-//
-// RETURNS: error if the model does not support reasoning or SetActiveReasoningLevel
-//
-//	fails.
-func (c *Console) cycleReasoningLevel() error {
-	supported := reasoning.SupportedForModel(c.Agent.ModelID)
-	if len(supported) == 0 {
-		return fmt.Errorf("model %q does not support reasoning levels", c.Agent.ModelID)
-	}
-	current := c.Agent.ActiveReasoningLevel()
-	var next string
-	if current == "" {
-		next = supported[0]
-	} else {
-		idx := -1
-		for i, l := range supported {
-			if l == current {
-				idx = i
-				break
-			}
-		}
-		if idx < 0 {
-			next = supported[0]
-		} else {
-			next = supported[(idx+1)%len(supported)]
-		}
-	}
-	return c.Agent.SetActiveReasoningLevel(next)
 }
 
 // refreshTurnStatusBarLocked redraws the footer in place without moving the output cursor.
@@ -701,8 +641,6 @@ func (c *Console) showStartupSplash() {
 		{"Ctrl+\\", "cycle favorite model"},
 		{"Ctrl+F", "add model to favorites"},
 		{"Ctrl+R", "remove model from favorites"},
-		{"Ctrl+T", "toggle reasoning display"},
-		{"Ctrl+]", "cycle reasoning level"},
 		{"ESC", "cancel active turn"},
 		{"Ctrl+D", "exit (empty line)"},
 	}
@@ -900,57 +838,56 @@ func (c *Console) OnUsage(promptTokens, cachedTokens, uncachedTokens int) {
 	c.updateStatusBar()
 }
 
-// OnReasoning is called for each streaming reasoning chunk from the LLM.
+// OnReasoning accepts streaming reasoning chunks for Handler compatibility.
 //
-// WHAT:  Streams LLM reasoning/thinking blocks in muted color, truncated to ReasoningMaxHeight lines.
+// WHAT:  Receives reasoning chunks without displaying them to the user.
+// WHY:   Reasoning remains available to provider/session handling while console output stays hidden.
 // PARAMS: delta — the reasoning text chunk from the LLM.
 func (c *Console) OnReasoning(delta string) {
-	if c.turnAborting.Load() {
-		return
-	}
-	c.lockOutput()
-	defer c.unlockOutput()
-	c.setStatusPhaseLocked("Think", "")
-	maxHeight := c.Agent.Config.ReasoningMaxHeight
-	if maxHeight > 0 && c.reasoningLines >= maxHeight {
-		return
-	}
-	if !c.reasoningStarted {
-		c.ensureLineBreakBeforeBlock()
-		// Blank line after tool group before reasoning.
-		if c.toolsStarted {
-			fmt.Fprintln(c.Out)
-			c.toolsStarted = false
+	_ = delta
+	return
+	/*
+		maxHeight := 0
+		if maxHeight > 0 && c.reasoningLines >= maxHeight {
+			return
 		}
-		c.reasoningLines = 0
-		fmt.Fprint(c.Out, c.color(colorReasoning, "🧠 "))
-		c.reasoningStarted = true
-	}
-	newLines := strings.Count(delta, "\n")
-	if maxHeight > 0 && c.reasoningLines+newLines > maxHeight {
-		idx := 0
-		for i := 0; i < maxHeight-c.reasoningLines; i++ {
-			nl := strings.IndexByte(delta[idx:], '\n')
-			if nl < 0 {
-				break
+		if !c.reasoningStarted {
+			c.ensureLineBreakBeforeBlock()
+			// Blank line after tool group before reasoning.
+			if c.toolsStarted {
+				fmt.Fprintln(c.Out)
+				c.toolsStarted = false
 			}
-			idx += nl + 1
+			c.reasoningLines = 0
+			fmt.Fprint(c.Out, c.color(colorReasoning, "🧠 "))
+			c.reasoningStarted = true
 		}
-		if idx > 0 {
-			fmt.Fprint(c.Out, c.color(colorReasoning, delta[:idx]))
+		newLines := strings.Count(delta, "\n")
+		if maxHeight > 0 && c.reasoningLines+newLines > maxHeight {
+			idx := 0
+			for i := 0; i < maxHeight-c.reasoningLines; i++ {
+				nl := strings.IndexByte(delta[idx:], '\n')
+				if nl < 0 {
+					break
+				}
+				idx += nl + 1
+			}
+			if idx > 0 {
+				fmt.Fprint(c.Out, c.color(colorReasoning, delta[:idx]))
+			}
+			c.reasoningLines = maxHeight
+			fmt.Fprint(c.Out, c.color(colorReasoning, "[...truncated]\n"))
+			if bw, ok := c.Out.(*bufio.Writer); ok {
+				bw.Flush()
+			}
+			return
 		}
-		c.reasoningLines = maxHeight
-		fmt.Fprint(c.Out, c.color(colorReasoning, "[...truncated]\n"))
+		fmt.Fprint(c.Out, c.color(colorReasoning, delta))
+		c.reasoningLines += newLines
 		if bw, ok := c.Out.(*bufio.Writer); ok {
 			bw.Flush()
 		}
-		return
-	}
-	fmt.Fprint(c.Out, c.color(colorReasoning, delta))
-	c.reasoningLines += newLines
-	if bw, ok := c.Out.(*bufio.Writer); ok {
-		bw.Flush()
-	}
+	*/
 }
 
 // OnContent is called for each streaming text chunk from the LLM.
@@ -1053,8 +990,6 @@ func toolEmoji(name string) string {
 		return "📤"
 	case "replace_block":
 		return "📝"
-	case "run_skill":
-		return "🚀"
 	case "ask_a_friend":
 		return "🤝"
 	case "analyze_image":
@@ -1635,29 +1570,12 @@ func (c *Console) runTTY() error {
 			}
 			c.updateStatusBar()
 		},
-		"blazeai-reasoning-toggle": func() {
-			c.Agent.Config.ShowReasoning = !c.Agent.Config.ShowReasoning
-			if err := c.Agent.Config.Save(); err != nil {
-				showShortcutError("Reasoning toggle error: %v", err)
-				return
-			}
-			c.updateStatusBar()
-		},
-		"blazeai-reasoning-next": func() {
-			if err := c.cycleReasoningLevel(); err != nil {
-				showShortcutError("Reasoning level: %v", err)
-				return
-			}
-			c.updateStatusBar()
-		},
 	})
 	for sequence, action := range map[string]string{
-		`\C-i`: "blazeai-mode-next",        // Tab
-		`\C-\`: "blazeai-model-next",       // Ctrl+\\
-		`\C-f`: "blazeai-favorite-add",     // Ctrl+F
-		`\C-r`: "blazeai-favorite-remove",  // Ctrl+R
-		`\C-t`: "blazeai-reasoning-toggle", // Ctrl+T
-		`\C-]`: "blazeai-reasoning-next",   // Ctrl+]
+		`\C-i`: "blazeai-mode-next",       // Tab
+		`\C-\`: "blazeai-model-next",      // Ctrl+\\
+		`\C-f`: "blazeai-favorite-add",    // Ctrl+F
+		`\C-r`: "blazeai-favorite-remove", // Ctrl+R
 	} {
 		// Config.Bind stores raw bytes; decode inputrc notation before binding.
 		key := inputrc.Unescape(sequence)

@@ -72,52 +72,6 @@ func TestNewClientProviderNotFound(t *testing.T) {
 	}
 }
 
-// TestNewClientWithSuffix verifies that a suffixed model ID sets the bare model and reasoning level.
-func TestNewClientWithSuffix(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer server.Close()
-
-	cfg := &config.Config{
-		Providers: []config.Provider{
-			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
-		},
-		Roles: config.Roles{Default: "test/test-model|max"},
-	}
-	client, err := NewClient(cfg, "test/test-model|max")
-	if err != nil {
-		t.Fatalf("NewClient() error: %v", err)
-	}
-	if client.Model != "test-model" {
-		t.Errorf("Model = %q, want 'test-model' (bare)", client.Model)
-	}
-	if client.ReasoningLevel != "max" {
-		t.Errorf("ReasoningLevel = %q, want 'max'", client.ReasoningLevel)
-	}
-}
-
-// TestNewClientWithNestedSuffix verifies handling of deeply nested provider/model IDs with suffix.
-func TestNewClientWithNestedSuffix(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer server.Close()
-
-	cfg := &config.Config{
-		Providers: []config.Provider{
-			{Name: "openrouter", Endpoint: server.URL, APIKey: "sk-test"},
-		},
-		Roles: config.Roles{Default: "openrouter/openai/o3|high"},
-	}
-	client, err := NewClient(cfg, "openrouter/openai/o3|high")
-	if err != nil {
-		t.Fatalf("NewClient() error: %v", err)
-	}
-	if client.Model != "openai/o3" {
-		t.Errorf("Model = %q, want 'openai/o3' (bare)", client.Model)
-	}
-	if client.ReasoningLevel != "high" {
-		t.Errorf("ReasoningLevel = %q, want 'high'", client.ReasoningLevel)
-	}
-}
-
 // TestStreamReasoning verifies reasoning_content capture from streaming.
 func TestStreamReasoning(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

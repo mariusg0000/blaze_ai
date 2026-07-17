@@ -70,7 +70,6 @@ var embeddedBuiltinSkills embed.FS
 | `sysprompt.windows.md` | Windows-specific prompt additions |
 | `transport.console.md` | Console-specific prompt rules |
 | `transport.telegram.md` | Telegram-specific prompt rules |
-| `transport.web.md` | Web-specific prompt rules |
 
 Resolved at startup: `fs.Sub(embeddedPrompts, "prompts")` → passed to
 `prompt.Builder`, which then requires `Builder.TransportName` to select the

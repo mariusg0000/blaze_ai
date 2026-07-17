@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"strings"
 
-	"blazeai/internal/reasoning"
 	"blazeai/internal/session"
 	"blazeai/internal/tools"
 	usagepkg "blazeai/internal/usage"
@@ -123,7 +122,7 @@ func (c *Client) streamChatGPT(ctx context.Context, messages []session.Message, 
 	if err != nil {
 		return nil, err
 	}
-	requestBody, err := buildChatGPTRequest(c.Model, messages, toolDefs, c.ReasoningLevel)
+	requestBody, err := buildChatGPTRequest(c.Model, messages, toolDefs)
 	if err != nil {
 		return nil, fmt.Errorf("cannot build ChatGPT request: %w", err)
 	}
@@ -185,13 +184,9 @@ func (c *Client) streamChatGPT(ctx context.Context, messages []session.Message, 
 	return parseChatGPTSSE(ctx, response.Body, onContent, onReasoning, onPhase, c.RawCaptureFolder)
 }
 
-func buildChatGPTRequest(model string, messages []session.Message, toolDefs []tools.OpenAITool, reasoningLevel string) (chatGPTResponsesRequest, error) {
+func buildChatGPTRequest(model string, messages []session.Message, toolDefs []tools.OpenAITool) (chatGPTResponsesRequest, error) {
 	if isResponsesLiteModel(model) {
-		return buildChatGPTLiteRequest(model, messages, toolDefs, reasoningLevel)
-	}
-	effort, err := resolveReasoningEffort(model, reasoningLevel)
-	if err != nil {
-		return chatGPTResponsesRequest{}, err
+		return buildChatGPTLiteRequest(model, messages, toolDefs)
 	}
 	responseTools := buildResponseTools(toolDefs)
 	input, instructions, err := buildChatGPTInput(messages)
@@ -211,18 +206,11 @@ func buildChatGPTRequest(model string, messages []session.Message, toolDefs []to
 		Text:              chatGPTText{Verbosity: "low"},
 		PromptCacheKey:    "",
 	}
-	if effort != "" {
-		req.Reasoning = chatGPTReasoning{Effort: effort, Summary: "auto"}
-	}
 	return req, nil
 }
 
-func buildChatGPTLiteRequest(model string, messages []session.Message, toolDefs []tools.OpenAITool, reasoningLevel string) (chatGPTResponsesRequest, error) {
+func buildChatGPTLiteRequest(model string, messages []session.Message, toolDefs []tools.OpenAITool) (chatGPTResponsesRequest, error) {
 	input, err := buildChatGPTLiteInput(messages, toolDefs)
-	if err != nil {
-		return chatGPTResponsesRequest{}, err
-	}
-	effort, err := resolveReasoningEffort(model, reasoningLevel)
 	if err != nil {
 		return chatGPTResponsesRequest{}, err
 	}
@@ -236,10 +224,6 @@ func buildChatGPTLiteRequest(model string, messages []session.Message, toolDefs 
 		Include:           []string{"reasoning.encrypted_content"},
 		Text:              chatGPTText{Verbosity: "low"},
 		Reasoning:         chatGPTReasoning{Context: "all_turns"},
-	}
-	if effort != "" {
-		req.Reasoning.Effort = effort
-		req.Reasoning.Summary = "auto"
 	}
 	return req, nil
 }
@@ -408,22 +392,6 @@ func ptr(b bool) *bool {
 //
 // PARAMS: modelID — bare model name for capability check; level — standard reasoning level.
 // RETURNS: wire-level effort string; error if normalization fails for a non-empty level.
-func resolveReasoningEffort(modelID, level string) (string, error) {
-	if level == "" {
-		return "", nil
-	}
-	fragment, err := reasoning.Normalize("openai_responses", modelID, level)
-	if err != nil {
-		return "", fmt.Errorf("reasoning level error: %w", err)
-	}
-	if reasoningObj, ok := fragment["reasoning"].(map[string]any); ok {
-		if effort, ok := reasoningObj["effort"].(string); ok {
-			return effort, nil
-		}
-	}
-	return "", nil
-}
-
 func decodeOpenAIToolCalls(value interface{}) ([]tools.OpenAIToolCall, error) {
 	if value == nil {
 		return nil, nil

@@ -9,7 +9,6 @@ Formatting:
 
 Console behavior:
 - The console renders Markdown incrementally during streaming.
-- Reasoning may be visible when enabled.
 - Tool activity is shown separately by the transport; do not narrate tool mechanics unless they matter to the user.
 
 Style:

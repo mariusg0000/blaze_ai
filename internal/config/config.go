@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"blazeai/internal/platform"
-	"blazeai/internal/reasoning"
 )
 
 // ErrConfigMissing is returned when config.json does not exist on disk.
@@ -24,6 +23,9 @@ var ErrDefaultRoleUnassigned = errors.New("default model role is not assigned")
 
 // ErrInvalidModelFormat is returned when a model identifier is not in provider/model_name form.
 var ErrInvalidModelFormat = errors.New("model identifier must be in provider/model_name format")
+
+// ErrReasoningSuffix rejects removed model|level identifiers.
+var ErrReasoningSuffix = errors.New("reasoning level suffixes are unsupported; use a plain model identifier")
 
 // ErrProviderNotFound is returned when a model references a provider not in the providers list.
 var ErrProviderNotFound = errors.New("model references a provider that does not exist")
@@ -143,17 +145,15 @@ type HelperSetup struct {
 //
 //	Compaction — thresholds; StripReasoning — payload settings; LastModel — persisted selection;
 //	HelperSetup — UX preferences for optional host helper installation prompts;
-//	ReasoningMaxHeight — max reasoning lines displayed (0 = unlimited).
+//	StripReasoning — payload reasoning retention settings.
 type Config struct {
-	Providers          []Provider     `json:"providers"`
-	FavoriteModels     []string       `json:"favorite_models"`
-	Roles              Roles          `json:"roles"`
-	Compaction         Compaction     `json:"compaction"`
-	StripReasoning     StripReasoning `json:"stripReasoning"`
-	LastModel          string         `json:"last_model,omitempty"`
-	HelperSetup        HelperSetup    `json:"helperSetup,omitempty"`
-	ShowReasoning      bool           `json:"showReasoning"`
-	ReasoningMaxHeight int            `json:"reasoning_max_height"`
+	Providers      []Provider     `json:"providers"`
+	FavoriteModels []string       `json:"favorite_models"`
+	Roles          Roles          `json:"roles"`
+	Compaction     Compaction     `json:"compaction"`
+	StripReasoning StripReasoning `json:"stripReasoning"`
+	LastModel      string         `json:"last_model,omitempty"`
+	HelperSetup    HelperSetup    `json:"helperSetup,omitempty"`
 }
 
 // DefaultCompaction returns the pre-filled compaction thresholds from spec 05.
@@ -192,13 +192,11 @@ func DefaultStripReasoning() StripReasoning {
 // RETURNS: Config — defaults populated, providers/models/roles empty.
 func Default() *Config {
 	return &Config{
-		Providers:          []Provider{},
-		FavoriteModels:     []string{},
-		Roles:              Roles{},
-		Compaction:         DefaultCompaction(),
-		StripReasoning:     DefaultStripReasoning(),
-		ShowReasoning:      false,
-		ReasoningMaxHeight: 150,
+		Providers:      []Provider{},
+		FavoriteModels: []string{},
+		Roles:          Roles{},
+		Compaction:     DefaultCompaction(),
+		StripReasoning: DefaultStripReasoning(),
 		HelperSetup: HelperSetup{
 			Dismissed: false,
 			Declined:  []string{},
@@ -399,9 +397,6 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("favorite model %q: %w", model, err)
 		}
 	}
-	if c.ReasoningMaxHeight < 0 {
-		return fmt.Errorf("reasoning_max_height must be >= 0: got %d", c.ReasoningMaxHeight)
-	}
 	return nil
 }
 
@@ -420,12 +415,11 @@ func (c *Config) Validate() error {
 // PARAMS: model — the model identifier to check, optionally suffixed.
 // RETURNS: error if the format is invalid.
 func validateModelFormat(model string) error {
-	spec, err := reasoning.ParseModelSpec(model)
-	if err != nil {
-		return err
+	if strings.Contains(model, "|") {
+		return ErrReasoningSuffix
 	}
-	idx := strings.Index(spec.ModelID, "/")
-	if idx <= 0 || idx == len(spec.ModelID)-1 {
+	idx := strings.Index(model, "/")
+	if idx <= 0 || idx == len(model)-1 {
 		return ErrInvalidModelFormat
 	}
 	return nil
@@ -494,12 +488,11 @@ func providerNameSet(providers []Provider) map[string]bool {
 // PARAMS: model — the model identifier, optionally suffixed; providers — the provider name lookup table.
 // RETURNS: error if the provider does not exist.
 func validateModelProvider(model string, providers map[string]bool) error {
-	spec, err := reasoning.ParseModelSpec(model)
-	if err != nil {
-		return err
+	if strings.Contains(model, "|") {
+		return ErrReasoningSuffix
 	}
-	idx := strings.Index(spec.ModelID, "/")
-	providerName := spec.ModelID[:idx]
+	idx := strings.Index(model, "/")
+	providerName := model[:idx]
 	if !providers[providerName] {
 		return fmt.Errorf("%w: %s", ErrProviderNotFound, providerName)
 	}
@@ -561,15 +554,11 @@ func (c *Config) ModelForRole(role string) (string, error) {
 // PARAMS: modelID — the full provider/model_name string, optionally suffixed.
 // RETURNS: provider string, model string — the two parts.
 func SplitModelID(modelID string) (provider, model string) {
-	spec, err := reasoning.ParseModelSpec(modelID)
-	if err != nil {
+	idx := strings.Index(modelID, "/")
+	if idx < 0 {
 		return modelID, ""
 	}
-	idx := strings.Index(spec.ModelID, "/")
-	if idx < 0 {
-		return spec.ModelID, ""
-	}
-	return spec.ModelID[:idx], spec.ModelID[idx+1:]
+	return modelID[:idx], modelID[idx+1:]
 }
 
 // AddFavorite adds a model ID to the favorites list if not already present.

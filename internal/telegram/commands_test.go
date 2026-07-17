@@ -63,9 +63,6 @@ func writePromptFixtures(t *testing.T, promptsDir string) {
 	if err := os.WriteFile(filepath.Join(promptsDir, "transport.telegram.md"), []byte("telegram transport"), 0644); err != nil {
 		t.Fatalf("write transport.telegram.md: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(promptsDir, "transport.web.md"), []byte("web transport"), 0644); err != nil {
-		t.Fatalf("write transport.web.md: %v", err)
-	}
 }
 
 func TestHandleCommandModelPersistsStateOnly(t *testing.T) {

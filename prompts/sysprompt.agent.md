@@ -53,8 +53,6 @@ Before performing any task, scan available skill descriptions. If a domain or sy
 **Active skills:**
 {SKILLS_ACTIVE}
 
-{RUNNABLE_SKILLS_SECTION}
-
 [HOST ENVIRONMENT HELPERS]
 
 {HOST_HELPERS_ADVISORY}

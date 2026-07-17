@@ -41,7 +41,7 @@ func TestBuildChatGPTRequestConvertsHistoryAndTools(t *testing.T) {
 	}, []tools.OpenAITool{{
 		Type:     "function",
 		Function: tools.FunctionDef{Name: "shell", Description: "Run a command", Parameters: json.RawMessage(`{"type":"object"}`)},
-	}}, "")
+	}})
 	if err != nil {
 		t.Fatalf("buildChatGPTRequest() error: %v", err)
 	}
@@ -227,15 +227,12 @@ func TestBuildChatGPTLiteRequestAddsAllTurnsReasoningAndStripsImageDetail(t *tes
 	}, {
 		Type:     "function",
 		Function: tools.FunctionDef{Name: "load_skill", Description: "Load a skill", Parameters: json.RawMessage(`{"type":"object"}`)},
-	}}, "high")
+	}})
 	if err != nil {
 		t.Fatalf("buildChatGPTRequest() error: %v", err)
 	}
 	if request.Reasoning.Context != "all_turns" {
 		t.Fatalf("Reasoning.Context = %q, want all_turns", request.Reasoning.Context)
-	}
-	if request.Reasoning.Effort == "" {
-		t.Fatal("Reasoning.Effort is empty, want non-empty for level 'high'")
 	}
 	if len(request.Input) < 2 {
 		t.Fatalf("Input length = %d, want at least 2", len(request.Input))
@@ -258,7 +255,7 @@ func TestBuildChatGPTLiteRequestAddsAllTurnsReasoningAndStripsImageDetail(t *tes
 func TestBuildChatGPTRequestNoSuffixOmitsReasoning(t *testing.T) {
 	request, err := buildChatGPTRequest("gpt-5.4", []session.Message{
 		{Role: "user", Content: "hello"},
-	}, nil, "")
+	}, nil)
 	if err != nil {
 		t.Fatalf("buildChatGPTRequest() error: %v", err)
 	}
@@ -273,7 +270,7 @@ func TestBuildChatGPTRequestNoSuffixOmitsReasoning(t *testing.T) {
 func TestBuildChatGPTLiteRequestNoSuffixUsesAllTurnsContext(t *testing.T) {
 	request, err := buildChatGPTRequest("gpt-5.6-luna", []session.Message{
 		{Role: "user", Content: "hello"},
-	}, nil, "")
+	}, nil)
 	if err != nil {
 		t.Fatalf("buildChatGPTRequest() error: %v", err)
 	}
@@ -285,20 +282,5 @@ func TestBuildChatGPTLiteRequestNoSuffixUsesAllTurnsContext(t *testing.T) {
 	}
 	if request.Reasoning.Context != "all_turns" {
 		t.Errorf("Reasoning.Context = %q, want all_turns for no-suffix lite model", request.Reasoning.Context)
-	}
-}
-
-func TestBuildChatGPTRequestWithSuffixSetsEffort(t *testing.T) {
-	request, err := buildChatGPTRequest("gpt-5.4", []session.Message{
-		{Role: "user", Content: "hello"},
-	}, nil, "high")
-	if err != nil {
-		t.Fatalf("buildChatGPTRequest() error: %v", err)
-	}
-	if request.Reasoning.Effort == "" {
-		t.Fatal("Reasoning.Effort is empty, want non-empty for level 'high'")
-	}
-	if request.Reasoning.Summary != "auto" {
-		t.Errorf("Reasoning.Summary = %q, want 'auto'", request.Reasoning.Summary)
 	}
 }

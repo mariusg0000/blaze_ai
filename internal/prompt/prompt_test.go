@@ -72,11 +72,10 @@ func writeFile(t *testing.T, path, content string) {
 // writePromptFixtures creates the prompt templates required by runtime prompt assembly.
 func writePromptFixtures(t *testing.T, promptsDir string) {
 	t.Helper()
-	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n{OS_PROMPT}\n\n## Transport\n{TRANSPORT_PROMPT}\n\n{TRANSPORT_CONTEXT}\n\n## Host Environment Helpers\n{HOST_HELPERS_ADVISORY}\n\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nBefore performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first. Do not act on an unfamiliar domain without loading the relevant skill.\n\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n{RUNNABLE_SKILLS_SECTION}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n")
+	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n{OS_PROMPT}\n\n## Transport\n{TRANSPORT_PROMPT}\n\n{TRANSPORT_CONTEXT}\n\n## Host Environment Helpers\n{HOST_HELPERS_ADVISORY}\n\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nBefore performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first. Do not act on an unfamiliar domain without loading the relevant skill.\n\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n")
 	writeFile(t, filepath.Join(promptsDir, "sysprompt.linux.md"), "# Linux System Prompt\n\nScripts at {APP_HOME}/scripts/.\n")
 	writeFile(t, filepath.Join(promptsDir, "transport.console.md"), "Console transport profile.")
 	writeFile(t, filepath.Join(promptsDir, "transport.telegram.md"), "Telegram transport profile. {TRANSPORT_CONTEXT}")
-	writeFile(t, filepath.Join(promptsDir, "transport.web.md"), "Web transport profile.")
 }
 
 // TestInjectVariablesWorkDir verifies that {WORK_DIR} is replaced.
@@ -264,18 +263,6 @@ func TestBuildRuntimePartFull(t *testing.T) {
 	}
 	if !strings.Contains(result, "skill-manager") {
 		t.Error("runtime part missing skill name")
-	}
-	if !strings.Contains(result, "[RUNNABLE SKILLS — use run_skill only; never use load_skill]") {
-		t.Error("runtime part missing explicit runnable skills section")
-	}
-	if !strings.Contains(result, "[NON-RUNNABLE SKILLS — use load_skill only]") {
-		t.Error("runtime part missing explicit non-runnable skills section")
-	}
-	if !strings.Contains(result, "run_skill(name, arguments)") {
-		t.Error("runtime part missing runnable skills call signature")
-	}
-	if !strings.Contains(result, "echo-runner | args: <text> | Echo raw arguments for smoke tests.") {
-		t.Error("runtime part missing runnable skill summary")
 	}
 	if strings.Contains(result, "[SYNTAX]") {
 		t.Error("runtime part should not expose runnable skill layout tags")

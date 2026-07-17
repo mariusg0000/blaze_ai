@@ -68,7 +68,6 @@ reset at the start of each turn.
 ┌─────────────────────────────────────────────────────────┐
 │ [USER/(provider/model)] > user input here               │
 └─────────────────────────────────────────────────────────┘
-🧠 The user is asking about...                             ← reasoning streaming
 tools ─────────────────────────────────────────────
 💻 Search files... ✔️ CTX: 45K                           ← tool call + result inline
 💻 Process results... ✔️ CTX: 46K
@@ -86,12 +85,6 @@ On session start:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ← blue box border
 ────────────────────────────────────────     ← visual break
 ```
-
-### Reasoning Streaming
-
-- First chunk: `\n` if `!atLineStart`, then `🧠 ` in orange-green bold, set `reasoningStarted=true`
-- Subsequent chunks: append text directly after previous reasoning (no new prefix)
-- State reset at end of turn
 
 ### Content Streaming
 
@@ -192,7 +185,6 @@ func toolEmoji(name string) string {
     case "shell":        return "💻"
     case "load_skill":   return "📥"
     case "unload_skill": return "📤"
-    case "run_skill":    return "🚀"
     case "replace_block": return "📝"
     case "ask_a_friend": return "🧠"
     case "task_read",
@@ -211,7 +203,6 @@ func toolEmoji(name string) string {
 | `/cd` | Change work folder. Invalid path → clear error, keep current |
 | `/clear` | Reset current session messages |
 | `/new` | Reset + start fresh (same as clear) |
-| `/show-reasoning` | Toggle reasoning display on/off |
 | `:<mode-name>` | Switch to work mode (hotkey syntax) |
 | Unknown | Passed to LLM as normal user message |
 

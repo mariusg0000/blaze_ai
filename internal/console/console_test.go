@@ -75,11 +75,10 @@ func stripANSICodes(s string) string {
 // writePromptFixtures creates the prompt templates required by runtime prompt assembly.
 func writePromptFixtures(t *testing.T, promptsDir string) {
 	t.Helper()
-	os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n## Tool Discipline\n- Keep relevant loaded skills active across follow-up turns on the same topic or task.\n- Do not unload a skill immediately after one successful action if the user is likely to continue in the same domain.\n- Unload a skill only when the user clearly changes topic or task, or when the loaded skill would interfere with the next turn.\n\n## Active State Rules\n- Only skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.\n- Only memories listed under `## Active Memories` are active right now. Do not infer current active memories from older `load_memory` or `unload_memory` tool results in the conversation history. If there is no `## Active Memories` section below, then no memories are currently active.\n\n{OS_PROMPT}\n\n## Transport\n{TRANSPORT_PROMPT}\n\n{TRANSPORT_CONTEXT}\n\n## Host Environment Helpers\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nBefore performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first. Do not act on an unfamiliar domain without loading the relevant skill.\n\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n{RUNNABLE_SKILLS_SECTION}\n\n## Memories\nAvailable memories:\n{MEMORIES_AVAILABLE}\n\nActive memories:\n{MEMORIES_ACTIVE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n"), 0644)
+	os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\n## Tool Discipline\n- Keep relevant loaded skills active across follow-up turns on the same topic or task.\n- Do not unload a skill immediately after one successful action if the user is likely to continue in the same domain.\n- Unload a skill only when the user clearly changes topic or task, or when the loaded skill would interfere with the next turn.\n\n## Active State Rules\n- Only skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.\n- Only memories listed under `## Active Memories` are active right now. Do not infer current active memories from older `load_memory` or `unload_memory` tool results in the conversation history. If there is no `## Active Memories` section below, then no memories are currently active.\n\n{OS_PROMPT}\n\n## Transport\n{TRANSPORT_PROMPT}\n\n{TRANSPORT_CONTEXT}\n\n## Host Environment Helpers\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nBefore performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first. Do not act on an unfamiliar domain without loading the relevant skill.\n\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n## Memories\nAvailable memories:\n{MEMORIES_AVAILABLE}\n\nActive memories:\n{MEMORIES_ACTIVE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n"), 0644)
 	os.WriteFile(filepath.Join(promptsDir, "sysprompt.linux.md"), []byte("linux"), 0644)
 	os.WriteFile(filepath.Join(promptsDir, "transport.console.md"), []byte("console transport"), 0644)
 	os.WriteFile(filepath.Join(promptsDir, "transport.telegram.md"), []byte("telegram transport"), 0644)
-	os.WriteFile(filepath.Join(promptsDir, "transport.web.md"), []byte("web transport"), 0644)
 }
 
 // TestOnContent verifies content is written to output with [BLAZE] label on first chunk.
@@ -573,7 +572,6 @@ func TestToolEmojiMapping(t *testing.T) {
 		"load_skill":    "📥",
 		"unload_skill":  "📤",
 		"replace_block": "📝",
-		"run_skill":     "🚀",
 		"ask_a_friend":  "🤝",
 		"analyze_image": "🖼",
 		"unknown":       "🔧",
@@ -998,7 +996,7 @@ func TestStartupSplashTTY(t *testing.T) {
 	}
 
 	// Verify all shortcut labels are present.
-	for _, shortcut := range []string{"Tab", "Ctrl+\\", "Ctrl+F", "Ctrl+R", "Ctrl+T", "Ctrl+]", "ESC", "Ctrl+D"} {
+	for _, shortcut := range []string{"Tab", "Ctrl+\\", "Ctrl+F", "Ctrl+R", "ESC", "Ctrl+D"} {
 		if !strings.Contains(output, shortcut) {
 			t.Errorf("output missing shortcut label %q", shortcut)
 		}
@@ -1224,106 +1222,5 @@ func TestOnAgentActivityResultStandaloneCTX(t *testing.T) {
 	}
 	if !strings.Contains(plain, "✔️") {
 		t.Errorf("standalone tool_result missing checkmark: %q", plain)
-	}
-}
-
-// TestCycleReasoningLevelUnsupportedModel verifies that cycleReasoningLevel
-// returns an error and does not mutate state for non-reasoning-capable models.
-func TestCycleReasoningLevelUnsupportedModel(t *testing.T) {
-	c, _ := newConsole(mockAgent(t))
-	// Default model test/test-model is not reasoning-capable.
-	err := c.cycleReasoningLevel()
-	if err == nil {
-		t.Fatal("cycleReasoningLevel() expected error for unsupported model, got nil")
-	}
-	if !strings.Contains(err.Error(), "does not support reasoning levels") {
-		t.Errorf("cycleReasoningLevel() error = %q, want unsupported model error", err)
-	}
-	// Verify no mutation: model ID and provider reasoning level unchanged.
-	if c.Agent.ModelID != "test/test-model" {
-		t.Errorf("ModelID changed to %q, want test/test-model", c.Agent.ModelID)
-	}
-	if got := c.Agent.ActiveReasoningLevel(); got != "" {
-		t.Errorf("ActiveReasoningLevel() = %q, want empty", got)
-	}
-}
-
-// TestCycleReasoningLevelOrder verifies that cycling advances through supported
-// levels in descriptor-provided order: none → min → low.
-func TestCycleReasoningLevelOrder(t *testing.T) {
-	c, _ := newConsole(mockAgent(t))
-	// Override to a reasoning-capable model (o3 matches openai_chat prefix).
-	c.Agent.ModelID = "test/o3"
-	c.Agent.Provider.ReasoningLevel = ""
-
-	// First call: empty → first supported level (none).
-	if err := c.cycleReasoningLevel(); err != nil {
-		t.Fatalf("first cycle error: %v", err)
-	}
-	if got := c.Agent.ActiveReasoningLevel(); got != "none" {
-		t.Fatalf("after first cycle: level = %q, want none", got)
-	}
-
-	// Second call: none → min.
-	if err := c.cycleReasoningLevel(); err != nil {
-		t.Fatalf("second cycle error: %v", err)
-	}
-	if got := c.Agent.ActiveReasoningLevel(); got != "min" {
-		t.Fatalf("after second cycle: level = %q, want min", got)
-	}
-
-	// Third call: min → low.
-	if err := c.cycleReasoningLevel(); err != nil {
-		t.Fatalf("third cycle error: %v", err)
-	}
-	if got := c.Agent.ActiveReasoningLevel(); got != "low" {
-		t.Fatalf("after third cycle: level = %q, want low", got)
-	}
-}
-
-// TestCycleReasoningLevelWraparound verifies that cycling past the last
-// supported level wraps around to the first level.
-func TestCycleReasoningLevelWraparound(t *testing.T) {
-	c, _ := newConsole(mockAgent(t))
-	c.Agent.ModelID = "test/o3"
-	c.Agent.Provider.ReasoningLevel = ""
-
-	// Cycle to max: none(0) → min(1) → low(2) → med(3) → high(4) → xhigh(5) → max(6)
-	for i := 0; i < 7; i++ {
-		if err := c.cycleReasoningLevel(); err != nil {
-			t.Fatalf("forward cycle %d error: %v", i, err)
-		}
-	}
-	// After 7 cycles from start we should be at max (the 7th level).
-	if got := c.Agent.ActiveReasoningLevel(); got != "max" {
-		t.Fatalf("after 7 cycles: level = %q, want max", got)
-	}
-
-	// One more cycle wraps to none.
-	if err := c.cycleReasoningLevel(); err != nil {
-		t.Fatalf("wrap cycle error: %v", err)
-	}
-	if got := c.Agent.ActiveReasoningLevel(); got != "none" {
-		t.Fatalf("after wrap: level = %q, want none", got)
-	}
-}
-
-// TestStartupSplashReasoningShortcut verifies the startup splash includes the
-// Ctrl+] shortcut for cycling reasoning levels.
-func TestStartupSplashReasoningShortcut(t *testing.T) {
-	agent := mockAgent(t)
-	out := &bytes.Buffer{}
-	c := &Console{
-		Out:   out,
-		Agent: agent,
-	}
-	c.showStartupSplash()
-
-	output := out.String()
-	if !strings.Contains(output, "Ctrl+]") {
-		t.Errorf("splash missing Ctrl+] shortcut: %q", output)
-	}
-	if !strings.Contains(output, "cycle reasoning level") {
-		t.Errorf("splash missing 'cycle reasoning level' description: %q", output)
 	}
 }

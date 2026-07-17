@@ -12,7 +12,6 @@ Formatting:
 
 Telegram behavior:
 - Replies are streamed through Telegram message send/edit operations.
-- Reasoning is not shown.
 - Tool activity is shown separately by the transport; keep user-facing replies focused on the result.
 - If an image path appears in the latest user message from Telegram intake, inspect it with `analyze_image` when needed.
 

@@ -24,7 +24,6 @@ import (
 	"blazeai/internal/platform"
 	"blazeai/internal/prompt"
 	"blazeai/internal/provider"
-	"blazeai/internal/reasoning"
 	"blazeai/internal/session"
 	"blazeai/internal/skills"
 	"blazeai/internal/tools"
@@ -232,7 +231,13 @@ func newAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 		}
 		return skills.Resolve(name, all)
 	}
-	runnableSkillResolver := func(name string) (string, *skills.Skill, error) {
+	oneShotCaller := llmcall.New(cfg, func(cfg *config.Config, modelID string) (llmcall.StreamClient, error) {
+		return provider.NewClient(cfg, modelID)
+	})
+
+	registry := tools.NewRegistry()
+	registry.Register(tools.NewShellTool(os, func() string { return agent.WorkDir }))
+	registry.Register(tools.NewLoadSkillTool(active, func(name string) (string, *skills.Skill, error) {
 		all, err := skills.DiscoverAll(agent.WorkDir)
 		if err != nil {
 			return "", nil, fmt.Errorf("skill discovery failed: %w", err)
@@ -241,21 +246,9 @@ func newAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 		if err != nil {
 			return "", nil, err
 		}
-		skill := all[resolved]
-		if skill == nil {
-			return "", nil, fmt.Errorf("skill not found: %s", name)
-		}
-		return resolved, skill, nil
-	}
-	oneShotCaller := llmcall.New(cfg, func(cfg *config.Config, modelID string) (llmcall.StreamClient, error) {
-		return provider.NewClient(cfg, modelID)
-	})
-
-	registry := tools.NewRegistry()
-	registry.Register(tools.NewShellTool(os, func() string { return agent.WorkDir }))
-	registry.Register(tools.NewLoadSkillTool(active, runnableSkillResolver))
+		return resolved, all[resolved], nil
+	}))
 	registry.Register(tools.NewUnloadSkillTool(active, skillResolver))
-	registry.Register(tools.NewRunSkillTool(os, runnableSkillResolver, func() string { return agent.WorkDir }))
 	registry.Register(tools.NewAnalyzeImageTool(func(ctx context.Context, req tools.AnalyzeImageRequest) (string, error) {
 		return oneShotCaller.Call(ctx, llmcall.Request{
 			Role:     "vision",
@@ -379,9 +372,6 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		// Stream LLM response.
 		toolDefs := tools.AllToOpenAI(a.Tools)
 		var onReasoning func(string)
-		if a.Config.ShowReasoning {
-			onReasoning = a.Handler.OnReasoning
-		}
 		var onPhase func(provider.StreamPhase)
 		if phaseHandler, ok := a.Handler.(StreamPhaseHandler); ok {
 			onPhase = phaseHandler.OnStreamPhase
@@ -707,60 +697,6 @@ func (a *Agent) SetModelLocal(modelID string) error {
 	return a.applyModel(modelID)
 }
 
-// ActiveReasoningLevel returns the current reasoning level for the active model.
-//
-// WHAT:  Exposes the provider client's reasoning level to transports.
-// WHY:   The console status bar needs to display the active level.
-// HOW:   Reads directly from the provider client; empty string means no level set.
-//
-// RETURNS: the current reasoning level string, or "" if unset.
-func (a *Agent) ActiveReasoningLevel() string {
-	if a.Provider == nil {
-		return ""
-	}
-	return a.Provider.ReasoningLevel
-}
-
-// SetActiveReasoningLevel validates, sets, and persists the reasoning level
-// for the active model by replacing the suffix on the model string.
-//
-// WHAT:  User-facing setter with strict validation and immediate persistence.
-// WHY:   Transports need to change the level and persist it without delay.
-// HOW:   Validates the level string, checks model capability, constructs a new
-//
-//	model ID with the suffix replaced (or removed when level is empty), and
-//	calls SetModel to apply and persist the complete model string through the
-//	current mode or config model field. Never creates a separate reasoning map.
-//
-// PARAMS: level — abstract reasoning level (e.g., "high", "max"), or "" to clear.
-// RETURNS: error if the level is invalid, the model does not support reasoning,
-//
-//	or persistence fails.
-func (a *Agent) SetActiveReasoningLevel(level string) error {
-	if a.Provider == nil {
-		return fmt.Errorf("provider is not initialized")
-	}
-	if level != "" {
-		if !reasoning.IsReasoningCapableForModel(a.ModelID) {
-			return fmt.Errorf("model %q does not support reasoning levels", a.ModelID)
-		}
-		if err := reasoning.ValidateLevel(level); err != nil {
-			return err
-		}
-	}
-	spec, err := reasoning.ParseModelSpec(a.ModelID)
-	if err != nil {
-		return err
-	}
-	var newModelID string
-	if level == "" {
-		newModelID = spec.ModelID
-	} else {
-		newModelID = spec.ModelID + "|" + level
-	}
-	return a.SetModel(newModelID)
-}
-
 // SetWorkDir changes the current work folder and updates the prompt builder.
 func (a *Agent) SetWorkDir(dir string) error {
 	if dir == "" {
@@ -922,12 +858,11 @@ func validateModelInConfig(cfg *config.Config, modelID string) error {
 
 // validateModelFormat checks the provider/model_name format, stripping any suffix.
 func validateModelFormat(model string) error {
-	spec, err := reasoning.ParseModelSpec(model)
-	if err != nil {
-		return err
+	if strings.Contains(model, "|") {
+		return fmt.Errorf("reasoning level suffixes are unsupported; use a plain model identifier")
 	}
-	idx := strings.Index(spec.ModelID, "/")
-	if idx <= 0 || idx == len(spec.ModelID)-1 {
+	idx := strings.Index(model, "/")
+	if idx <= 0 || idx == len(model)-1 {
 		return fmt.Errorf("model must be in provider/model_name format")
 	}
 	return nil

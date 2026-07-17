@@ -1,5 +1,5 @@
 [DESCRIPTION]
-MUST load first before creating, reviewing, modifying, repairing, or debugging any skill, including runnable skills. Use for skill type decisions, skill structure, separating instructions from facts, and turning user corrections or failed workflows into better skill rules.
+MUST load first before creating, reviewing, modifying, repairing, or debugging any skill. Use for skill structure, separating instructions from facts, and turning user corrections or failed workflows into better skill rules.
 
 [BEHAVIOR]
 # Skill Manager
@@ -9,62 +9,11 @@ Design, review, or improve skill content. A skill improves future behavior by de
 
 ## Skill Format
 
-Every skill is a folder containing `skill.md`. A skill is exactly one of two exclusive types. Never mix loadable sections with runnable sections in the same skill.
+Every skill is a folder containing `skill.md`.
 
-### Type 1 — Loadable skill
+Required sections: `[DESCRIPTION]` plus `[BEHAVIOR]`, `[DATA]`, or both.
 
-Sections: `[DESCRIPTION]` (required) plus `[BEHAVIOR]`, `[DATA]`, or both.
-
-Loaded with `load_skill`. Its `[BEHAVIOR]` and `[DATA]` enter the prompt context and guide the agent's reasoning and decisions.
-
-### Type 2 — Runnable skill
-
-Sections: `[DESCRIPTION]` (required) plus `[SYNTAX]` and valid `[CODE]`.
-
-Executed with `run_skill`. It does not enter the prompt context. It runs as a shell command and returns output. It must not contain `[BEHAVIOR]` or `[DATA]`.
-
-### Exclusive types
-
-Never add `[SYNTAX]` or `[CODE]` to a loadable skill. Never add `[BEHAVIOR]` or `[DATA]` to a runnable skill. If a use case needs both guidance and a runnable command, create two separate skills: one loadable for guidance, one runnable for execution.
-
-## Skill Type Decision
-
-Choose the skill type by purpose, not by user wording.
-
-### Choose loadable when the skill:
-
-- teaches the agent how to work (workflow, strategy, safety)
-- provides decision rules or stop conditions
-- stores durable facts the agent needs to know
-- guides which tools to use and when
-- defines first checks, pitfalls, and fallbacks
-- requires context-dependent interpretation or conversation
-- depends on data from other skills, SSH hosts, APIs, or user input
-
-### Choose runnable when the skill:
-
-- is a non-trivial, reusable shell script worth saving across sessions
-- has a stable argument interface you would otherwise retype or get wrong
-- produces directly useful output without model interpretation
-- runs as one self-contained script with no conversation during execution
-- failure can be reported by the script clearly
-- invoking it repeatedly via `shell` directly would be tedious or error-prone
-
-### Do not make runnable when:
-
-- the action is a simple one-liner the model can reproduce from memory (use `shell` directly)
-- you would run it only once
-- the task needs exploration or filesystem search before deciding what to run
-- the task needs conversation with the user
-- the task requires model judgment to interpret results
-- the task modifies files contextually based on current state
-- the task requires approvals, sudo, destructive actions, or credential handling
-- the script would become a broad program or orchestration layer
-- user intent is ambiguous and the correct tooling depends on context
-
-### Rule of thumb
-
-If you can type the command in `shell` right now and it works, do not make a runnable skill for it. A runnable skill earns its place by being non-trivial, reusable, and stable. Otherwise just run it.
+Skills are loaded with `load_skill`. Their `[BEHAVIOR]` and `[DATA]` enter the prompt context and guide the agent's decisions. Do not add executable `[SYNTAX]` or `[CODE]` sections; use native tools such as `shell` for execution.
 
 ### DESCRIPTION
 
@@ -92,50 +41,6 @@ A good BEHAVIOR section answers:
 - What signals indicate success or failure?
 - When should the agent stop and ask the user?
 
-### Runnable Skills (v1)
-
-A runnable skill is a standalone executable tool. It is not a loadable skill with extra sections. It must not contain `[BEHAVIOR]` or `[DATA]`.
-
-Sections:
-1. `\[DESCRIPTION\]` — required, must appear first. Same rules as loadable skills.
-2. `\[SYNTAX\]` — required, one-line compact argument syntax. Describes arguments only. Never repeats the skill name.
-3. `\[CODE\]` — required, a fenced code block with language `shell`. No other languages in v1.
-
-If the skill takes no arguments, set `[SYNTAX]` to `""`. Call it with `run_skill(name, "")`.
-
-The skill body runs with env vars: `BLAZE_SKILL_ARGS` (raw string), `BLAZE_SKILL_DIR`, `BLAZE_SKILL_ID`, `BLAZE_SKILL_NAME`.
-
-`[SYNTAX]` is compact, single‑line — the model sees it directly in the prompt's runnable skills section. A runnable skill does not enter the prompt context as active content; it is only listed by name and syntax.
-
-The model uses `run_skill` (not `load_skill`) to execute it. Runnable skills are always visible in the available list; they need not be loaded.
-
-Example:
-````
-\[SYNTAX\]
-<path> [--dry-run]
-
-\[CODE\]
-```shell
-rsync -av "$BLAZE_SKILL_ARGS"
-```
-````
-
-Zero-argument example:
-
-````
-\[SYNTAX\]
-""
-
-\[CODE\]
-```shell
-df -h
-```
-````
-
-(The outer example fences use four backticks so the inner `shell` fence stays literal.)
-
-When creating or fixing a skill, load this skill first and use its path rules directly. Do not browse unrelated skills just to rediscover the folder layout.
-
 ### DATA
 
 Use DATA for durable facts, reference data, mappings, and preferences. Keep `scope.key=value`, one fact per line.
@@ -146,7 +51,7 @@ Keep DATA short, dense, and factual. No headings, prose, narratives, credentials
 - BEHAVIOR: how to work.
 - DATA: what is true.
 
-A loadable skill may contain only BEHAVIOR, only DATA, or both. If a loadable skill needs persistent domain facts, put them in its own DATA section. Do not create a separate skill just for data. Runnable skills do not use BEHAVIOR or DATA.
+A skill may contain only BEHAVIOR, only DATA, or both. If a skill needs persistent domain facts, put them in its own DATA section. Do not create a separate skill just for data.
 
 ## Recommended Structure
 

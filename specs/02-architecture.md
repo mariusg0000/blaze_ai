@@ -80,7 +80,6 @@ Single file `runtime.go` containing:
 - All 9 tools registered in `NewAgent()`:
   - `shell` — command execution via platform shell
   - `load_skill` / `unload_skill` — in-memory active skills management
-  - `run_skill` — execute runnable skill [CODE] sections
   - `replace_block` — exact text replacement in files
   - `ask_a_friend` — delegate to secondary model role
   - `task_read` / `task_write` — task tracking file I/O
@@ -120,12 +119,12 @@ Single file `runtime.go` containing:
 - `Builder` struct with `Build()` and `BuildRuntimePart()` methods
 - Prompt rebuilt on every LLM call from disk sources
 - Build order: universal sysprompt → OS sysprompt → host helpers → skills (available + active) → specs.md → AGENTS.md → conversation history
-- Variable injection: `{APP_HOME}`, `{WORK_DIR}`, `{OS_INFO}`, `{SKILLS_AVAILABLE}`, `{SKILLS_ACTIVE}`, `{RUNNABLE_SKILLS_SECTION}`, `{AGENTS_CONTENT}`, `{PROJECT_CONTENT}`, `{HOST_HELPERS_*}`, `{TRANSPORT_CONTEXT}`, `{SKILL_DIR}`
+- Variable injection: `{APP_HOME}`, `{WORK_DIR}`, `{OS_INFO}`, `{SKILLS_AVAILABLE}`, `{SKILLS_ACTIVE}`, `{AGENTS_CONTENT}`, `{PROJECT_CONTENT}`, `{HOST_HELPERS_*}`, `{TRANSPORT_CONTEXT}`, `{SKILL_DIR}`
 
 ### Layer 6 — Supporting Packages
 
 #### Config (`internal/config/`)
-- `config.json` — providers, favorite_models, roles, compaction, stripReasoning, lastModel, helperSetup, showReasoning
+- `config.json` — providers, favorite_models, roles, compaction, stripReasoning, lastModel, helperSetup
 - `modes.json` (separate file) — work modes with name/model/directive, last_mode
 - Atomic saves with corruption fallback on modes
 - Migration from legacy config-embedded modes
@@ -139,7 +138,7 @@ Single file `runtime.go` containing:
 - `Sanitize()` strips secrets from messages
 
 #### Skills (`internal/skills/`)
-- Markdown parsing: `[DESCRIPTION]`, `[BEHAVIOR]`, `[DATA]`, `[SYNTAX]`, `[CODE]`, `[CODE_ERROR]`
+- Markdown parsing: `[DESCRIPTION]`, `[BEHAVIOR]`, `[DATA]`
 - Three scopes: builtin (embedded), global (app_home/skills/), project (.blazeai/skills/)
 - `ActiveList` — in-memory, starts empty, not persisted
 - `DiscoverAll()` — reads all three scopes, returns map[id → Skill]
@@ -258,7 +257,7 @@ handler.go, or turn_loop.go files. Keeps internal coupling visible in one place.
 
 ### Transport-Agnostic Core
 The `Handler` interface is the only boundary. Transports know nothing about each other.
-Commands with distinct transport UX (console vs Telegram vs web) are handled at the
+Commands with distinct transport UX (console vs Telegram) are handled at the
 transport level, not shared.
 
 ### Prompt-First Design
@@ -278,8 +277,6 @@ Everything else is Go standard library.
 ### Skills Replace Memory
 No separate memory subsystem. Skills with `[DATA]` sections provide persistent
 knowledge storage. Skills with `[BEHAVIOR]` sections extend agent behavior.
-Skills with `[CODE]` sections provide dynamic tool-like extensibility via
-`run_skill`.
 
 ### Model Switching Paths
 - `SetModel()` — transport model switch with global persistence (config.json + modes.json)

@@ -19,4 +19,4 @@ This directory stores the runtime system prompt fragments used by BlazeAI.
 ## Files
 - `sysprompt.md`: universal prompt layout.
 - `sysprompt.linux.md`, `sysprompt.darwin.md`, `sysprompt.windows.md`: OS-specific prompt content.
-- `transport.console.md`, `transport.telegram.md`, `transport.web.md`: transport-specific prompt fragments.
+- `transport.console.md`, `transport.telegram.md`: transport-specific prompt fragments.

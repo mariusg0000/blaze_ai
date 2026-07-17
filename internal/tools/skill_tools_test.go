@@ -4,11 +4,9 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"blazeai/internal/platform"
 	"blazeai/internal/skills"
 )
 
@@ -40,21 +38,6 @@ func TestLoadSkillExecuteWithMarkdownSuffix(t *testing.T) {
 	}
 	if active.Has("memory-manager.md") {
 		t.Error("active list should not contain raw 'memory-manager.md' after load")
-	}
-}
-
-// TestLoadSkillExecuteRejectsRunnable verifies load_skill rejects runnable-only skills.
-func TestLoadSkillExecuteRejectsRunnable(t *testing.T) {
-	active := skills.NewActiveList()
-	tool := NewLoadSkillTool(active, func(name string) (string, *skills.Skill, error) {
-		return "global/echo", &skills.Skill{Name: name, Syntax: "<text>", CodeLang: "shell", Code: "printf ok"}, nil
-	})
-	result := tool.Execute(context.Background(), json.RawMessage(`{"name":"echo"}`))
-	if !strings.Contains(result, "RUNNABLE") || !strings.Contains(result, "run_skill") {
-		t.Fatalf("Execute() = %q, want runnable guidance", result)
-	}
-	if active.Has("global/echo") {
-		t.Fatal("runnable skill must not be loaded")
 	}
 }
 
@@ -198,76 +181,5 @@ func TestUnloadSkillDescription(t *testing.T) {
 	desc := tool.Description()
 	if desc != "name → unload skill from active session" {
 		t.Fatalf("Description() = %q, want compact unload description", desc)
-	}
-}
-
-// TestRunSkillExecute verifies that run_skill executes a runnable shell skill.
-func TestRunSkillExecute(t *testing.T) {
-	skillDir := filepath.Join(t.TempDir(), "echo")
-	tool := NewRunSkillTool(platform.Linux, func(name string) (string, *skills.Skill, error) {
-		return "global/echo", &skills.Skill{
-			Name:     name,
-			Syntax:   "<text>",
-			CodeLang: "shell",
-			Code:     `printf '%s' "$BLAZE_SKILL_ARGS"`,
-			Dir:      skillDir,
-		}, nil
-	}, func() string { return t.TempDir() })
-	args := json.RawMessage(`{"name":"echo","arguments":"hello world"}`)
-	result := tool.Execute(context.Background(), args)
-	if !strings.Contains(result, "exit_code: 0") {
-		t.Fatalf("Execute() = %q, want successful exit code", result)
-	}
-	if !strings.Contains(result, "stdout:\nhello world") {
-		t.Fatalf("Execute() = %q, want stdout with raw arguments", result)
-	}
-}
-
-// TestRunSkillExecuteRejectsUnsupportedLanguage verifies v1 only accepts shell code.
-func TestRunSkillExecuteRejectsUnsupportedLanguage(t *testing.T) {
-	tool := NewRunSkillTool(platform.Linux, func(name string) (string, *skills.Skill, error) {
-		return "global/echo", &skills.Skill{Name: name, Syntax: "<text>", CodeLang: "python", Code: "print(1)"}, nil
-	}, nil)
-	args := json.RawMessage(`{"name":"echo","arguments":"hello"}`)
-	result := tool.Execute(context.Background(), args)
-	if !strings.Contains(result, "unsupported [CODE] language") {
-		t.Fatalf("Execute() = %q, want unsupported language error", result)
-	}
-}
-
-// TestRunSkillExecuteRejectsMalformedCode verifies parser failures are surfaced clearly.
-func TestRunSkillExecuteRejectsMalformedCode(t *testing.T) {
-	tool := NewRunSkillTool(platform.Linux, func(name string) (string, *skills.Skill, error) {
-		return "global/echo", &skills.Skill{Name: name, Syntax: "<text>", CodeError: "[CODE] must start with a fenced code block"}, nil
-	}, nil)
-	args := json.RawMessage(`{"name":"echo","arguments":"hello"}`)
-	result := tool.Execute(context.Background(), args)
-	if !strings.Contains(result, "invalid [CODE]") {
-		t.Fatalf("Execute() = %q, want invalid code error", result)
-	}
-}
-
-// TestRunSkillDescription verifies the model-facing description stays minimal.
-func TestRunSkillDescription(t *testing.T) {
-	tool := NewRunSkillTool(platform.Linux, nil, nil)
-	desc := tool.Description()
-	if desc != "name + arguments → execute [RUNNABLE] skill; do not use load_skill" {
-		t.Fatalf("Description() = %q, want explicit runnable description", desc)
-	}
-}
-
-// TestRunSkillParameters verifies arguments schema does not leak skill layout details.
-func TestRunSkillParameters(t *testing.T) {
-	tool := NewRunSkillTool(platform.Linux, nil, nil)
-	params := tool.Parameters()
-	if !json.Valid(params) {
-		t.Fatal("Parameters() is not valid JSON")
-	}
-	text := string(params)
-	if strings.Contains(text, "[SYNTAX]") {
-		t.Fatalf("Parameters() = %s, should not expose [SYNTAX]", text)
-	}
-	if !strings.Contains(text, `"arguments = raw string"`) {
-		t.Fatalf("Parameters() = %s, want raw string description", text)
 	}
 }

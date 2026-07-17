@@ -10,7 +10,6 @@
 | `prompts/sysprompt.windows.md` | Windows-specific additions |
 | `prompts/transport.console.md` | Console-specific formatting and interaction rules |
 | `prompts/transport.telegram.md` | Telegram-specific formatting and interaction rules |
-| `prompts/transport.web.md` | Web-specific formatting and interaction rules |
 | `internal/prompt/prompt.go` | Builder struct, Build(), BuildRuntimePart(), variable injection |
 | `internal/prompt/doc.go` | Package docs |
 | `internal/helpers/helpers.go` | Helper detection for {HOST_HELPERS_*} injection |
@@ -41,10 +40,9 @@ part (session history).
 5. **Host helpers available** — live-detected and available helpers (optional)
 6. **Host helpers optional** — missing helpers the user may want to install (optional)
 7. **Skills available** — descriptions of all discovered skills (optional)
-8. **Runnable skills section** — skills with [CODE] sections and their syntax (optional)
-9. **Skills active** — [BEHAVIOR] and [DATA] of loaded skills (optional)
-10. **Project context** — `specs.md` from work folder (optional)
-11. **AGENTS.md** — project rules from work folder (optional)
+8. **Skills active** — [BEHAVIOR] and [DATA] of loaded skills (optional)
+9. **Project context** — `specs.md` from work folder (optional)
+10. **AGENTS.md** — project rules from work folder (optional)
 
 All optional sections disappear entirely if their content is empty (no empty
 placeholders or stale headers).
@@ -74,7 +72,7 @@ The universal sysprompt is an 112-line Markdown file with labelled sections and
 [TRANSPORT]            — {TRANSPORT_PROMPT} + {TRANSPORT_CONTEXT}
 [OUTPUT STYLE]         — transport override rule + shared structure guidance
 [COMMUNICATION PROTOCOL] — message optimization rules (from AGENTS.md)
-[SKILLS]               — skill usage rules, {SKILLS_AVAILABLE}, {SKILLS_ACTIVE}, {RUNNABLE_SKILLS_SECTION}
+[SKILLS]               — skill usage rules, {SKILLS_AVAILABLE}, {SKILLS_ACTIVE}
 [SECONDARY MODEL CONSULTATION] — ask_a_friend and analyze_image guidance
 [HOST ENVIRONMENT HELPERS] — {HOST_HELPERS_ADVISORY}, available, optional
 [PROJECT RULES]        — {AGENTS_CONTENT}
@@ -98,8 +96,6 @@ Each transport file is short and focused on transport-only constraints:
 
 - `transport.console.md` — terminal Markdown subset, streaming behavior, emoji guidance
 - `transport.telegram.md` — plain-text chat formatting, narrow-screen constraints, no Markdown reliance
-- `transport.desktop.md` — archived desktop prompt reference kept for the future Electron migration
-- `transport.web.md` — browser chat formatting without terminal assumptions
 
 Core behavior stays in `sysprompt.md`; transport files must not duplicate safety,
 tool, skill, or project rules.
@@ -127,7 +123,6 @@ template-specific extras.
 | `{HOST_HELPERS_AVAILABLE}` | detected + available helpers | empty string |
 | `{HOST_HELPERS_OPTIONAL}` | missing helpers (undismissed) | empty string |
 | `{SKILLS_AVAILABLE}` | all discovered skill descriptions | empty string (allows empty) |
-| `{RUNNABLE_SKILLS_SECTION}` | runnable skills [SYNTAX] list | empty string (allows empty) |
 | `{SKILLS_ACTIVE}` | loaded skills [BEHAVIOR]/[DATA] | empty string (allows empty) |
 | `{PROJECT_CONTENT}` | specs.md content | empty string |
 | `{AGENTS_CONTENT}` | AGENTS.md content with variable injection | empty string |
@@ -135,10 +130,10 @@ template-specific extras.
 Variables that are `"NULL"` render literally as `NULL` in the prompt — the LLM
 sees a clear indicator that a value is missing.
 
-Section-level variables (`{SKILLS_AVAILABLE}`, `{SKILLS_ACTIVE}`,
-`{RUNNABLE_SKILLS_SECTION}`) allow empty resolution — when empty, their
-entire section (including surrounding context like "**Active skills:**") is
-removed from the prompt rather than showing an empty section.
+Section-level variables (`{SKILLS_AVAILABLE}`, `{SKILLS_ACTIVE}`) allow
+empty resolution — when empty, their entire section (including surrounding
+context like "**Active skills:**") is removed from the prompt rather than
+showing an empty section.
 
 ### Escape Sequences
 
@@ -172,14 +167,13 @@ Builder.Build(session, activeSkills)
   │    ├─ 6. buildSkillsSection(active)
   │    │    ├─ skills.DiscoverAll(workDir) → all skills
   │    │    ├─ Format available skills list
-  │    │    ├─ Format runnable skills section
   │    │    └─ Format active skills content
    │    ├─ 7. readFileOptional("specs.md")
   │    ├─ 8. readFileOptional("AGENTS.md")
   │    │    └─ injectVariables(agents)
   │    └─ 9. injectTemplateVariables(universal, {
   │            OS_PROMPT, TRANSPORT_PROMPT, HOST_HELPERS_ADVISORY, HOST_HELPERS_AVAILABLE,
-  │            HOST_HELPERS_OPTIONAL, SKILLS_AVAILABLE, RUNNABLE_SKILLS_SECTION,
+  │            HOST_HELPERS_OPTIONAL, SKILLS_AVAILABLE,
    │            SKILLS_ACTIVE, PROJECT_CONTENT, AGENTS_CONTENT
   │         })
   └─ return []Message{system(runtimePart)} + session.Messages
@@ -204,19 +198,7 @@ Compact one-line-per-skill format:
 ```
 
 Only skills with `HasPromptContent()` (i.e., they have a non-empty [DESCRIPTION]
-and at least one of [BEHAVIOR], [DATA], or [CODE]) appear in the available list.
-
-### Runnable Skills Section
-
-```
-[RUNNABLE SKILLS]
-
-run_skill(name, arguments)
-
-- skill-name | args: <text> | Description text
-```
-
-Only skills with `IsRunnable()` (valid [CODE] section) appear here.
+and at least one of [BEHAVIOR] or [DATA]) appear in the available list.
 
 ### Active Skills Section
 

@@ -53,8 +53,8 @@ RunTurn(ctx, userInput)
        ├─ Write prompt.json debug file
        ├─ injectDirective(messages, mode.Directive)  → volatile mode injection
        │
-       ├─ Provider.Stream(ctx, messages, tools, onContent, onReasoning)
-       │    └─ onReasoning called only when Config.ShowReasoning is true
+        ├─ Provider.Stream(ctx, messages, tools, onContent, onReasoning)
+        │    └─ onReasoning captures reasoning/thinking chunks for session persistence
        │
        ├─ OnUsage(promptTokens)         → report token usage to transport
        ├─ Build assistant message + persist
@@ -248,7 +248,7 @@ NewAgent(cfg, sess, os, promptsFS, workDir, handler)
   ├─ compaction.NewManager(...)     → compaction orchestrator
   ├─ skills.DiscoverAll(workDir)    → skill resolvers
   ├─ tools.NewRegistry()
-  │    ├─ shell, load_skill, unload_skill, run_skill
+  │    ├─ shell, load_skill, unload_skill
   │    ├─ analyze_image (with oneShotCaller via llmcall, forced vision role)
   │    ├─ ask_a_friend (with oneShotCaller via llmcall)
   │    ├─ replace_block, task_write, task_read

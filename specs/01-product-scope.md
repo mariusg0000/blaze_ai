@@ -40,7 +40,6 @@ Git workflows.
 
 - Primary interface: CLI REPL (not full-screen TUI)
 - Secondary transport: Telegram bridge (long-polling bot)
-- Future: web terminal (postponed, not planned in current scope)
 - Console UX: Markdown rendering, colored labels (`💻`, `🧠`, `[BLAZE]`),
   streaming output, visual separators between turns
 - Console is TTY-only — no pipe or non-TTY support
@@ -59,7 +58,7 @@ Git workflows.
 - **Python**: last resort only, in a lazily-created venv under `app_home/scripts/venv/`
 - **Host helpers** (rg, fd, jq, git, xh, pandoc, sqlite3): detected at startup,
   listed in prompt so the LLM knows they are available without checking
-- **Native tools**: 9 hardcoded tools (shell, load_skill, unload_skill, run_skill,
+- **Native tools**: 8 hardcoded tools (shell, load_skill, unload_skill,
   replace_block, ask_a_friend, analyze_image, task_read, task_write)
 - OpenAI-compatible tool calling with multi-tool-call per turn
 - Default tool timeout: 60s. Timeout returns `"timeout <N>s exceeded"`
@@ -139,8 +138,8 @@ missing. Standard subfolders:
 
 ## Skills
 
-- Markdown files with `[DESCRIPTION]` (required) and at least one of `[BEHAVIOR]`,
-  `[DATA]`, or runnable `[SYNTAX]`+`[CODE]` pair
+- Markdown files with `[DESCRIPTION]` (required) and at least one of `[BEHAVIOR]`
+  or `[DATA]`
 - Three scopes: builtin (embedded), global (`app_home/skills/`), project (`.blazeai/skills/`)
 - All scopes read every prompt build
 - Collision: project wins over global, global wins over builtin
@@ -176,7 +175,7 @@ Conservative Linux targets — minimal libc dependency, validate on older system
 - Web transport is postponed
 - No fallback providers or models
 - No separate memory subsystem — skills `[DATA]` sections serve as memory and persistent knowledge storage
-- No native plugin system beyond skills — skills with `[CODE]` + `run_skill` provide dynamic tool-like extensibility, and skills with `[BEHAVIOR]` extend agent behavior at runtime
+- No native plugin system beyond skills — skills with `[BEHAVIOR]` extend agent behavior at runtime
 
 ## Scope Boundary
 

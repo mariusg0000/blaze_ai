@@ -54,7 +54,6 @@ All 9 tools are registered at agent construction in `runtime.NewAgent()`:
 registry.Register(NewShellTool(os))
 registry.Register(NewLoadSkillTool(active, skillResolver))
 registry.Register(NewUnloadSkillTool(active, skillResolver))
-registry.Register(NewRunSkillTool(os, runnableSkillResolver, workDirGetter))
 registry.Register(NewAnalyzeImageTool(oneShotCaller))
 registry.Register(NewAskFriendTool(oneShotCaller))
 registry.Register(NewReplaceBlockTool(workDirGetter))
@@ -137,7 +136,6 @@ Each tool has a dedicated emoji for console and Telegram display:
 | `shell` | `💻` | `💻 purpose …` |
 | `load_skill` | `📥` | `📥 purpose …` |
 | `unload_skill` | `📤` | `📤 purpose …` |
-| `run_skill` | `🚀` | `🚀 purpose …` |
 | `replace_block` | `📝` | `📝 purpose …` |
 | `ask_a_friend` | `🧠` | `🧠 purpose …` |
 | `analyze_image` | `🖼` | `🖼 image analysis …` |

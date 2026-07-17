@@ -97,11 +97,10 @@ func setupAgent(t *testing.T, handler http.HandlerFunc) (*Agent, *mockHandler, *
 // writePromptFixtures creates the prompt templates required by runtime prompt assembly.
 func writePromptFixtures(t *testing.T, promptsDir string) {
 	t.Helper()
-	os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\nEach app-home folder has a `README.md` that documents its structure, use, and rules. When a task involves any of these folders, you MUST read its `README.md` first before inspecting or modifying any other file in that folder.\n\n## Tool Discipline\n- Keep relevant loaded skills active across follow-up turns on the same topic or task.\n- Do not unload a skill immediately after one successful action if the user is likely to continue in the same domain.\n- Unload a skill only when the user clearly changes topic or task, or when the loaded skill would interfere with the next turn.\n\n## Active State Rules\n- Only skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.\n- Only memories listed under `## Active Memories` are active right now. Do not infer current active memories from older `load_memory` or `unload_memory` tool results in the conversation history. If there is no `## Active Memories` section below, then no memories are currently active.\n\n{OS_PROMPT}\n\n## Transport\n{TRANSPORT_PROMPT}\n\n{TRANSPORT_CONTEXT}\n\n## Host Environment Helpers\n{HOST_HELPERS_ADVISORY}\n\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nBefore performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first. Do not act on an unfamiliar domain without loading the relevant skill.\n\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n{RUNNABLE_SKILLS_SECTION}\n\n## Memories\nAvailable memories:\n{MEMORIES_AVAILABLE}\n\nActive memories:\n{MEMORIES_ACTIVE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n"), 0644)
+	os.WriteFile(filepath.Join(promptsDir, "sysprompt.md"), []byte("# Universal System Prompt\n\nApp home is at {APP_HOME}.\nUnknown var: {UNKNOWN_VAR}.\n\nEach app-home folder has a `README.md` that documents its structure, use, and rules. When a task involves any of these folders, you MUST read its `README.md` first before inspecting or modifying any other file in that folder.\n\n## Tool Discipline\n- Keep relevant loaded skills active across follow-up turns on the same topic or task.\n- Do not unload a skill immediately after one successful action if the user is likely to continue in the same domain.\n- Unload a skill only when the user clearly changes topic or task, or when the loaded skill would interfere with the next turn.\n\n## Active State Rules\n- Only skills listed under `## Active Skills` are active right now. Do not infer current active skills from older `load_skill` or `unload_skill` tool results in the conversation history. If there is no `## Active Skills` section below, then no skills are currently active.\n- Only memories listed under `## Active Memories` are active right now. Do not infer current active memories from older `load_memory` or `unload_memory` tool results in the conversation history. If there is no `## Active Memories` section below, then no memories are currently active.\n\n{OS_PROMPT}\n\n## Transport\n{TRANSPORT_PROMPT}\n\n{TRANSPORT_CONTEXT}\n\n## Host Environment Helpers\n{HOST_HELPERS_ADVISORY}\n\nAvailable helpers:\n{HOST_HELPERS_AVAILABLE}\n\nOptional helpers:\n{HOST_HELPERS_OPTIONAL}\n\n## Skills\nBefore performing any task, scan available skill descriptions. If a domain or system mentioned in the request appears in a skill's description, you MUST load that skill first. Do not act on an unfamiliar domain without loading the relevant skill.\n\nAvailable skills:\n{SKILLS_AVAILABLE}\n\nActive skills:\n{SKILLS_ACTIVE}\n\n## Memories\nAvailable memories:\n{MEMORIES_AVAILABLE}\n\nActive memories:\n{MEMORIES_ACTIVE}\n\n## Project Rules (AGENTS.md)\n{AGENTS_CONTENT}\n"), 0644)
 	os.WriteFile(filepath.Join(promptsDir, "sysprompt.linux.md"), []byte("linux"), 0644)
 	os.WriteFile(filepath.Join(promptsDir, "transport.console.md"), []byte("console transport"), 0644)
 	os.WriteFile(filepath.Join(promptsDir, "transport.telegram.md"), []byte("telegram transport"), 0644)
-	os.WriteFile(filepath.Join(promptsDir, "transport.web.md"), []byte("web transport"), 0644)
 }
 
 // TestRunTurnTextResponse verifies a turn with a text-only LLM response.
@@ -459,9 +458,6 @@ func TestNewAgent(t *testing.T) {
 	}
 	if agent.Tools.Get("replace_block") == nil {
 		t.Error("replace_block tool not registered")
-	}
-	if agent.Tools.Get("run_skill") == nil {
-		t.Error("run_skill tool not registered")
 	}
 	if agent.Tools.Get("ask_a_friend") == nil {
 		t.Error("ask_a_friend tool not registered")
@@ -989,159 +985,5 @@ func TestListProviderModelsNotFound(t *testing.T) {
 	_, err := agent.ListProviderModels("nonexistent")
 	if err == nil {
 		t.Fatal("ListProviderModels() expected error for unknown provider")
-	}
-}
-
-// --- Reasoning level tests ---
-
-// TestNewAgentLoadsStoredReasoningLevel verifies the agent loads a reasoning level from the model suffix.
-func TestNewAgentLoadsStoredReasoningLevel(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer server.Close()
-
-	cfg := &config.Config{
-		Providers:      []config.Provider{{Name: "test", Endpoint: server.URL, APIKey: "sk-test"}},
-		Roles:          config.Roles{Default: "test/test-model|high"},
-		Compaction:     config.DefaultCompaction(),
-		StripReasoning: config.DefaultStripReasoning(),
-	}
-
-	modes := &config.ModesConfig{
-		Modes:    []config.Mode{{Name: "default", Model: "test/test-model|high"}},
-		LastMode: "default",
-	}
-	if err := modes.Save(); err != nil {
-		t.Fatalf("Save() modes failed: %v", err)
-	}
-
-	dir := t.TempDir()
-	sess, _ := session.CreateInDir(dir)
-	promptsDir := filepath.Join(dir, "prompts")
-	os.MkdirAll(promptsDir, 0755)
-	writePromptFixtures(t, promptsDir)
-
-	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{}, "console")
-	if err != nil {
-		t.Fatalf("NewAgent() error: %v", err)
-	}
-	if agent.Provider.ReasoningLevel != "high" {
-		t.Errorf("Provider.ReasoningLevel = %q, want 'high'", agent.Provider.ReasoningLevel)
-	}
-	if agent.ModelID != "test/test-model|high" {
-		t.Errorf("ModelID = %q, want 'test/test-model|high'", agent.ModelID)
-	}
-	if agent.Provider.Model != "test-model" {
-		t.Errorf("Provider.Model = %q, want 'test-model' (bare)", agent.Provider.Model)
-	}
-}
-
-// TestActiveReasoningLevel verifies the getter returns the provider's level.
-func TestActiveReasoningLevel(t *testing.T) {
-	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
-	defer server.Close()
-
-	// Empty by default (no suffix in the model string).
-	if got := agent.ActiveReasoningLevel(); got != "" {
-		t.Errorf("ActiveReasoningLevel() = %q, want empty", got)
-	}
-
-	// Set via Provider directly (simulating what NewClient does with suffix).
-	agent.Provider.ReasoningLevel = "xhigh"
-	if got := agent.ActiveReasoningLevel(); got != "xhigh" {
-		t.Errorf("ActiveReasoningLevel() = %q, want 'xhigh'", got)
-	}
-}
-
-// TestSetActiveReasoningLevel validates, sets, and persists the level.
-func TestSetActiveReasoningLevel(t *testing.T) {
-	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
-	defer server.Close()
-
-	// The test model "test/test-model" is NOT a reasoning-capable model (no o1/o3/o4/gpt-5/codex prefix).
-	// So SetActiveReasoningLevel should fail for it.
-	err := agent.SetActiveReasoningLevel("high")
-	if err == nil {
-		t.Fatal("SetActiveReasoningLevel() expected error for non-reasoning model, got nil")
-	}
-}
-
-// TestSetActiveReasoningLevelInvalidLevel verifies error for invalid level string.
-func TestSetActiveReasoningLevelInvalidLevel(t *testing.T) {
-	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
-	defer server.Close()
-
-	// Set a reasoning-capable model ID.
-	agent.ModelID = "test/o3"
-
-	err := agent.SetActiveReasoningLevel("ultra")
-	if err == nil {
-		t.Fatal("SetActiveReasoningLevel(ultra) expected error, got nil")
-	}
-}
-
-// TestApplyModelLoadsReasoningLevel verifies model switching loads the level from the suffix.
-func TestApplyModelLoadsReasoningLevel(t *testing.T) {
-	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
-	defer server.Close()
-
-	// Apply a model with |low suffix; NewClient parses the suffix.
-	err := agent.applyModel("test/test-model|low")
-	if err != nil {
-		t.Fatalf("applyModel() error: %v", err)
-	}
-	if agent.Provider.ReasoningLevel != "low" {
-		t.Errorf("Provider.ReasoningLevel = %q, want 'low'", agent.Provider.ReasoningLevel)
-	}
-	if agent.Provider.Model != "test-model" {
-		t.Errorf("Provider.Model = %q, want 'test-model' (bare)", agent.Provider.Model)
-	}
-}
-
-// TestApplyModelClearsLevelWhenNoneStored verifies no leftover level from previous model.
-func TestApplyModelClearsLevelWhenNoneStored(t *testing.T) {
-	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
-	defer server.Close()
-
-	agent.Provider.ReasoningLevel = "high"
-
-	// Apply a model without suffix; NewClient should clear ReasoningLevel.
-	err := agent.applyModel("test/test-model")
-	if err != nil {
-		t.Fatalf("applyModel() error: %v", err)
-	}
-	if agent.Provider.ReasoningLevel != "" {
-		t.Errorf("Provider.ReasoningLevel = %q, want empty after switch to model with no suffix", agent.Provider.ReasoningLevel)
-	}
-}
-
-// TestSetModelLoadsReasoningLevel verifies SetModel loads the level from the model suffix.
-func TestSetModelLoadsReasoningLevel(t *testing.T) {
-	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
-	defer server.Close()
-
-	// Persist modes with a suffixed model.
-	modes := &config.ModesConfig{
-		Modes:    []config.Mode{{Name: "default", Model: "test/test-model|min"}},
-		LastMode: "default",
-	}
-	if err := modes.Save(); err != nil {
-		t.Fatalf("Save() modes failed: %v", err)
-	}
-
-	// Reload into agent so in-memory state matches file.
-	agent.Modes = modes
-	agent.CurrentMode = &agent.Modes.Modes[0]
-
-	err := agent.SetModel("test/test-model|min")
-	if err != nil {
-		t.Fatalf("SetModel() error: %v", err)
-	}
-	if agent.Provider.ReasoningLevel != "min" {
-		t.Errorf("Provider.ReasoningLevel = %q, want 'min'", agent.Provider.ReasoningLevel)
-	}
-	if agent.ModelID != "test/test-model|min" {
-		t.Errorf("ModelID = %q, want 'test/test-model|min'", agent.ModelID)
 	}
 }

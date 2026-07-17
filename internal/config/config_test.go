@@ -363,28 +363,6 @@ func TestSplitModelIDNoSlash(t *testing.T) {
 	}
 }
 
-// TestSplitModelIDSuffix verifies that SplitModelID strips |reasoning_level suffix.
-func TestSplitModelIDSuffix(t *testing.T) {
-	provider, model := SplitModelID("openrouter/o3|high")
-	if provider != "openrouter" {
-		t.Errorf("provider = %q, want 'openrouter'", provider)
-	}
-	if model != "o3" {
-		t.Errorf("model = %q, want 'o3'", model)
-	}
-}
-
-// TestSplitModelIDNestedSuffix verifies suffix stripping for deeply nested model IDs.
-func TestSplitModelIDNestedSuffix(t *testing.T) {
-	provider, model := SplitModelID("openrouter/openai/o3|max")
-	if provider != "openrouter" {
-		t.Errorf("provider = %q, want 'openrouter'", provider)
-	}
-	if model != "openai/o3" {
-		t.Errorf("model = %q, want 'openai/o3'", model)
-	}
-}
-
 // TestDefaultHelperSetup verifies default HelperSetup values.
 func TestDefaultHelperSetup(t *testing.T) {
 	cfg := Default()

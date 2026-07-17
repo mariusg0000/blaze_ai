@@ -51,8 +51,7 @@ Separation rationale: `modes.json` contains frequently-edited mode data, isolate
   "helperSetup": {
     "dismissed": false,
     "declined": []
-  },
-  "showReasoning": false
+  }
 }
 ```
 
@@ -67,7 +66,6 @@ type Config struct {
     StripReasoning StripReasoning `json:"stripReasoning"`
     LastModel      string         `json:"last_model,omitempty"`
     HelperSetup    HelperSetup    `json:"helperSetup,omitempty"`
-    ShowReasoning  bool           `json:"showReasoning"`
 }
 ```
 
@@ -164,7 +162,7 @@ Distinct from live detection: this stores UX preferences only. Actual binary pre
 ### Other Fields
 
 - `last_model` (string, optional) — persists the last selected model across sessions. Format: `provider/model_name`. Used as fallback when no active mode is set.
-- `showReasoning` (bool, default false) — toggle streaming of reasoning/thinking tokens to the user
+- Model IDs are plain `provider/model_name` strings; providers use their default reasoning behavior.
 
 ## Modes (modes.json)
 
