@@ -1,7 +1,9 @@
 # Scripts
 
-This folder stores reusable helper scripts created for BlazeAI tasks on this machine.
+This folder stores task scripts created by BlazeAI outside user projects.
 
-- Prefer small, task-focused scripts with obvious names.
-- `venv/` is reserved for the BlazeAI Python virtual environment and may be created lazily.
-- Scripts here may be executed by the app or referenced by loaded skills.
+- Store scripts for each task under `tasks/<task-slug>/`.
+- Prefer the simplest robust shell or Python implementation that reduces tool calls and tokens.
+- `write_file` creates missing parent directories, so a separate `mkdir` call is unnecessary.
+- `venv/` is reserved for the lazily-created BlazeAI Python virtual environment.
+- Run Python task scripts and install their libraries only through that venv unless the user explicitly requests work on the system Python environment.

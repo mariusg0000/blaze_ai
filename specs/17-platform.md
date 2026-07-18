@@ -65,15 +65,15 @@ be resolved (unusual on desktop, may happen in minimal containers).
 $HOME/blazeai/
   config/     — config.json, modes.json
   skills/     — global user-installed skills
-  scripts/    — scripts for tools
-  scripts/venv/  — LAZY: created only when Python is first used
+  scripts/    — BlazeAI-created task scripts and Python venv
+  scripts/tasks/<task-slug>/  — scripts grouped by user task
+  scripts/venv/  — LAZY: mandatory runtime for Python task scripts
   projects/   — per-project session and skill storage
   backups/    — LLM-created backups
   telegram/   — Telegram bridge instance storage
 ```
 
-`scripts/venv` is excluded from `Bootstrap()` — created lazily by the shell
-tool when Python execution is needed.
+`scripts/venv` is excluded from `Bootstrap()` and created lazily, with user approval, when a Python task script first requires it. Python task scripts and their libraries use this venv unless the user explicitly requests work on the system Python environment.
 
 ### Bootstrap
 

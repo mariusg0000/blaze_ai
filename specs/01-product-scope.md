@@ -49,12 +49,15 @@ Git workflows.
 ## Execution Model
 
 - **Primary tool**: `shell` — executes commands via the host platform shell
-- **Inline shell** for simple tasks, OS-native scripts for complex tasks
+- **Fast execution policy**: batch independent tool calls when supported; order dependent operations sequentially; combine tightly related shell commands with fail-fast chaining
+- **Direct commands versus scripts**: use direct shell for clear, compact execution; create a task script for loops, repeated operations, structured parsing, multi-step transformations, branching, fragile quoting, or when it reduces total tool calls and tokens
+- **Script language**: choose OS-native shell or Python according to the simplest, most robust, token-efficient solution
+- **Task script location**: `app_home/scripts/tasks/<task-slug>/`; do not create task scripts in the user project unless the task explicitly requires a project script
 - **Platform shells**:
   - Linux: `bash` → `sh`
   - macOS: `bash` → `sh`
   - Windows: `pwsh` → `powershell.exe` → `cmd.exe` (priority order)
-- **Python**: last resort only, in a lazily-created venv under `app_home/scripts/venv/`
+- **Python**: task scripts run only through the lazily-created venv under `app_home/scripts/venv/`; install libraries only in that venv, with system-environment changes allowed only when explicitly requested or when the task targets the system Python environment
 - **Host helpers** (rg, fd, jq, git, xh, pandoc, sqlite3): detected at startup,
   listed in prompt so the LLM knows they are available without checking
 - **Native tools**: 9 base native tools plus conditional `run_agent` (`shell`, `load_skill`, `replace_block`, `ask_a_friend`, `analyze_image`, `task_read`, `task_write`, `read_file`, `write_file`)
