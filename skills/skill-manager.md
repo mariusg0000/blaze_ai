@@ -78,6 +78,8 @@ Skills are stored on disk in one of two scopes:
 
 Both use the same folder layout: `<name>/skill.md`. Never use a flat `.md` file directly under the skills directory — flat files are invalid and will not be discovered.
 
+The names `skill-manager`, `config-manager`, and `audit-manager` are reserved for immutable builtin skills. Never create a global or project skill with any of these names. If a conflicting disk skill exists anyway, BlazeAI ignores it and always loads the embedded builtin.
+
 ## Creating or Editing a Skill
 
 ### Prerequisites
@@ -126,11 +128,11 @@ If promoting a project skill to global:
 - Write examples generically so they apply to any project.
 - If after generalizing nothing useful remains, keep it project.
 
-## Restoring Builtin Skills
+## Builtin Skills
 
-Builtin skills (`skill-manager`, `config-manager`, `audit-manager`) are seeded into `\{GLOBAL_SKILLS_DIR\}` on startup. To restore a builtin to its factory version, delete its folder and restart BlazeAI.
+Builtin skills (`skill-manager`, `config-manager`, and `audit-manager`) are immutable and loaded directly from the binary. They cannot be edited, replaced, or restored from `{GLOBAL_SKILLS_DIR}`; update the BlazeAI source and rebuild the binary to change them. Never create global or project skills with these reserved names.
 
 skill.format=folder/<name>/skill.md with \[DESCRIPTION\] (required) and at least one of \[BEHAVIOR\] or \[DATA\]
 skill.ids=bare name for global skills (default); project/name for project-scoped skills
 skill.resolution=bare name resolves to global by default; project/name resolves to project scope exactly
-skill.scopes=two runtime scopes: global and project
+skill.scopes=three runtime scopes: builtin, global, and project; builtin names always have priority

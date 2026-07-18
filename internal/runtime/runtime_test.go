@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"blazeai/internal/config"
@@ -86,7 +87,7 @@ func setupAgent(t *testing.T, handler http.HandlerFunc) (*Agent, *mockHandler, *
 	writePromptFixtures(t, promptsDir)
 
 	h := &mockHandler{}
-	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, h, "console")
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), fstest.MapFS{}, dir, h, "console")
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
@@ -549,7 +550,7 @@ func TestNewAgentBadModel(t *testing.T) {
 
 	dir := t.TempDir()
 	sess, _ := session.CreateInDir(dir)
-	_, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(dir), dir, &mockHandler{}, "console")
+	_, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(dir), fstest.MapFS{}, dir, &mockHandler{}, "console")
 	if err == nil {
 		t.Fatal("NewAgent() expected error for missing provider, got nil")
 	}
@@ -590,7 +591,7 @@ func TestNewAgentWithMode(t *testing.T) {
 	os.MkdirAll(promptsDir, 0755)
 	writePromptFixtures(t, promptsDir)
 
-	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{}, "console")
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), fstest.MapFS{}, dir, &mockHandler{}, "console")
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
@@ -637,7 +638,7 @@ func TestNewAgentWithModeFallbackToFirstMode(t *testing.T) {
 	os.MkdirAll(promptsDir, 0755)
 	writePromptFixtures(t, promptsDir)
 
-	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{}, "console")
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), fstest.MapFS{}, dir, &mockHandler{}, "console")
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
@@ -892,7 +893,7 @@ func TestNewAgentIgnoresLastModelWhenLastModeExists(t *testing.T) {
 	os.MkdirAll(promptsDir, 0755)
 	writePromptFixtures(t, promptsDir)
 
-	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{}, "console")
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), fstest.MapFS{}, dir, &mockHandler{}, "console")
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
@@ -991,7 +992,7 @@ func TestNewAgentAutoCreatesDefaultMode(t *testing.T) {
 	os.MkdirAll(promptsDir, 0755)
 	writePromptFixtures(t, promptsDir)
 
-	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{}, "console")
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), fstest.MapFS{}, dir, &mockHandler{}, "console")
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}

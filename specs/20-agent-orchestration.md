@@ -121,14 +121,15 @@ runOneChild(parentCtx, task, displayID, childID)
   │    └─ New folder → Create empty session
   ├─ Write agent_task.md (new) or preserve (resume)
   ├─ Create child agent via newChildAgent()
-  │    ├─ Inherits: config, OS, promptsFS, workDir, transport
-  │    ├─ No modes (nil) — child has own tool allowlist
-  │    └─ Model: definition.Model or parent's ModelID
-  ├─ Configure child builder:
-  │    ├─ SystemPromptName = "sysprompt.agent.md"
-  │    ├─ AgentInstructions = definition.Instructions
-  │    ├─ AgentTaskFile = taskPath
-  │    └─ Agents = nil (no recursive agents)
+   │    ├─ Inherits: config, OS, promptsFS, builtinSkillsFS, workDir, transport
+   │    ├─ No modes (nil) — child has own tool allowlist
+   │    └─ Model: definition.Model or parent's ModelID
+   ├─ Configure child builder:
+   │    ├─ SystemPromptName = "sysprompt.agent.md"
+   │    ├─ AgentInstructions = definition.Instructions
+   │    ├─ AgentTaskFile = taskPath
+   │    └─ Agents = nil (no recursive agents)
+  │    Child prompt list and load_skill behavior use the same immutable builtin catalog as the parent.
   ├─ Build filtered tool registry from definition.ToolNames
   │    └─ Always includes agent_done
   ├─ Dual timeout:

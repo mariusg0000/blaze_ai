@@ -84,7 +84,13 @@ func (t *LoadSkillTool) Execute(ctx context.Context, args json.RawMessage) strin
 	if err != nil {
 		return fmt.Sprintf("error: %v", err)
 	}
-	return fmt.Sprintf("Skill loaded: %s\n\n%s", strings.TrimPrefix(resolved, "global/"), body)
+	return fmt.Sprintf("Skill loaded: %s\n\n%s", displaySkillName(resolved), body)
+}
+
+// displaySkillName hides internal builtin/global scope markers while retaining project scope.
+func displaySkillName(name string) string {
+	name = strings.TrimPrefix(name, "builtin/")
+	return strings.TrimPrefix(name, "global/")
 }
 
 // normalizeSkillName strips the optional .md suffix.

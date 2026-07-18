@@ -47,7 +47,7 @@ type telegramClient interface {
 // PARAMS: ctx — process lifetime context; cfg — global runtime config; osType — detected OS;
 // promptsFS — embedded prompt filesystem; instance — Telegram instance folder name.
 // RETURNS: error if startup, polling, or request handling fails.
-func Run(ctx context.Context, cfg *config.Config, osType platform.OS, promptsFS fs.FS, instance string) error {
+func Run(ctx context.Context, cfg *config.Config, osType platform.OS, promptsFS, builtinSkillsFS fs.FS, instance string) error {
 	bridgeCfg, _, err := LoadBridgeConfig(instance)
 	if err != nil {
 		return err
@@ -65,7 +65,7 @@ func Run(ctx context.Context, cfg *config.Config, osType platform.OS, promptsFS 
 	if err != nil {
 		return err
 	}
-	agent, err := runtime.NewAgent(cfg, sess, osType, promptsFS, bridgeCfg.WorkDir, nil, "telegram")
+	agent, err := runtime.NewAgent(cfg, sess, osType, promptsFS, builtinSkillsFS, bridgeCfg.WorkDir, nil, "telegram")
 	if err != nil {
 		return fmt.Errorf("cannot create telegram agent: %w", err)
 	}

@@ -85,8 +85,7 @@ matching `transport.<name>.md` file.
 | `config-manager.md` | LLM-assisted configuration |
 | `audit-manager.md` | Review recent sessions and synthesize workflow improvements |
 
-Seeded to `app_home/skills/` at startup by `skills.SeedBuiltins()` if they
-don't already exist (user customizations take priority).
+Read directly at runtime from `fs.Sub(embeddedBuiltinSkills, "skills")` — no seeding to app home. `prepareBuiltinAssets()` returns both embedded sub-filesystems (prompts and builtin skills) without writing app home.
 
 ## Release Targets
 
@@ -138,12 +137,12 @@ main()
        ├─ Detect OS  → osType (linux/darwin/windows)
        ├─ Bootstrap  → app home + subfolders
        ├─ loadRuntimeConfig  → config.Load or firstRun
-       ├─ prepareBuiltinAssets  → embedded prompts + seed skills
-       ├─ openSession  → new / -c / -r resumed session
-       │    ├─ session.Create(workDir)
-       │    ├─ session.LastClean(workDir)
-       │    └─ session.Last(workDir)
-       ├─ runtime.NewAgent(cfg, sess, osType, promptsFS, workDir, handler, "console")
+        ├─ prepareBuiltinAssets  → embedded prompts + embedded builtin skills (no app-home writes)
+        ├─ openSession  → new / -c / -r resumed session
+        │    ├─ session.Create(workDir)
+        │    ├─ session.LastClean(workDir)
+        │    └─ session.Last(workDir)
+        ├─ runtime.NewAgent(cfg, sess, osType, promptsFS, builtinSkillsFS, workDir, handler, "console")
        ├─ agent.Handler = console
        └─ console.Run()
 ```
@@ -156,8 +155,8 @@ main()
        ├─ Detect OS
        ├─ Bootstrap
        ├─ loadRuntimeConfig
-       ├─ prepareBuiltinAssets
-       └─ telegram.Run(ctx, cfg, osType, promptsFS, instance)
+        ├─ prepareBuiltinAssets
+        └─ telegram.Run(ctx, cfg, osType, promptsFS, builtinSkillsFS, instance)
 ```
 
 The Telegram path diverges early — it does not call `openSession`,
@@ -167,6 +166,8 @@ The Telegram path diverges early — it does not call `openSession`,
 Inside `telegram.Run()`, agent construction uses `transportName="telegram"`,
 which loads `transport.telegram.md` and applies the dynamic Telegram
 `TransportContext` string.
+
+Prompt and builtin skill source updates require rebuild and redeployment because runtime copies are not created — the immutable embedded FS is read directly.
 
 ## Deploy
 

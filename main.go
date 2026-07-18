@@ -12,7 +12,6 @@ import (
 	"io/fs"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	"blazeai/internal/config"
@@ -20,7 +19,6 @@ import (
 	"blazeai/internal/platform"
 	"blazeai/internal/runtime"
 	"blazeai/internal/session"
-	"blazeai/internal/skills"
 	"blazeai/internal/telegram"
 )
 
@@ -74,13 +72,13 @@ func run() error {
 		return err
 	}
 
-	promptsFS, err := prepareBuiltinAssets()
+	promptsFS, builtinSkillsFS, err := prepareBuiltinAssets()
 	if err != nil {
 		return err
 	}
 
 	if *telegramFlag != "" {
-		return telegram.Run(context.Background(), cfg, osType, promptsFS, *telegramFlag)
+		return telegram.Run(context.Background(), cfg, osType, promptsFS, builtinSkillsFS, *telegramFlag)
 	}
 	_ = consoleFlag
 	workDir, err := os.Getwd()
@@ -92,7 +90,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if err := runConsole(cfg, sess, osType, promptsFS, workDir, resume); err != nil {
+	if err := runConsole(cfg, sess, osType, promptsFS, builtinSkillsFS, workDir, resume); err != nil {
 		return err
 	}
 	return nil
@@ -144,69 +142,26 @@ func openSession(workDir string, resume resumeOptions) (*session.Session, error)
 	}
 }
 
-// prepareBuiltinAssets seeds missing editable assets and returns the live prompt filesystem.
-//
-// WHAT: Materializes every embedded prompt template under app_home/prompts and returns os.DirFS there.
-// WHY: Users must be able to edit all prompt templates, while startup still provides complete defaults.
-// HOW: Existing prompt files are preserved; BuildRuntimePart rereads the returned disk filesystem every call.
-func prepareBuiltinAssets() (fs.FS, error) {
+// prepareBuiltinAssets resolves the immutable embedded prompt and builtin skill filesystems.
+// WHAT: Returns read-only embedded sub-filesystems for runtime asset access.
+// HOW: Resolves both required roots without creating or modifying app-home asset directories.
+func prepareBuiltinAssets() (fs.FS, fs.FS, error) {
 	embeddedPromptFS, err := fs.Sub(embeddedPrompts, "prompts")
 	if err != nil {
-		return nil, fmt.Errorf("cannot resolve embedded prompts: %w", err)
+		return nil, nil, fmt.Errorf("cannot resolve embedded prompts: %w", err)
 	}
-	templatesFS, err := fs.Sub(embeddedBuiltinSkills, "skills")
+	builtinSkillsFS, err := fs.Sub(embeddedBuiltinSkills, "skills")
 	if err != nil {
-		return nil, fmt.Errorf("cannot resolve embedded skill templates: %w", err)
+		return nil, nil, fmt.Errorf("cannot resolve embedded builtin skills: %w", err)
 	}
-	home, err := platform.AppHome()
-	if err != nil {
-		return nil, fmt.Errorf("cannot resolve app home: %w", err)
-	}
-	promptsDir := filepath.Join(home, "prompts")
-	if err := seedMissingPromptFiles(embeddedPromptFS, promptsDir); err != nil {
-		return nil, err
-	}
-	if err := skills.SeedBuiltins(templatesFS, filepath.Join(home, "skills")); err != nil {
-		return nil, fmt.Errorf("cannot seed builtin skills: %w", err)
-	}
-	return os.DirFS(promptsDir), nil
-}
-
-// seedMissingPromptFiles copies embedded prompt templates without overwriting user edits.
-func seedMissingPromptFiles(source fs.FS, targetDir string) error {
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return fmt.Errorf("cannot create prompts directory %s: %w", targetDir, err)
-	}
-	entries, err := fs.ReadDir(source, ".")
-	if err != nil {
-		return fmt.Errorf("cannot list embedded prompts: %w", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" || entry.Name() == "readme.md" {
-			continue
-		}
-		target := filepath.Join(targetDir, entry.Name())
-		if _, err := os.Stat(target); err == nil {
-			continue
-		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("cannot inspect prompt file %s: %w", target, err)
-		}
-		data, err := fs.ReadFile(source, entry.Name())
-		if err != nil {
-			return fmt.Errorf("cannot read embedded prompt %s: %w", entry.Name(), err)
-		}
-		if err := os.WriteFile(target, data, 0644); err != nil {
-			return fmt.Errorf("cannot create prompt file %s: %w", target, err)
-		}
-	}
-	return nil
+	return embeddedPromptFS, builtinSkillsFS, nil
 }
 
 // runConsole starts the console transport over a newly created runtime agent.
-func runConsole(cfg *config.Config, sess *session.Session, osType platform.OS, promptsFS fs.FS, workDir string, resume resumeOptions) error {
+func runConsole(cfg *config.Config, sess *session.Session, osType platform.OS, promptsFS, builtinSkillsFS fs.FS, workDir string, resume resumeOptions) error {
 
 	// Create agent and console.
-	agent, err := runtime.NewAgent(cfg, sess, osType, promptsFS, workDir, nil, "console")
+	agent, err := runtime.NewAgent(cfg, sess, osType, promptsFS, builtinSkillsFS, workDir, nil, "console")
 	if err != nil {
 		return fmt.Errorf("cannot create agent: %w", err)
 	}

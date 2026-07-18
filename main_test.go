@@ -1,47 +1,40 @@
-// main_test.go — tests for startup asset preparation.
-// Verifies editable prompt templates are seeded into app-home storage without overwriting user files.
-// Layer: application bootstrap. Dependencies: embedded prompts and standard filesystem APIs.
+// main_test.go — tests for embedded startup asset resolution.
+// Layer: application bootstrap. Dependencies: embedded filesystems.
 package main
 
 import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"blazeai/internal/platform"
 )
 
-// TestSeedMissingPromptFilesSeedsAndPreservesTemplates verifies default seeding and edit preservation.
-func TestSeedMissingPromptFilesSeedsAndPreservesTemplates(t *testing.T) {
-	source, err := fs.Sub(embeddedPrompts, "prompts")
+// TestPrepareBuiltinAssetsResolvesEmbeddedFiles verifies startup performs no seeding.
+func TestPrepareBuiltinAssetsResolvesEmbeddedFiles(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	prompts, builtin, err := prepareBuiltinAssets()
 	if err != nil {
-		t.Fatalf("fs.Sub() error: %v", err)
+		t.Fatalf("prepareBuiltinAssets() error: %v", err)
 	}
-	target := t.TempDir()
-	custom := "custom universal prompt\n"
-	if err := os.WriteFile(filepath.Join(target, "sysprompt.md"), []byte(custom), 0644); err != nil {
-		t.Fatalf("write custom prompt: %v", err)
-	}
-
-	if err := seedMissingPromptFiles(source, target); err != nil {
-		t.Fatalf("seedMissingPromptFiles() error: %v", err)
-	}
-	entries, err := fs.ReadDir(source, ".")
-	if err != nil {
-		t.Fatalf("ReadDir() error: %v", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" || entry.Name() == "readme.md" {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(target, entry.Name())); err != nil {
-			t.Errorf("seeded prompt %s: %v", entry.Name(), err)
+	for _, name := range []string{"sysprompt.md"} {
+		if _, err := fs.ReadFile(prompts, name); err != nil {
+			t.Fatalf("read embedded prompt %s: %v", name, err)
 		}
 	}
-	data, err := os.ReadFile(filepath.Join(target, "sysprompt.md"))
-	if err != nil {
-		t.Fatalf("read custom prompt: %v", err)
+	data, err := fs.ReadFile(builtin, "skill-manager.md")
+	if err != nil || !strings.Contains(string(data), "[DESCRIPTION]") {
+		t.Fatalf("embedded builtin skill unavailable: %v", err)
 	}
-	if string(data) != custom {
-		t.Fatalf("custom prompt overwritten: got %q want %q", string(data), custom)
+	home, err := platform.AppHome()
+	if err != nil {
+		t.Fatalf("AppHome() error: %v", err)
+	}
+	for _, path := range []string{"prompts", "skills/skill-manager", "skills/config-manager", "skills/audit-manager"} {
+		if _, err := os.Stat(filepath.Join(home, path)); !os.IsNotExist(err) {
+			t.Errorf("prepareBuiltinAssets created %s, stat error=%v", path, err)
+		}
 	}
 }

@@ -129,7 +129,10 @@ type Agent struct {
 //	transportName — required transport prompt selector like console or telegram.
 //
 // RETURNS: *Agent — ready to run; error if provider client cannot be created.
-func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, promptsFS fs.FS, workDir string, handler Handler, transportName string) (*Agent, error) {
+func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, promptsFS, builtinSkillsFS fs.FS, workDir string, handler Handler, transportName string) (*Agent, error) {
+	if promptsFS == nil || builtinSkillsFS == nil {
+		return nil, fmt.Errorf("embedded prompt and builtin skill filesystems are required")
+	}
 	modelID := cfg.Roles.Default
 
 	// Try migration first: extract modes from config.json if they exist there.
@@ -161,18 +164,18 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 		currentMode = &modes.Modes[0]
 		modelID = currentMode.Model
 	}
-	return newAgent(cfg, sess, os, promptsFS, workDir, handler, transportName, modelID, modes, currentMode)
+	return newAgent(cfg, sess, os, promptsFS, builtinSkillsFS, workDir, handler, transportName, modelID, modes, currentMode)
 }
 
 // newChildAgent creates a one-shot agent with only its selected model and explicit tools.
 // WHAT: Constructs a child runtime without mode configuration.
 // HOW: Reuses common runtime wiring while leaving mode state nil.
-func newChildAgent(cfg *config.Config, sess *session.Session, os platform.OS, promptsFS fs.FS, workDir string, handler Handler, transportName, modelID string) (*Agent, error) {
-	return newAgent(cfg, sess, os, promptsFS, workDir, handler, transportName, modelID, nil, nil)
+func newChildAgent(cfg *config.Config, sess *session.Session, os platform.OS, promptsFS, builtinSkillsFS fs.FS, workDir string, handler Handler, transportName, modelID string) (*Agent, error) {
+	return newAgent(cfg, sess, os, promptsFS, builtinSkillsFS, workDir, handler, transportName, modelID, nil, nil)
 }
 
 // newAgent wires common runtime dependencies for main and child agents.
-func newAgent(cfg *config.Config, sess *session.Session, os platform.OS, promptsFS fs.FS, workDir string, handler Handler, transportName, modelID string, modes *config.ModesConfig, currentMode *config.Mode) (*Agent, error) {
+func newAgent(cfg *config.Config, sess *session.Session, os platform.OS, promptsFS, builtinSkillsFS fs.FS, workDir string, handler Handler, transportName, modelID string, modes *config.ModesConfig, currentMode *config.Mode) (*Agent, error) {
 
 	client, err := provider.NewClient(cfg, modelID)
 	if err != nil {
@@ -194,6 +197,7 @@ func newAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 
 	builder := &prompt.Builder{
 		PromptsFS:        promptsFS,
+		BuiltinSkillsFS:  builtinSkillsFS,
 		WorkDir:          workDir,
 		OS:               os,
 		OSInfo:           platform.OSInfo(),
@@ -223,7 +227,7 @@ func newAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 	registry := tools.NewRegistry()
 	registry.Register(tools.NewShellTool(os, func() string { return agent.WorkDir }))
 	registry.Register(tools.NewLoadSkillTool(func(name string) (string, string, error) {
-		all, err := skills.DiscoverAll(agent.WorkDir)
+		all, err := skills.DiscoverAll(agent.WorkDir, agent.Builder.BuiltinSkillsFS)
 		if err != nil {
 			return "", "", fmt.Errorf("skill discovery failed: %w", err)
 		}

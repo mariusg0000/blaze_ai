@@ -40,8 +40,7 @@ Configuration is stored under:
 ~/blazeai/config/config.json
 ```
 
-BlazeAI also creates editable prompt templates and builtin skills under
-`~/blazeai/` without overwriting existing user files.
+Builtin prompt templates and manager skills are immutable and loaded directly from the compiled binary. User-created global and project skills remain disk-backed.
 
 ## Console Usage
 
@@ -111,9 +110,8 @@ BlazeAI stores machine-local data under `~/blazeai/`:
 ├── backups/      # Safety copies created by tools
 ├── config/       # config.json and modes.json
 ├── projects/     # Project-scoped sessions and skills
-├── prompts/      # Editable universal, OS, and transport prompts
 ├── scripts/      # Helper scripts and optional Python environment
-├── skills/       # Global and seeded builtin skills
+├── skills/       # User-created global skills
 └── telegram/     # Telegram bridge instances
 ```
 
@@ -133,9 +131,11 @@ Skills are Markdown files with exactly two required sections: `[DESCRIPTION]` fo
 
 Supported locations are:
 
-- Builtin skills embedded in the binary and seeded to `~/blazeai/skills/`
-- Global skills in `~/blazeai/skills/`
-- Project skills in the current project's `skills/` directory
+- Immutable builtin skills loaded directly from the binary
+- Global user skills in `~/blazeai/skills/`
+- Project user skills under `~/blazeai/projects/<project>/skills/`
+
+The builtin names `skill-manager`, `config-manager`, and `audit-manager` are reserved. Builtins take priority if a conflicting disk skill exists.
 
 Use `load_skill` to add a skill body to the conversation as a standard tool message.
 

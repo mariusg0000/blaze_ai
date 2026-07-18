@@ -38,3 +38,21 @@ func TestLoadSkillMetadata(t *testing.T) {
 		t.Fatal("invalid load_skill metadata")
 	}
 }
+
+func TestLoadSkillExecuteDisplayScopes(t *testing.T) {
+	for _, tc := range []struct {
+		resolved string
+		want     string
+	}{
+		{"builtin/skill-manager", "skill-manager"},
+		{"global/custom", "custom"},
+		{"project/custom", "project/custom"},
+	} {
+		tool := NewLoadSkillTool(func(string) (string, string, error) { return tc.resolved, "body", nil })
+		got := tool.Execute(context.Background(), json.RawMessage(`{"name":"custom"}`))
+		want := "Skill loaded: " + tc.want + "\n\nbody"
+		if got != want {
+			t.Errorf("resolved %q result = %q, want %q", tc.resolved, got, want)
+		}
+	}
+}

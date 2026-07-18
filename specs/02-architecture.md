@@ -18,12 +18,12 @@
 | `internal/config/` | `config.go`, `modes.go` | Configuration load/save/validate, work mode management |
 | `internal/session/` | `session.go` | File-based session persistence |
 | `internal/skills/` | `skills.go` | Skill parsing, discovery, active list management |
-| `internal/prompt/` | `prompt.go` | Prompt assembly from disk sources |
+| `internal/prompt/` | `prompt.go` | Prompt assembly from embedded templates plus disk project context |
 | `internal/compaction/` | `compaction.go` | Context compaction, pruning, summarization, reasoning stripping |
 | `internal/platform/` | `platform.go` | OS detection, app home, bootstrap, shell selection |
 | `internal/helpers/` | `helpers.go` | Host helper detection (rg, fd, jq, git, etc.) |
 | `prompts/` | `sysprompt.md`, `sysprompt.agent.md`, `sysprompt.linux.md`, `sysprompt.darwin.md`, `sysprompt.windows.md`, `transport.console.md`, `transport.telegram.md` | System prompt templates (embedded in binary) |
-| `skills/` | `skill-manager.md`, `config-manager.md`, `audit-manager.md` | Builtin skill templates (embedded, seeded to app_home) |
+| `skills/` | `skill-manager.md`, `config-manager.md`, `audit-manager.md` | Immutable builtin skills embedded and read directly from the binary |
 
 ## Module Dependency Graph
 
@@ -32,7 +32,7 @@ main.go
   ├── internal/platform       (OS, app home, bootstrap)
   ├── internal/config         (config load/save, first-run detection)
   ├── internal/session        (session create/resume)
-  ├── internal/skills         (skill seeding)
+  ├── internal/skills         (skill discovery/resolution)
   ├── internal/agents         (agent definition loading)
   ├── internal/console        (OR)
   ├── internal/telegram       (OR)
@@ -134,8 +134,9 @@ Three files:
 - OAuth credential refresh support
 
 ### Layer 5 — Prompt Assembly (`internal/prompt/`)
-- `Builder` struct with `Build()` and `BuildRuntimePart()` methods
-- Prompt rebuilt on every LLM call from disk sources
+- `Builder` struct with `PromptsFS` (immutable embedded prompt templates) and `BuiltinSkillsFS` (immutable embedded builtin skills)
+- `Builder.Build()` and `BuildRuntimePart()` methods
+- Prompt templates reread from the immutable embedded FS on every LLM call; disk-backed project context (specs.md, AGENTS.md) and user skills are also refreshed; nothing is cached or reused
 - Build order: universal sysprompt → OS sysprompt → transport prompt → host helpers → skills → agents → specs.md → AGENTS.md → conversation history
 - Variable injection: `{APP_HOME}`, `{WORK_DIR}`, `{OS_INFO}`, `{SKILLS_AVAILABLE}`, `{AGENTS_CONTENT}`, `{PROJECT_CONTENT}`, `{HOST_HELPERS_*}`, `{TRANSPORT_CONTEXT}`, `{SKILL_DIR}`
 - Agent definitions inject `{AGENT_INSTRUCTIONS}` and `{AGENT_TASK}` into `sysprompt.agent.md`
@@ -159,9 +160,10 @@ Three files:
 
 #### Skills (`internal/skills/`)
 - Markdown parsing: required `[DESCRIPTION]` and `[BODY]`
-- Three scopes: builtin (embedded), global (app_home/skills/), project (project skills/)
+- Three scopes: builtin (embedded, canonical ID `builtin/<name>`), global (app_home/skills/, canonical ID `global/<name>`), project (project skills/, canonical ID `project/<name>`)
+- Reserved builtin names `skill-manager`, `config-manager`, and `audit-manager` always take priority; same-name global/project files are ignored (filtered from the discovered map)
 - No active state; loaded bodies are ordinary persisted tool messages
-- `DiscoverAll()` — reads all three scopes, returns map[id → Skill]
+- `DiscoverAll(workDir, builtinFS)` — discovers embedded builtins, then disk global/project skills, filters collisions, returns map[id → Skill]
 - `Resolve()` — resolves name to scoped ID, errors on ambiguity
 
 #### Agents (`internal/agents/`)
@@ -256,15 +258,15 @@ main()
   ├─ config.NeedsFirstRun()?
   │    ├─ yes → runFirstRun()  → interactive config
   │    └─ no  → config.Load()  → from config.json
-  ├─ prepareBuiltinAssets()  → init embedded FS, seed skills
+  ├─ prepareBuiltinAssets()  → resolve both immutable embedded filesystems with no app-home writes
   │
   ├─ --telegram set?
-  │    └─ yes → telegram.Run(ctx, cfg, osType, promptsFS, instance)
+  │    └─ yes → telegram.Run(ctx, cfg, osType, promptsFS, builtinSkillsFS, instance)
   │
   ├─ os.Getwd()  → workDir
   ├─ session.Create() / session.LastClean() / session.Last()
   ├─ agents.Load(appHome/agents, registry)  → agent definitions
-  ├─ runtime.NewAgent(cfg, sess, osType, promptsFS, workDir, handler=nil, transportName="console")
+  ├─ runtime.NewAgent(cfg, sess, osType, promptsFS, builtinSkillsFS, workDir, handler=nil, transportName="console")
   │    ├─ Migrate modes from config.json if present
   │    ├─ Load modes (modes.json) or create default
   │    ├─ Resolve active mode: lastMode > firstMode
@@ -297,8 +299,7 @@ transport level, not shared. Optional extensions (`AgentActivityHandler`,
 `StreamPhaseHandler`) allow richer transport behavior without polluting the core contract.
 
 ### Prompt-First Design
-Most agent behavior is shaped by prompt templates, not runtime logic. The prompt
-system prompt is rebuilt from disk every LLM call. All variables are injected at
+Most agent behavior is shaped by prompt templates, not runtime logic. Embedded prompt templates are reread from the immutable embedded FS on every LLM call, while `specs.md`, `AGENTS.md`, and user skills are rediscovered/read from disk. All variables are injected at
 build time. There is no cached or reused prompt state.
 
 ### No Registry or Factory Overhead

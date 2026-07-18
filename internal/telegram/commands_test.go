@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"blazeai/internal/config"
 	"blazeai/internal/platform"
@@ -37,7 +38,7 @@ func newTelegramAgent(t *testing.T) (*runtime.Agent, *config.Config, *State, str
 		t.Fatalf("mkdir prompts: %v", err)
 	}
 	writePromptFixtures(t, promptsDir)
-	agent, err := runtime.NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), workDir, nil, "telegram")
+	agent, err := runtime.NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), fstest.MapFS{}, workDir, nil, "telegram")
 	if err != nil {
 		t.Fatalf("runtime.NewAgent() error: %v", err)
 	}

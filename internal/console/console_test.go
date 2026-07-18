@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"blazeai/internal/config"
@@ -36,7 +37,7 @@ func mockAgent(t *testing.T) *runtime.Agent {
 	os.MkdirAll(promptsDir, 0755)
 	writePromptFixtures(t, promptsDir)
 
-	agent, err := runtime.NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), dir, &mockHandler{}, "console")
+	agent, err := runtime.NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), fstest.MapFS{}, dir, &mockHandler{}, "console")
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
@@ -69,6 +70,18 @@ func newConsole(agent *runtime.Agent) (*Console, *bytes.Buffer) {
 func stripANSICodes(s string) string {
 	re := regexp.MustCompile(`\x1b\[[0-9;]*m`)
 	return re.ReplaceAllString(s, "")
+}
+
+func TestFormatSkillName(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"builtin/skill-manager", "skill-manager"},
+		{"global/custom", "custom"},
+		{"project/custom", "project/custom"},
+	} {
+		if got := formatSkillName(tc.input); got != tc.want {
+			t.Errorf("formatSkillName(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
 }
 
 // writePromptFixtures creates the prompt templates required by runtime prompt assembly.

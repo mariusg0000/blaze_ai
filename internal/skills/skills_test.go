@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"blazeai/internal/platform"
 )
 
 // writeSkill writes a skill file to a temp directory.
@@ -303,54 +305,48 @@ func TestSortedNames(t *testing.T) {
 	}
 }
 
-// TestSeedBuiltinsCopiesSkillDocs verifies that an embedded builtin subtree is seeded with the
-// main skill file when the skill does not yet exist.
-func TestSeedBuiltinsCopiesSkillDocs(t *testing.T) {
-	templates := fstest.MapFS{
-		"config-manager.md":               &fstest.MapFile{Data: []byte("[DESCRIPTION]\nDesc.\n\n[BEHAVIOR]\nBody.")},
-		"config-manager/docs/telegram.md": &fstest.MapFile{Data: []byte("# Telegram\n")},
-		"config-manager/docs/helpers.md":  &fstest.MapFile{Data: []byte("# Helpers\n")},
+func TestDiscoverAllBuiltinPrecedenceAndResolution(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workDir := t.TempDir()
+	home, _ := platform.AppHome()
+	writeCustomSkill(t, filepath.Join(home, "skills"), "skill-manager", "[DESCRIPTION]\nGlobal.\n\n[BODY]\nGlobal body.")
+	project, _ := platform.ProjectDir(workDir)
+	writeCustomSkill(t, filepath.Join(project, "skills"), "skill-manager", "[DESCRIPTION]\nProject.\n\n[BODY]\nProject body.")
+	builtin := fstest.MapFS{"skill-manager.md": &fstest.MapFile{Data: []byte("[DESCRIPTION]\nBuiltin.\n\n[BODY]\nBuiltin body.")}}
+	got, err := DiscoverAll(workDir, builtin)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	root := t.TempDir()
-	if err := SeedBuiltins(templates, root); err != nil {
-		t.Fatalf("SeedBuiltins() unexpected error: %v", err)
+	if s := got["builtin/skill-manager"]; s == nil || s.Scope != ScopeBuiltin || s.Dir != "" || s.Body != "Builtin body." {
+		t.Fatalf("builtin = %#v", s)
 	}
-
-	if _, err := os.Stat(filepath.Join(root, "config-manager", "skill.md")); err != nil {
-		t.Fatalf("seeded skill.md missing: %v", err)
+	for _, id := range []string{"global/skill-manager", "project/skill-manager"} {
+		if _, ok := got[id]; ok {
+			t.Errorf("collision retained: %s", id)
+		}
 	}
-	if _, err := os.Stat(filepath.Join(root, "config-manager", "docs", "telegram.md")); err != nil {
-		t.Fatalf("seeded telegram.md missing: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "config-manager", "docs", "helpers.md")); err != nil {
-		t.Fatalf("seeded helpers.md missing: %v", err)
+	for _, name := range []string{"skill-manager", "skill-manager.md", "builtin/skill-manager"} {
+		if id, err := Resolve(name, got); err != nil || id != "builtin/skill-manager" {
+			t.Errorf("Resolve(%q) = %q, %v", name, id, err)
+		}
 	}
 }
 
-// TestSeedBuiltinsSkipsExistingSkill verifies that an existing customised skill is left intact
-// and no auxiliary subtree is copied over it.
-func TestSeedBuiltinsSkipsExistingSkill(t *testing.T) {
-	templates := fstest.MapFS{
-		"config-manager.md":               &fstest.MapFile{Data: []byte("[DESCRIPTION]\nBuiltin.\n\n[BEHAVIOR]\nBuiltin body.")},
-		"config-manager/docs/telegram.md": &fstest.MapFile{Data: []byte("# Telegram\n")},
+func TestDiscoverAllBuiltinErrorsAndIgnoredEntries(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if _, err := DiscoverAll(t.TempDir(), nil); err == nil || !strings.Contains(err.Error(), "builtin skills filesystem is nil") {
+		t.Fatalf("nil error = %v", err)
 	}
-
-	root := t.TempDir()
-	writeCustomSkill(t, root, "config-manager", "[DESCRIPTION]\nCustom.\n\n[BEHAVIOR]\nCustom body.")
-
-	if err := SeedBuiltins(templates, root); err != nil {
-		t.Fatalf("SeedBuiltins() unexpected error: %v", err)
+	bad := fstest.MapFS{"broken.md": &fstest.MapFile{Data: []byte("invalid")}, "docs/readme.md": &fstest.MapFile{Data: []byte("invalid")}, "notes.txt": &fstest.MapFile{Data: []byte("invalid")}}
+	if _, err := DiscoverAll(t.TempDir(), bad); err == nil || !strings.Contains(err.Error(), "broken.md") {
+		t.Fatalf("malformed error = %v", err)
 	}
-
-	if _, err := os.Stat(filepath.Join(root, "config-manager", "docs", "telegram.md")); !os.IsNotExist(err) {
-		t.Fatalf("expected docs subtree to stay absent for existing skill, err=%v", err)
-	}
-	data, err := os.ReadFile(filepath.Join(root, "config-manager", "skill.md"))
+	valid := fstest.MapFS{"valid.md": &fstest.MapFile{Data: []byte("[DESCRIPTION]\nValid.\n\n[BODY]\nBody.")}, "docs/readme.md": &fstest.MapFile{Data: []byte("invalid")}, "notes.txt": &fstest.MapFile{Data: []byte("invalid")}}
+	got, err := DiscoverAll(t.TempDir(), valid)
 	if err != nil {
-		t.Fatalf("cannot read existing skill: %v", err)
+		t.Fatal(err)
 	}
-	if string(data) != "[DESCRIPTION]\nCustom.\n\n[BODY]\nCustom body." {
-		t.Fatalf("existing skill was overwritten: %q", string(data))
+	if len(got) != 1 || got["builtin/valid"] == nil {
+		t.Fatalf("got skills = %#v", got)
 	}
 }

@@ -223,7 +223,7 @@ func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, 
 			return "", fmt.Errorf("cannot write child task file: %w", err)
 		}
 	}
-	child, err := newChildAgent(a.Config, childSession, a.OS, a.Builder.PromptsFS, a.WorkDir, &childHandler{agentID: displayID, emit: a.emitAgentActivity}, a.Builder.TransportName, model)
+	child, err := newChildAgent(a.Config, childSession, a.OS, a.Builder.PromptsFS, a.Builder.BuiltinSkillsFS, a.WorkDir, &childHandler{agentID: displayID, emit: a.emitAgentActivity}, a.Builder.TransportName, model)
 	if err != nil {
 		return "", fmt.Errorf("cannot initialize child agent %q: %w", definition.Name, err)
 	}

@@ -648,7 +648,7 @@ func (c *Console) showStartupSplash() {
 
 	// Skills section.
 	c.sectionLabel("Skills", colorPurple)
-	all, err := skills.DiscoverAll(c.Agent.WorkDir)
+	all, err := skills.DiscoverAll(c.Agent.WorkDir, c.Agent.Builder.BuiltinSkillsFS)
 	if err != nil {
 		fmt.Fprintf(c.Out, "  unavailable: %v\n", err)
 	} else if len(all) == 0 {
@@ -727,10 +727,10 @@ func (c *Console) sectionLabel(label string, labelColor string) {
 	fmt.Fprintln(c.Out, c.color(colorLightGray, fill))
 }
 
-// formatSkillName strips the scope prefix from a skill ID for display.
-// global/name becomes name; project/name is kept as-is.
+// formatSkillName hides builtin/global scope prefixes for display.
+// Builtin and global names become bare names; project scope remains explicit.
 func formatSkillName(name string) string {
-	return strings.TrimPrefix(name, "global/")
+	return strings.TrimPrefix(strings.TrimPrefix(name, "builtin/"), "global/")
 }
 
 // OnSystem displays a system-level notification to the user, such as a detected

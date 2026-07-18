@@ -1,6 +1,5 @@
-// skills.go — skill discovery, parsing, validation, scoping, and seeding.
-// At startup, embedded builtin skill templates are seeded into app_home/skills/ if missing.
-// At runtime, skills are discovered from two scopes: global (app_home/skills/) and
+// skills.go — skill discovery, parsing, validation, and scoping.
+// Builtin skills remain in the embedded filesystem; disk skills are discovered from
 // project (app_home/projects/<project>/skills/). Both use subdirectory layout:
 // <scope>/<name>/skill.md. Skills are keyed with scope prefix: global/name, project/name.
 // Parses the required [DESCRIPTION] and [BODY] sections.
@@ -26,6 +25,7 @@ type Scope string
 const (
 	ScopeGlobal  Scope = "global"
 	ScopeProject Scope = "project"
+	ScopeBuiltin Scope = "builtin"
 )
 
 // ErrMissingDescription is returned when a skill file lacks a [DESCRIPTION] section.
@@ -110,99 +110,6 @@ func extractSection(content, sectionName string) (string, error) {
 	return strings.TrimSpace(rest[:nextIdx]), nil
 }
 
-// SeedBuiltins copies embedded builtin skill templates into app_home/skills/ if they do not
-// already exist. Each embedded .md file becomes app_home/skills/<name>/skill.md. If the
-// builtin template also has a same-named support subtree (for example <name>/docs/), that
-// subtree is copied alongside the skill file during the first seed.
-// Existing files are never overwritten — the user can delete a seeded skill to restore the
-// original on the next restart.
-//
-// WHAT:  One-time seeding of embedded skill templates into the global skills directory.
-// WHY:   Builtins are templates, not a runtime scope. They become editable global skills
-//
-//	after seeding. Deletion + restart restores the original.
-//
-// PARAMS: templatesFS — filesystem with embedded .md skill templates (e.g., read from
-//
-//	embed.FS); appHomeSkillsDir — path to app_home/skills/.
-//
-// RETURNS: error if a read or write operation fails.
-func SeedBuiltins(templatesFS fs.FS, appHomeSkillsDir string) error {
-	entries, err := fs.ReadDir(templatesFS, ".")
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".md") {
-			continue
-		}
-		skillName := strings.TrimSuffix(name, ".md")
-		skillDir := filepath.Join(appHomeSkillsDir, skillName)
-		skillFile := filepath.Join(skillDir, "skill.md")
-
-		if _, err := os.Stat(skillFile); err == nil {
-			continue // already exists, user may have customised it
-		}
-
-		data, err := fs.ReadFile(templatesFS, name)
-		if err != nil {
-			return fmt.Errorf("cannot read builtin template %s: %w", name, err)
-		}
-
-		if err := os.MkdirAll(skillDir, 0755); err != nil {
-			return fmt.Errorf("cannot create skill directory %s: %w", skillDir, err)
-		}
-		if err := os.WriteFile(skillFile, data, 0644); err != nil {
-			return fmt.Errorf("cannot write skill file %s: %w", skillFile, err)
-		}
-		if err := copyBuiltinSubtree(templatesFS, skillName, skillDir); err != nil {
-			return fmt.Errorf("cannot copy builtin subtree for %s: %w", skillName, err)
-		}
-	}
-	return nil
-}
-
-// copyBuiltinSubtree copies an optional same-named subtree from the embedded builtin skill
-// templates into the seeded skill directory. It is used for auxiliary docs such as
-// config-manager/docs/*.md.
-func copyBuiltinSubtree(templatesFS fs.FS, sourceDir, targetDir string) error {
-	entries, err := fs.ReadDir(templatesFS, sourceDir)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	for _, entry := range entries {
-		sourcePath := filepath.ToSlash(filepath.Join(sourceDir, entry.Name()))
-		targetPath := filepath.Join(targetDir, entry.Name())
-		if entry.IsDir() {
-			if err := os.MkdirAll(targetPath, 0755); err != nil {
-				return fmt.Errorf("cannot create builtin subtree directory %s: %w", targetPath, err)
-			}
-			if err := copyBuiltinSubtree(templatesFS, sourcePath, targetPath); err != nil {
-				return err
-			}
-			continue
-		}
-		data, err := fs.ReadFile(templatesFS, sourcePath)
-		if err != nil {
-			return fmt.Errorf("cannot read builtin subtree file %s: %w", sourcePath, err)
-		}
-		if err := os.WriteFile(targetPath, data, 0644); err != nil {
-			return fmt.Errorf("cannot write builtin subtree file %s: %w", targetPath, err)
-		}
-	}
-	return nil
-}
-
 // DiscoverProject discovers project-scoped skills from app_home/projects/<project>/skills/.
 // Keys use project/ prefix.
 //
@@ -232,15 +139,41 @@ func DiscoverProject(workDir string) (map[string]*Skill, error) {
 // WHY:   Prompt building and skill resolution need all available skills.
 // PARAMS: workDir — current working directory.
 // RETURNS: map[string]*Skill — all skills; error on discovery failure.
-func DiscoverAll(workDir string) (map[string]*Skill, error) {
+func DiscoverAll(workDir string, builtinFS fs.FS) (map[string]*Skill, error) {
+	if builtinFS == nil {
+		return nil, fmt.Errorf("builtin skills filesystem is nil")
+	}
+	skills := make(map[string]*Skill)
+	entries, err := fs.ReadDir(builtinFS, ".")
+	if err != nil {
+		return nil, fmt.Errorf("builtin skills: cannot list embedded skills: %w", err)
+	}
+	builtinNames := make(map[string]bool)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		name := strings.TrimSuffix(entry.Name(), ".md")
+		data, err := fs.ReadFile(builtinFS, entry.Name())
+		if err != nil {
+			return nil, fmt.Errorf("builtin skills: cannot read embedded skill %s: %w", entry.Name(), err)
+		}
+		skill, err := Parse(name, string(data))
+		if err != nil {
+			return nil, fmt.Errorf("builtin skills: cannot parse embedded skill %s: %w", entry.Name(), err)
+		}
+		skill.Scope = ScopeBuiltin
+		builtinNames[name] = true
+		skills["builtin/"+name] = skill
+	}
 	home, err := platform.AppHome()
 	if err != nil {
 		return nil, err
 	}
 	globalDir := filepath.Join(home, "skills")
 
-	skills := make(map[string]*Skill)
-	if err := discoverFromSubdirs(globalDir, skills, ScopeGlobal); err != nil {
+	diskSkills := make(map[string]*Skill)
+	if err := discoverFromSubdirs(globalDir, diskSkills, ScopeGlobal); err != nil {
 		return nil, fmt.Errorf("global skills: %w", err)
 	}
 
@@ -249,6 +182,12 @@ func DiscoverAll(workDir string) (map[string]*Skill, error) {
 		return nil, err
 	}
 	for k, v := range project {
+		diskSkills[k] = v
+	}
+	for k, v := range diskSkills {
+		if builtinNames[v.Name] {
+			continue
+		}
 		skills[k] = v
 	}
 	return skills, nil
@@ -267,13 +206,16 @@ func Resolve(name string, skills map[string]*Skill) (string, error) {
 	name = strings.TrimSuffix(name, ".md")
 
 	// Project-scoped: project/ prefix.
-	if strings.HasPrefix(name, "project/") {
+	if strings.HasPrefix(name, "builtin/") || strings.HasPrefix(name, "global/") || strings.HasPrefix(name, "project/") {
 		if _, ok := skills[name]; ok {
 			return name, nil
 		}
 		return "", fmt.Errorf("skill not found: %s", name)
 	}
 
+	if _, ok := skills["builtin/"+name]; ok {
+		return "builtin/" + name, nil
+	}
 	// Bare name: resolve as global by default.
 	id := "global/" + name
 	if _, ok := skills[id]; ok {

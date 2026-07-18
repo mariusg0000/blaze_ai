@@ -1,4 +1,4 @@
-// prompt.go — prompt assembly from disk sources on every LLM call.
+// prompt.go — prompt assembly from embedded and disk sources on every LLM call.
 // Rebuilds the runtime prompt part in spec order: universal sysprompt, OS sysprompt,
 // transport prompt, host helpers, skills section, specs.md, AGENTS.md.
 // Replaces {VARIABLE_NAME} placeholders at build time.
@@ -38,13 +38,14 @@ var ErrTransportPromptMissing = fmt.Errorf("transport system prompt missing")
 // variablePattern matches {VARIABLE_NAME} placeholders in prompt and skill text.
 var variablePattern = regexp.MustCompile(`\{([A-Z_][A-Z0-9_]*)\}`)
 
-// Builder assembles the full prompt (runtime part + conversation part) from disk sources.
+// Builder assembles the full prompt from embedded prompt assets and disk project context.
 //
 // WHAT:  Holds configuration for prompt building and assembles prompts on every LLM call.
 // WHY:   The prompt is rebuilt fresh from disk every time per spec — nothing is reused.
-// PARAMS: PromptsFS — live filesystem containing editable sysprompt and transport templates;
+// PARAMS: PromptsFS — embedded read-only filesystem containing sysprompt and transport templates;
 //
-//	WorkDir — current work folder for specs.md, AGENTS.md, and project skill discovery;
+//	BuiltinSkillsFS — embedded read-only filesystem containing builtin skills;
+//	WorkDir — current work folder for specs.md, AGENTS.md, and disk skill discovery;
 //	OS — the detected operating system for selecting the OS-specific prompt;
 //	OSInfo — human-readable OS description injected as {OS_INFO};
 //	TransportName — required transport prompt selector for prompts/transport.<name>.md;
@@ -53,6 +54,7 @@ var variablePattern = regexp.MustCompile(`\{([A-Z_][A-Z0-9_]*)\}`)
 //	HelperLookup — binary lookup function for helper detection (injectable for tests).
 type Builder struct {
 	PromptsFS         fs.FS
+	BuiltinSkillsFS   fs.FS
 	WorkDir           string
 	OS                platform.OS
 	OSInfo            string
@@ -221,7 +223,7 @@ func readProjectFileOptional(dir, filename string) (string, error) {
 
 // buildSkillsSection assembles loadable skill descriptions.
 func (b *Builder) buildSkillsSection() (string, error) {
-	discovered, err := skills.DiscoverAll(b.WorkDir)
+	discovered, err := skills.DiscoverAll(b.WorkDir, b.BuiltinSkillsFS)
 	if err != nil {
 		return "", fmt.Errorf("skills discovery: %w", err)
 	}
@@ -234,7 +236,7 @@ func (b *Builder) buildSkillsSection() (string, error) {
 	hasAvail := false
 	for _, id := range skills.SortedNames(discovered) {
 		skill := discovered[id]
-		displayName := strings.TrimPrefix(id, "global/")
+		displayName := strings.TrimPrefix(strings.TrimPrefix(id, "builtin/"), "global/")
 		desc, err := b.injectVariablesForSkill(skill.Description, skill.Dir)
 		if err != nil {
 			return "", err

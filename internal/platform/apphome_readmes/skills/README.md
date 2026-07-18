@@ -1,9 +1,10 @@
 # Skills
 
-This folder stores custom BlazeAI skills available only on this machine.
+This folder stores custom global BlazeAI skills available on this machine.
 
 - Each skill lives in a subfolder: `<name>/skill.md`.
-- Required format: `[DESCRIPTION]` plus at least one of `[BEHAVIOR]` or `[DATA]`.
-- BEHAVIOR = procedural guidance; DATA = persistent facts in key=value format.
+- Required format: non-empty `[DESCRIPTION]` and `[BODY]` sections.
 - Keep skills concise and focused. Project-scoped skills live under `{APP_HOME}/projects/<project>/skills/`.
-- Skills override builtin skills by name. Project-scoped skills use `project/` prefix when loading.
+- The names `skill-manager`, `config-manager`, and `audit-manager` are reserved for immutable builtin skills. Do not create custom skills with these names.
+- If a conflicting custom skill exists, BlazeAI ignores it and uses the embedded builtin.
+- Bare names load builtin or global skills; project-scoped skills use the `project/` prefix.

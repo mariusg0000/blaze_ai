@@ -39,8 +39,8 @@ Current source code, tests, and config define implemented behavior. `decisions/`
 - `internal/llmcall/` - One-shot secondary LLM calls routed by role.
 - `internal/usage/` - Provider-agnostic token usage extraction and normalization.
 - `internal/helpers/` - Host helper detection (rg, fd, jq, git, etc.).
-- `prompts/` - Embedded system prompt and transport prompt templates.
-- `skills/` - Builtin skill definitions seeded into app home on startup.
+- `prompts/` - Embeds immutable system and transport prompt templates read directly from the binary.
+- `skills/` - Contains immutable builtin skill definitions read directly from the binary; user skills remain disk-backed.
 - `deploy_nas.sh` - Build linux/amd64, package self-contained installer, SCP to NAS, SSH install. Default target: `nas@192.168.0.104`. To deploy: `./deploy_nas.sh` or `./deploy_nas.sh user@host`.
 - `specs/` - Detailed specification fragments for each subsystem.
 - `decisions/` - Timestamped session decision summaries with rationale.

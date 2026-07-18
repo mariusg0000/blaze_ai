@@ -19,12 +19,15 @@
 
 Prompt behavior is a major source of product personality and control. The runtime
 is deliberately minimal — most agent behavior is shaped by prompt templates, not
-Go code. The prompt is rebuilt from disk on every LLM call; nothing is cached or
-reused.
+Go code. Prompt templates are reread from the immutable embedded filesystem on
+every call; disk-backed project context and user skills are also refreshed;
+nothing is cached or reused.
 
 All prompt templates are embedded in the binary via `//go:embed` directives at
 compile time, making the application a single self-contained executable. The
-embedded filesystem is passed to the prompt builder at startup.
+embedded filesystem (`Builder.PromptsFS`) is immutable and passed to the prompt
+builder at startup. `Builder.BuiltinSkillsFS` is the immutable embedded builtin
+skills filesystem.
 
 ## Build Order
 
@@ -116,7 +119,7 @@ template-specific extras.
 | `{OS_INFO}` | `platform.OSInfo()` | `"NULL"` if empty |
 | `{TRANSPORT_PROMPT}` | `transport.{name}.md` rendered through `Builder.TransportName` | required; build fails if missing |
 | `{TRANSPORT_CONTEXT}` | `Builder.TransportContext` | empty string (set per transport) |
-| `{SKILL_DIR}` | Skill's directory (per-skill injection) | `"NULL"` if not in skill context |
+| `{SKILL_DIR}` | Skill's directory (per-skill injection) | Real disk directory for global/project skills; `"NULL"` for builtins |
 | `{OS_PROMPT}` | OS-specific sysprompt content | injected directly |
 | `{HOST_HELPERS_ADVISORY}` | helper verification status | empty string |
 | `{HOST_HELPERS_AVAILABLE}` | detected + available helpers | empty string |
@@ -157,9 +160,9 @@ Builder.Build(session)
   │    ├─ 4. buildHostHelpersAdvisory()
   │    ├─ 5. helpers.Detect(lookup) → statuses
   │    │    └─ buildHostHelpersSection(statuses)
-  │    ├─ 6. buildSkillsSection()
-  │    │    ├─ skills.DiscoverAll(workDir) → all skills
-  │    │    └─ Format available skills list
+   │    ├─ 6. buildSkillsSection()
+   │    │    ├─ skills.DiscoverAll(workDir, builtinSkillsFS) → merge embedded builtins with disk global/project skills (builtin collision priority)
+   │    │    └─ Format available skills list
   │    ├─ 7. buildAgentsSection() → AGENTS_AVAILABLE (from Builder.Agents, mode-filtered)
   │    ├─ 8. readFileOptional("specs.md") → PROJECT_CONTENT
   │    ├─ 9. readFileOptional("AGENTS.md") → AGENTS_CONTENT (with variable injection)

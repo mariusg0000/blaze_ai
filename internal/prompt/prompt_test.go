@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"blazeai/internal/config"
 	"blazeai/internal/helpers"
@@ -197,7 +198,7 @@ func TestBuildRuntimePartLoadsAgentTask(t *testing.T) {
 	writeFile(t, filepath.Join(agentRoot, "sysprompt.linux.md"), "Linux")
 	taskPath := filepath.Join(workDir, "agent_task.md")
 	writeFile(t, taskPath, "first task")
-	b := &Builder{PromptsFS: os.DirFS(agentRoot), WorkDir: workDir, OS: platform.Linux, SystemPromptName: "sysprompt.agent.md", AgentTaskFile: taskPath}
+	b := &Builder{PromptsFS: os.DirFS(agentRoot), BuiltinSkillsFS: fstest.MapFS{}, WorkDir: workDir, OS: platform.Linux, SystemPromptName: "sysprompt.agent.md", AgentTaskFile: taskPath}
 
 	first, err := b.BuildRuntimePart()
 	if err != nil {
@@ -221,10 +222,11 @@ func TestBuildRuntimePartFull(t *testing.T) {
 	promptsFS, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsFS:     promptsFS,
-		WorkDir:       workDir,
-		OS:            platform.Linux,
-		TransportName: "console",
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: fstest.MapFS{},
+		WorkDir:         workDir,
+		OS:              platform.Linux,
+		TransportName:   "console",
 	}
 	result, err := b.BuildRuntimePart()
 	if err != nil {
@@ -272,10 +274,11 @@ func TestBuildRuntimePartFull(t *testing.T) {
 func TestBuildRuntimePartMissingUniversal(t *testing.T) {
 	root := t.TempDir()
 	b := &Builder{
-		PromptsFS:     os.DirFS(filepath.Join(root, "noprompts")),
-		WorkDir:       root,
-		OS:            platform.Linux,
-		TransportName: "console",
+		PromptsFS:       os.DirFS(filepath.Join(root, "noprompts")),
+		BuiltinSkillsFS: fstest.MapFS{},
+		WorkDir:         root,
+		OS:              platform.Linux,
+		TransportName:   "console",
 	}
 	_, err := b.BuildRuntimePart()
 	if err != ErrUniversalPromptMissing {
@@ -291,10 +294,11 @@ func TestBuildRuntimePartMissingOSPrompt(t *testing.T) {
 	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "universal {OS_PROMPT}")
 
 	b := &Builder{
-		PromptsFS:     os.DirFS(promptsDir),
-		WorkDir:       root,
-		OS:            platform.Linux,
-		TransportName: "console",
+		PromptsFS:       os.DirFS(promptsDir),
+		BuiltinSkillsFS: fstest.MapFS{},
+		WorkDir:         root,
+		OS:              platform.Linux,
+		TransportName:   "console",
 	}
 	_, err := b.BuildRuntimePart()
 	if err != ErrOSPromptMissing {
@@ -309,10 +313,11 @@ func TestBuildRuntimePartNoAgentsMD(t *testing.T) {
 	emptyWork := t.TempDir()
 
 	b := &Builder{
-		PromptsFS:     promptsFS,
-		WorkDir:       emptyWork,
-		OS:            platform.Linux,
-		TransportName: "console",
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: fstest.MapFS{},
+		WorkDir:         emptyWork,
+		OS:              platform.Linux,
+		TransportName:   "console",
 	}
 	result, err := b.BuildRuntimePart()
 	if err != nil {
@@ -332,6 +337,7 @@ func TestBuildRuntimePartTransportContext(t *testing.T) {
 
 	b := &Builder{
 		PromptsFS:        promptsFS,
+		BuiltinSkillsFS:  fstest.MapFS{},
 		WorkDir:          workDir,
 		OS:               platform.Linux,
 		TransportName:    "telegram",
@@ -356,9 +362,10 @@ func TestBuildRuntimePartTransportContext(t *testing.T) {
 func TestBuildRuntimePartMissingTransportName(t *testing.T) {
 	promptsFS, workDir := setupTestDirs(t)
 	b := &Builder{
-		PromptsFS: promptsFS,
-		WorkDir:   workDir,
-		OS:        platform.Linux,
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: fstest.MapFS{},
+		WorkDir:         workDir,
+		OS:              platform.Linux,
 	}
 	_, err := b.BuildRuntimePart()
 	if err != ErrTransportNameMissing {
@@ -376,10 +383,11 @@ func TestBuildRuntimePartMissingTransportPrompt(t *testing.T) {
 	writeFile(t, filepath.Join(promptsDir, "sysprompt.md"), "universal {OS_PROMPT} {TRANSPORT_PROMPT}")
 	writeFile(t, filepath.Join(promptsDir, "sysprompt.linux.md"), "linux")
 	b := &Builder{
-		PromptsFS:     os.DirFS(promptsDir),
-		WorkDir:       root,
-		OS:            platform.Linux,
-		TransportName: "console",
+		PromptsFS:       os.DirFS(promptsDir),
+		BuiltinSkillsFS: fstest.MapFS{},
+		WorkDir:         root,
+		OS:              platform.Linux,
+		TransportName:   "console",
 	}
 	_, err := b.BuildRuntimePart()
 	if err != ErrTransportPromptMissing {
@@ -409,10 +417,11 @@ func TestBuildRuntimePartNoSkills(t *testing.T) {
 	writePromptFixtures(t, promptsDir)
 
 	b := &Builder{
-		PromptsFS:     os.DirFS(promptsDir),
-		WorkDir:       root,
-		OS:            platform.Linux,
-		TransportName: "console",
+		PromptsFS:       os.DirFS(promptsDir),
+		BuiltinSkillsFS: fstest.MapFS{},
+		WorkDir:         root,
+		OS:              platform.Linux,
+		TransportName:   "console",
 	}
 	result, err := b.BuildRuntimePart()
 	if err != nil {
@@ -428,10 +437,11 @@ func TestBuild(t *testing.T) {
 	promptsFS, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsFS:     promptsFS,
-		WorkDir:       workDir,
-		OS:            platform.Linux,
-		TransportName: "console",
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: fstest.MapFS{},
+		WorkDir:         workDir,
+		OS:              platform.Linux,
+		TransportName:   "console",
 	}
 
 	sess := &session.Session{
@@ -466,10 +476,11 @@ func TestBuildEmptySession(t *testing.T) {
 	promptsFS, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsFS:     promptsFS,
-		WorkDir:       workDir,
-		OS:            platform.Linux,
-		TransportName: "console",
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: fstest.MapFS{},
+		WorkDir:         workDir,
+		OS:              platform.Linux,
+		TransportName:   "console",
 	}
 
 	sess := &session.Session{Messages: []session.Message{}}
@@ -491,11 +502,12 @@ func TestBuildRuntimePartOrder(t *testing.T) {
 	promptsFS, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsFS:     promptsFS,
-		WorkDir:       workDir,
-		OS:            platform.Linux,
-		TransportName: "console",
-		HelperLookup:  fakeHelperLookup([]string{"rg", "fd", "jq", "git", "curl"}),
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: fstest.MapFS{},
+		WorkDir:         workDir,
+		OS:              platform.Linux,
+		TransportName:   "console",
+		HelperLookup:    fakeHelperLookup([]string{"rg", "fd", "jq", "git", "curl"}),
 	}
 	result, err := b.BuildRuntimePart()
 	if err != nil {
@@ -537,12 +549,13 @@ func TestBuildRuntimePartHelperAvailable(t *testing.T) {
 	promptsFS, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsFS:     promptsFS,
-		WorkDir:       workDir,
-		OS:            platform.Linux,
-		TransportName: "console",
-		HelperSetup:   config.HelperSetup{},
-		HelperLookup:  fakeHelperLookup([]string{"rg", "jq", "curl"}),
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: fstest.MapFS{},
+		WorkDir:         workDir,
+		OS:              platform.Linux,
+		TransportName:   "console",
+		HelperSetup:     config.HelperSetup{},
+		HelperLookup:    fakeHelperLookup([]string{"rg", "jq", "curl"}),
 	}
 	result, err := b.BuildRuntimePart()
 	if err != nil {
@@ -561,12 +574,13 @@ func TestBuildRuntimePartHelperMissingNotDismissed(t *testing.T) {
 	promptsFS, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsFS:     promptsFS,
-		WorkDir:       workDir,
-		OS:            platform.Linux,
-		TransportName: "console",
-		HelperSetup:   config.HelperSetup{},
-		HelperLookup:  fakeHelperLookup([]string{"git"}),
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: fstest.MapFS{},
+		WorkDir:         workDir,
+		OS:              platform.Linux,
+		TransportName:   "console",
+		HelperSetup:     config.HelperSetup{},
+		HelperLookup:    fakeHelperLookup([]string{"git"}),
 	}
 	result, err := b.BuildRuntimePart()
 	if err != nil {
@@ -585,12 +599,13 @@ func TestBuildRuntimePartHelperMissingDismissed(t *testing.T) {
 	promptsFS, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsFS:     promptsFS,
-		WorkDir:       workDir,
-		OS:            platform.Linux,
-		TransportName: "console",
-		HelperSetup:   config.HelperSetup{Dismissed: true},
-		HelperLookup:  fakeHelperLookup([]string{"git"}),
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: fstest.MapFS{},
+		WorkDir:         workDir,
+		OS:              platform.Linux,
+		TransportName:   "console",
+		HelperSetup:     config.HelperSetup{Dismissed: true},
+		HelperLookup:    fakeHelperLookup([]string{"git"}),
 	}
 	result, err := b.BuildRuntimePart()
 	if err != nil {
@@ -606,12 +621,13 @@ func TestBuildRuntimePartHelperDeclined(t *testing.T) {
 	promptsFS, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsFS:     promptsFS,
-		WorkDir:       workDir,
-		OS:            platform.Linux,
-		TransportName: "console",
-		HelperSetup:   config.HelperSetup{Declined: []string{"rg", "fd"}},
-		HelperLookup:  fakeHelperLookup([]string{"git"}),
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: fstest.MapFS{},
+		WorkDir:         workDir,
+		OS:              platform.Linux,
+		TransportName:   "console",
+		HelperSetup:     config.HelperSetup{Declined: []string{"rg", "fd"}},
+		HelperLookup:    fakeHelperLookup([]string{"git"}),
 	}
 	result, err := b.BuildRuntimePart()
 	if err != nil {
@@ -639,12 +655,13 @@ func TestBuildRuntimePartHelperOrder(t *testing.T) {
 	promptsFS, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsFS:     promptsFS,
-		WorkDir:       workDir,
-		OS:            platform.Linux,
-		TransportName: "console",
-		HelperSetup:   config.HelperSetup{},
-		HelperLookup:  fakeHelperLookup([]string{"rg", "fd", "jq", "git", "curl"}),
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: fstest.MapFS{},
+		WorkDir:         workDir,
+		OS:              platform.Linux,
+		TransportName:   "console",
+		HelperSetup:     config.HelperSetup{},
+		HelperLookup:    fakeHelperLookup([]string{"rg", "fd", "jq", "git", "curl"}),
 	}
 	result, err := b.BuildRuntimePart()
 	if err != nil {
@@ -672,12 +689,13 @@ func TestBuildRuntimePartHelperNoHelpers(t *testing.T) {
 	promptsFS, workDir := setupTestDirs(t)
 
 	b := &Builder{
-		PromptsFS:     promptsFS,
-		WorkDir:       workDir,
-		OS:            platform.Linux,
-		TransportName: "console",
-		HelperSetup:   config.HelperSetup{Dismissed: true},
-		HelperLookup:  fakeHelperLookup(nil),
+		PromptsFS:       promptsFS,
+		BuiltinSkillsFS: fstest.MapFS{},
+		WorkDir:         workDir,
+		OS:              platform.Linux,
+		TransportName:   "console",
+		HelperSetup:     config.HelperSetup{Dismissed: true},
+		HelperLookup:    fakeHelperLookup(nil),
 	}
 	result, err := b.BuildRuntimePart()
 	if err != nil {
@@ -711,5 +729,25 @@ func TestReadProjectFilesCaseInsensitive(t *testing.T) {
 	}
 	if agents != "agent rules" {
 		t.Fatalf("AGENTS lookup = %q, want %q", agents, "agent rules")
+	}
+}
+
+// TestBuildRuntimePartDisplaysBuiltinSkillWithoutInternalPrefix verifies immutable builtin listing.
+func TestBuildRuntimePartDisplaysBuiltinSkillWithoutInternalPrefix(t *testing.T) {
+	promptsFS, workDir := setupTestDirs(t)
+	builtin := fstest.MapFS{"skill-manager.md": &fstest.MapFile{Data: []byte("[DESCRIPTION]\nEmbedded manager description.\n\n[BODY]\nEmbedded body.")}}
+	b := &Builder{PromptsFS: promptsFS, BuiltinSkillsFS: builtin, WorkDir: workDir, OS: platform.Linux, TransportName: "console"}
+	result, err := b.BuildRuntimePart()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "- skill-manager = Embedded manager description.") {
+		t.Fatalf("builtin listing missing: %s", result)
+	}
+	if strings.Contains(result, "builtin/skill-manager") || strings.Contains(result, "Load when creating") {
+		t.Fatalf("disk collision leaked into listing: %s", result)
+	}
+	if !strings.Contains(result, "project_hub") {
+		t.Fatal("non-conflicting project skill missing")
 	}
 }

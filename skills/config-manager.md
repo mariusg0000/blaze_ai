@@ -94,10 +94,214 @@ After editing roles, the runtime holds config in memory. Restart BlazeAI (or the
 5. Always validate JSON syntax and mode rules before saving.
 6. The `/model` command changes the current model (NOT the mode). `/model` does NOT accept mode names; it only accepts `provider/model_name`.
 
-## Linked Docs
-- For Telegram bridge configuration, startup, or repair guidance, read `{SKILL_DIR}/docs/telegram.md` before acting.
-- For host helper detection or install guidance, read `{SKILL_DIR}/docs/helpers.md` before acting.
-- Keep the linked docs as the source of truth for those workflows. Do not duplicate their detailed steps here.
+# Telegram Bridge Guide
+
+Use this document when the user needs Telegram bridge instance creation, editing, inspection, repair, startup, or verification.
+
+## Required Values
+- `instance` name for `{APP_HOME}/telegram/<instance>/`
+- Telegram bot token
+- allowed chat id
+- absolute existing `workdir`
+- selected model in `provider/model_name` format
+
+If any required value is missing, stop and ask. Do not invent defaults.
+
+## Required Reads
+- Read `{APP_HOME}/telegram/README.md` before touching files under `{APP_HOME}/telegram/`.
+- Read `{APP_HOME}/config/README.md` and `{APP_HOME}/config/config.json` before validating models.
+
+## Bot And Chat Setup
+- Create the bot with BotFather: `/newbot`, choose display name, choose unique username ending in `bot`, capture returned token.
+- Treat the token as a secret.
+- To discover the allowed chat id, ask the user to send a message to the bot, then call `https://api.telegram.org/bot<token>/getUpdates` and read `message.chat.id`.
+- Keep the numeric sign exactly as returned. Do not quote `allowed_chat_id` in JSON.
+
+## Instance Files
+- Instance directory: `{APP_HOME}/telegram/<instance>/`
+- Static config: `{APP_HOME}/telegram/<instance>/bridge.json`
+- Mutable state: `{APP_HOME}/telegram/<instance>/state.json`
+- Session storage: `{APP_HOME}/telegram/<instance>/session/`
+
+`bridge.json`:
+
+```json
+{
+  "bot_token": "<telegram-bot-token>",
+  "allowed_chat_id": 123456789,
+  "workdir": "/absolute/project/path"
+}
+```
+
+Rules:
+- `bot_token` is required.
+- `allowed_chat_id` is required and must be a non-zero integer.
+- `workdir` is required and must be an absolute existing directory.
+- Never default `workdir` to the current directory.
+
+`state.json`:
+
+```json
+{
+  "selected_model": "provider/model_name"
+}
+```
+
+Rules:
+- `selected_model` is required.
+- It must reference a provider that already exists in `{APP_HOME}/config/config.json`.
+
+## Workflow
+1. Identify the instance name.
+2. Read the required README and config files.
+3. Gather or confirm bot token, chat id, workdir, and selected model.
+4. Validate all required values before writing any file.
+5. If editing an existing instance, read current `bridge.json` and `state.json` first.
+6. Write valid minimal JSON only.
+7. Re-read the written files or otherwise validate the saved content.
+
+## Startup And Services
+- Start one instance with `blazeai --telegram <instance>`.
+- Startup must fail if any required Telegram file or field is missing or invalid.
+
+### Linux systemd
+- Use one service per instance.
+- Run the service as the same user that owns `{APP_HOME}`.
+- Prefer an explicit absolute binary path and an explicit instance argument.
+
+```ini
+[Unit]
+Description=BlazeAI Telegram bridge (%i)
+After=network-online.target
+
+[Service]
+Type=simple
+User=blazeai
+WorkingDirectory=/home/blazeai
+ExecStart=/opt/blazeai/blazeai --telegram %i
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+```
+
+- Enable and start with `systemctl enable --now blazeai-telegram@<instance>`.
+- Check logs with `journalctl -u blazeai-telegram@<instance> -f`.
+- Keep `Restart=always` so the service comes back even if the process exits after a signal.
+- The bridge retries transient `getUpdates` transport errors in-process, so resets like `connection reset by peer` should not require a manual restart.
+
+## Restart
+
+Service `blazeai-telegram@<instance>` has `Restart=always`. Best restart method **without sudo**:
+
+```sh
+kill $(pgrep -f "blazeai.*--telegram <instance>")
+```
+
+systemd respawns instantly. Verify with `pgrep -f "blazeai.*--telegram <instance>"`.
+
+If `sudo` is used, chain all commands in one call to prompt once:
+
+```sh
+sudo sh -c 'systemctl restart blazeai-telegram@<instance> && systemctl status blazeai-telegram@<instance> --no-pager'
+```
+
+## Verification
+- Send a normal text message from the allowed chat.
+- Confirm the bot responds.
+- Confirm `/help` works.
+- Confirm `/model` shows the current instance model.
+- If another chat messages the bot, explain that the instance is expected to ignore it.
+
+## Stop Conditions
+- Stop and ask if one of `instance`, bot token, allowed chat id, workdir, or selected model is missing.
+- Stop and ask if the requested model's provider does not exist.
+- Stop and ask if `workdir` does not exist.
+- Stop and ask before deleting an instance or replacing a token for an existing instance.
+
+# Helper Setup Guide
+
+Use this document when host tools are missing or the user asks about helper installation.
+
+## Scope
+- Configure helper utilities only when the user asks or when a missing helper would materially improve current work.
+- Never install anything without explicit user approval.
+- Never run `sudo` without explicit user approval per command.
+- After installation, verify that the helper is usable before the next prompt build.
+
+## Core Cross-Platform Helpers
+
+| Helper | Purpose | Typical Install Command |
+|--------|---------|-------------------------|
+| rg | fast recursive content search | `apt install ripgrep` / `brew install ripgrep` / `winget install BurntSushi.ripgrep` |
+| fd | fast file and directory discovery | `apt install fd-find` / `brew install fd` / `winget install sharkdp.fd` |
+| jq | JSON inspection and transformation | `apt install jq` / `brew install jq` / `winget install jqlang.jq` |
+| git | VCS operations | `apt install git` / `brew install git` / `winget install Git.Git` |
+| curl | HTTP/API checks, downloads | `apt install curl` / `brew install curl` / built-in on modern Windows |
+| pandoc | document conversion | `apt install pandoc` / `brew install pandoc` / `winget install JohnMacFarlane.Pandoc` |
+| sqlite3 | lightweight SQL queries | `apt install sqlite3` / `brew install sqlite3` / `winget install SQLite.SQLite` |
+
+## Detection
+
+Before suggesting installation, verify what is already available.
+
+```sh
+# Linux / macOS
+command -v rg && command -v fd && command -v jq && command -v git && command -v curl && command -v pandoc && command -v sqlite3
+
+# Windows PowerShell
+Get-Command rg -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+Get-Command fd -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+Get-Command jq -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+Get-Command git -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+Get-Command curl.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+Get-Command pandoc -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+Get-Command sqlite3 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+```
+
+## Installation
+
+### Linux
+1. Detect package manager first: `which apt || which dnf || which pacman || which zypper || which apk`
+2. Ask which helper(s) to install and confirm.
+3. If `sudo` is required, ask separately. Never batch `sudo` commands without approval.
+4. Example: `sudo apt update && sudo apt install -y ripgrep fd-find jq pandoc sqlite3`
+
+### macOS
+1. Check for Homebrew: `command -v brew`
+2. If brew exists and user approves: `brew install ripgrep fd jq pandoc sqlite3`
+3. If brew is missing, suggest installing it first and ask the user.
+
+### Windows
+1. Check for package manager: `winget --version` or `scoop` or `choco`
+2. If winget exists and user approves, install the requested helpers.
+3. If no package manager exists, explain that the user needs winget, scoop, or choco first.
+
+## Verification After Install
+- Re-run detection.
+- If the helper still does not resolve, report failure and continue with available alternatives.
+- Do not loop or retry without user instruction.
+
+## Dismissing The Helper Reminder
+- After all core helpers are installed and verified, set `helperSetup.dismissed` to `true` in `{APP_HOME}/config/config.json`.
+- If the user wants to stop the reminder without installing the remaining helpers, also set `helperSetup.dismissed` to `true`.
+- If the user wants to skip specific helpers permanently, add them to `helperSetup.declined`.
+
+Example:
+
+```json
+"helperSetup": {
+  "dismissed": true,
+  "declined": ["fd"]
+}
+```
+
+## Python Environment
+- Python is not a host helper. It is a restricted runtime.
+- If Python is truly necessary and `{APP_HOME}/scripts/venv/` does not exist yet, ask before creating it.
+- Create it lazily with `python3 -m venv {APP_HOME}/scripts/venv`.
+- All later Python usage must go through that venv.
 
 ## Fetching Models from Providers
 
@@ -172,5 +376,5 @@ The directive is appended to the last message of the payload sent to the LLM on 
 Write the directive in English only. Never include translations, dual-language content, separator labels like `[MODE DIRECTIVE]`, or non-English text. The directive is for the LLM, not the user. Even if the user speaks another language, the directive must be a single block of English text.
 
 For skill creation, editing, scoping, or restoration, load the `skill-manager` skill. Customize the skill-manager itself via `skill-manager` too.
-For Telegram bridge instance creation, editing, systemd setup, or verification, read `{SKILL_DIR}/docs/telegram.md` and follow it.
-For missing helper detection, approval-safe install guidance, or helper reminder dismissal, read `{SKILL_DIR}/docs/helpers.md` and follow it.
+For Telegram bridge instance creation, editing, systemd setup, or verification, follow the inline Telegram Bridge Guide above.
+For missing helper detection, approval-safe install guidance, or helper reminder dismissal, follow the inline Helper Setup Guide above.
