@@ -139,7 +139,7 @@ runOneChild(parentCtx, task, displayID, childID)
   ├─ child.RunTurn(ctx, input)
   │    └─ input = buildChildInput(task, resumed)
   ├─ Extract result:
-  │    ├─ completion (from agent_done callback) → bound to 12000 runes
+   │    ├─ completion (from agent_done callback) → trimmed and returned completely
   │    └─ fallback: lastAssistantAnswer(childSession)
   └─ formatChildResult(name, childID, warning, answer)
 ```
@@ -262,11 +262,10 @@ agent_done was not called; the last assistant message was used.
 <last assistant answer>
 ```
 
-## Answer Bounding
+## Child Answers
 
-Child answers are truncated to 12,000 runes (`maxChildAnswerRunes`) before
-insertion into the parent context. This prevents a single verbose child from
-flooding the parent's context window.
+Child answers are trimmed of surrounding whitespace and otherwise returned
+completely before insertion into the parent context.
 
 ## Error Formatting
 

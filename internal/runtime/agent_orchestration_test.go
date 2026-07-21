@@ -4,6 +4,8 @@
 package runtime
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,16 +21,38 @@ import (
 // WHAT: Extracts the last plain assistant answer.
 // HOW: Ignores assistant messages that contain tool calls.
 func TestLastAssistantAnswerUsesFinalPlainText(t *testing.T) {
+	body := strings.Repeat("complete answer ", 999) + "complete answer"
 	child := &session.Session{Messages: []session.Message{
 		{Role: "assistant", Content: "intermediate", ToolCalls: []interface{}{map[string]any{"id": "call-1"}}},
 		{Role: "tool", Content: "tool result"},
-		{Role: "assistant", Content: "Implementation finished and syntax checks passed."},
+		{Role: "assistant", Content: "\n\t" + body + " \n"},
 	}}
 
 	got := lastAssistantAnswer(child)
-	want := "Implementation finished and syntax checks passed."
+	want := body
 	if got != want {
 		t.Fatalf("lastAssistantAnswer() = %q, want %q", got, want)
+	}
+}
+
+// TestAgentDoneCompletionPreservesCompleteTrimmedAnswer verifies the callback
+// path retains every rune while removing only surrounding whitespace.
+// WHAT: Exercises the agent_done completion callback behavior.
+// HOW: Executes agent_done with a body longer than the former limit.
+func TestAgentDoneCompletionPreservesCompleteTrimmedAnswer(t *testing.T) {
+	body := strings.Repeat("agent done answer ", 999) + "agent done answer"
+	completion := ""
+	tool := tools.NewAgentDoneTool(func(answer string) { completion = strings.TrimSpace(answer) })
+	answer := "\n\t" + body + " \n"
+	payload, err := json.Marshal(map[string]string{"answer": answer})
+	if err != nil {
+		t.Fatalf("marshal agent_done answer: %v", err)
+	}
+	if result := tool.Execute(context.Background(), payload); result != "completed" {
+		t.Fatalf("agent_done result = %q", result)
+	}
+	if completion != body {
+		t.Fatalf("completion length = %d, want %d", len([]rune(completion)), len([]rune(body)))
 	}
 }
 

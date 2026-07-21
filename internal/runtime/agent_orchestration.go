@@ -1,5 +1,5 @@
 // agent_orchestration.go — ephemeral one-shot child-agent execution.
-// Runs Markdown one-shot agents independently and returns bounded ordered results.
+// Runs Markdown one-shot agents independently and returns ordered results.
 // Layer: runtime orchestration. Dependencies: agents, provider, session, tools.
 package runtime
 
@@ -23,7 +23,6 @@ const (
 	maxParallelChildren        = 4
 	childInactivityTimeout     = 2 * time.Minute
 	defaultChildOverallTimeout = 20 * time.Minute
-	maxChildAnswerRunes        = 12000
 )
 
 // childHandler suppresses child transcript text but forwards scoped tool activity immediately.
@@ -233,7 +232,7 @@ func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, 
 	child.Builder.Agents = nil
 
 	completion := ""
-	child.BaseTools.Register(tools.NewAgentDoneTool(func(answer string) { completion = boundAnswer(answer) }))
+	child.BaseTools.Register(tools.NewAgentDoneTool(func(answer string) { completion = strings.TrimSpace(answer) }))
 	filteredNames := append([]string(nil), definition.ToolNames...)
 	if !containsToolName(filteredNames, "agent_done") {
 		filteredNames = append(filteredNames, "agent_done")
@@ -312,7 +311,7 @@ func lastAssistantAnswer(child *session.Session) string {
 		}
 		answer, ok := message.Content.(string)
 		if ok && strings.TrimSpace(answer) != "" {
-			return boundAnswer(answer)
+			return strings.TrimSpace(answer)
 		}
 		return ""
 	}
@@ -420,15 +419,6 @@ func validChildID(id string) bool {
 		}
 	}
 	return true
-}
-
-// boundAnswer limits child output before inserting it into parent context.
-func boundAnswer(answer string) string {
-	runes := []rune(strings.TrimSpace(answer))
-	if len(runes) <= maxChildAnswerRunes {
-		return string(runes)
-	}
-	return string(runes[:maxChildAnswerRunes-3]) + "..."
 }
 
 // formatOrderedResults preserves requested task order in the parent tool result.
