@@ -187,7 +187,8 @@ func TestDiscoverCollisionCustomWins(t *testing.T) {
 	}
 }
 
-// TestDiscoverSkipsInvalid verifies that invalid skill files are skipped silently.
+// TestDiscoverSkipsInvalid verifies that legacy invalid skill files do not
+// prevent valid skills from being discovered (compatibility diagnostics).
 func TestDiscoverSkipsInvalid(t *testing.T) {
 	builtin := filepath.Join(t.TempDir(), "builtin")
 	custom := filepath.Join(t.TempDir(), "custom")
@@ -195,9 +196,15 @@ func TestDiscoverSkipsInvalid(t *testing.T) {
 	writeCustomSkill(t, builtin, "valid", "[DESCRIPTION]\nValid.\n\n[BEHAVIOR]\nValid details.")
 	writeCustomSkill(t, builtin, "invalid", "no sections here")
 
-	_, err := discoverFromRoots(builtin, custom)
-	if err == nil || !strings.Contains(err.Error(), filepath.Join("invalid", "skill.md")) {
-		t.Fatalf("discoverFromRoots() error = %v, want contextual malformed-file error", err)
+	skills, err := discoverFromRoots(builtin, custom)
+	if err != nil {
+		t.Fatalf("discoverFromRoots() unexpected error: %v", err)
+	}
+	if skills["global/valid"] == nil {
+		t.Error("valid skill not found after compat skip")
+	}
+	if skills["global/invalid"] != nil {
+		t.Error("invalid skill found despite missing sections")
 	}
 }
 
@@ -313,7 +320,7 @@ func TestDiscoverAllBuiltinPrecedenceAndResolution(t *testing.T) {
 	project, _ := platform.ProjectDir(workDir)
 	writeCustomSkill(t, filepath.Join(project, "skills"), "skill-manager", "[DESCRIPTION]\nProject.\n\n[BODY]\nProject body.")
 	builtin := fstest.MapFS{"skill-manager.md": &fstest.MapFile{Data: []byte("[DESCRIPTION]\nBuiltin.\n\n[BODY]\nBuiltin body.")}}
-	got, err := DiscoverAll(workDir, builtin)
+	got, _, err := DiscoverAll(workDir, builtin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,19 +341,107 @@ func TestDiscoverAllBuiltinPrecedenceAndResolution(t *testing.T) {
 
 func TestDiscoverAllBuiltinErrorsAndIgnoredEntries(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	if _, err := DiscoverAll(t.TempDir(), nil); err == nil || !strings.Contains(err.Error(), "builtin skills filesystem is nil") {
+	if _, _, err := DiscoverAll(t.TempDir(), nil); err == nil || !strings.Contains(err.Error(), "builtin skills filesystem is nil") {
 		t.Fatalf("nil error = %v", err)
 	}
 	bad := fstest.MapFS{"broken.md": &fstest.MapFile{Data: []byte("invalid")}, "docs/readme.md": &fstest.MapFile{Data: []byte("invalid")}, "notes.txt": &fstest.MapFile{Data: []byte("invalid")}}
-	if _, err := DiscoverAll(t.TempDir(), bad); err == nil || !strings.Contains(err.Error(), "broken.md") {
+	if _, _, err := DiscoverAll(t.TempDir(), bad); err == nil || !strings.Contains(err.Error(), "broken.md") {
 		t.Fatalf("malformed error = %v", err)
 	}
 	valid := fstest.MapFS{"valid.md": &fstest.MapFile{Data: []byte("[DESCRIPTION]\nValid.\n\n[BODY]\nBody.")}, "docs/readme.md": &fstest.MapFile{Data: []byte("invalid")}, "notes.txt": &fstest.MapFile{Data: []byte("invalid")}}
-	got, err := DiscoverAll(t.TempDir(), valid)
+	got, _, err := DiscoverAll(t.TempDir(), valid)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 1 || got["builtin/valid"] == nil {
 		t.Fatalf("got skills = %#v", got)
+	}
+}
+
+// writeLegacySkill writes a skill.md in legacy format (no [BODY]) under the given root.
+func writeLegacySkill(t *testing.T, root, name, content string) string {
+	t.Helper()
+	skillDir := filepath.Join(root, name)
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("cannot create legacy skill dir %s: %v", skillDir, err)
+	}
+	path := filepath.Join(skillDir, "skill.md")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("cannot write legacy skill %s: %v", path, err)
+	}
+	return path
+}
+
+// TestDiscoverAllCompatDiag verifies that a legacy-format disk skill produces
+// a path-bearing compatibility diagnostic, is not listed as valid, and does
+// not prevent builtin skill-manager from loading.
+func TestDiscoverAllCompatDiag(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workDir := t.TempDir()
+	home, _ := platform.AppHome()
+
+	// Legacy skill using BEHAVIOR/DATA — no BODY section.
+	writeLegacySkill(t, filepath.Join(home, "skills"), "python-epub",
+		"[DESCRIPTION]\nEdit EPUB metadata.\n\n[BEHAVIOR]\nUse ebooklib.\n\n[DATA]\nkey=val\n")
+
+	// Valid disk skill (different name from builtin to avoid collision).
+	writeCustomSkill(t, filepath.Join(home, "skills"), "my-tool",
+		"[DESCRIPTION]\nCustom tool.\n\n[BEHAVIOR]\nCustom tool details.")
+
+	builtin := fstest.MapFS{
+		"skill-manager.md": &fstest.MapFile{Data: []byte("[DESCRIPTION]\nBuiltin manager.\n\n[BODY]\nBuiltin body.")},
+		"builtin-helper.md": &fstest.MapFile{Data: []byte("[DESCRIPTION]\nBuiltin helper.\n\n[BODY]\nBuiltin helper body.")},
+	}
+
+	got, diags, err := DiscoverAll(workDir, builtin)
+	if err != nil {
+		t.Fatalf("DiscoverAll() unexpected error: %v", err)
+	}
+
+	// Compatibility diagnostic: must contain path and original error.
+	if len(diags) != 1 {
+		t.Fatalf("got %d diags, want 1", len(diags))
+	}
+	d := diags[0]
+	if !strings.HasSuffix(d.Path, "python-epub/skill.md") {
+		t.Errorf("diag.Path = %q, want ...python-epub/skill.md", d.Path)
+	}
+	if d.Err == nil || !strings.Contains(d.Err.Error(), "BODY") {
+		t.Errorf("diag.Err = %v, want error mentioning BODY", d.Err)
+	}
+	if d.Name != "python-epub" {
+		t.Errorf("diag.Name = %q, want python-epub", d.Name)
+	}
+
+	// Legacy skill must NOT be in valid skills map.
+	if got["global/python-epub"] != nil {
+		t.Error("legacy python-epub found in valid skills")
+	}
+
+	// Builtin skill-manager must still be loadable.
+	if got["builtin/skill-manager"] == nil {
+		t.Error("builtin skill-manager missing from valid skills")
+	}
+
+	// Valid disk skill must be present (no builtin name collision).
+	if got["global/my-tool"] == nil {
+		t.Error("global/my-tool skill missing from valid skills")
+	}
+
+	// Valid builtin skill must be present.
+	if got["builtin/builtin-helper"] == nil {
+		t.Error("builtin/builtin-helper missing from valid skills")
+	}
+}
+
+// TestDiscoverAllNonCompatErrorFatal verifies that non-compatibility discovery
+// errors (e.g., unreadable files, malformed builtins) remain fatal.
+func TestDiscoverAllNonCompatErrorFatal(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	// Builtin parse errors must still be fatal.
+	bad := fstest.MapFS{"broken.md": &fstest.MapFile{Data: []byte("no sections")}}
+	if _, _, err := DiscoverAll(t.TempDir(), bad); err == nil {
+		t.Fatal("expected fatal error for malformed builtin, got nil")
 	}
 }

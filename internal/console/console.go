@@ -648,34 +648,41 @@ func (c *Console) showStartupSplash() {
 
 	// Skills section.
 	c.sectionLabel("Skills", colorPurple)
-	all, err := skills.DiscoverAll(c.Agent.WorkDir, c.Agent.Builder.BuiltinSkillsFS)
+	all, diags, err := skills.DiscoverAll(c.Agent.WorkDir, c.Agent.Builder.BuiltinSkillsFS)
 	if err != nil {
 		fmt.Fprintf(c.Out, "  unavailable: %v\n", err)
-	} else if len(all) == 0 {
+	} else if len(all) == 0 && len(diags) == 0 {
 		fmt.Fprintln(c.Out, "  (none)")
 	} else {
-		names := skills.SortedNames(all)
-		displayNames := make([]string, len(names))
-		maxName := 0
-		for i, name := range names {
-			displayNames[i] = formatSkillName(name)
-			if len(displayNames[i]) > maxName {
-				maxName = len(displayNames[i])
+		if len(diags) > 0 {
+			fmt.Fprintf(c.Out, "  compat: %d unparseable legacy\n", len(diags))
+		}
+		if len(all) > 0 {
+			names := skills.SortedNames(all)
+			displayNames := make([]string, len(names))
+			maxName := 0
+			for i, name := range names {
+				displayNames[i] = formatSkillName(name)
+				if len(displayNames[i]) > maxName {
+					maxName = len(displayNames[i])
+				}
 			}
-		}
-		colWidth := maxName + 3
-		if colWidth < 30 {
-			colWidth = 30
-		}
-		cols := 2
-		for i, name := range displayNames {
-			fmt.Fprintf(c.Out, "  %-*s", colWidth, name)
-			if (i+1)%cols == 0 {
+			colWidth := maxName + 3
+			if colWidth < 30 {
+				colWidth = 30
+			}
+			cols := 2
+			for i, name := range displayNames {
+				fmt.Fprintf(c.Out, "  %-*s", colWidth, name)
+				if (i+1)%cols == 0 {
+					fmt.Fprintln(c.Out)
+				}
+			}
+			if len(displayNames)%cols != 0 {
 				fmt.Fprintln(c.Out)
 			}
-		}
-		if len(displayNames)%cols != 0 {
-			fmt.Fprintln(c.Out)
+		} else {
+			fmt.Fprintln(c.Out, "  (none)")
 		}
 	}
 	fmt.Fprintln(c.Out)

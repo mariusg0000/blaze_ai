@@ -4,7 +4,7 @@
 
 | File | Role |
 |------|------|
-| `internal/skills/skills.go` | Skill model, strict parser, discovery, resolution, and builtin precedence |
+| `internal/skills/skills.go` | Skill model, strict parser, CompatDiag type, discovery, resolution, and builtin precedence |
 | `internal/skills/skills_test.go` | Format, validation, discovery, collision, and embedded builtin precedence tests |
 | `internal/tools/skill_tools.go` | `load_skill` tool contract |
 | `internal/tools/skill_tools_test.go` | Tool-result and error behavior tests |
@@ -40,7 +40,17 @@ A bare name resolves through the existing scope rules; callers may use `project/
 
 ## Discovery and Validation
 
-`DiscoverAll(workDir, builtinFS)` first discovers embedded builtins: parses top-level `*.md` files from the embedded FS, ignores embedded directories and non-Markdown entries, and fails on nil or malformed builtin FS or content. Then it discovers disk global and project skills and filters collisions where reserved builtin names take priority. Returns parsed skills keyed by canonical ID. Missing scope directories and skill subdirectories without `skill.md` are skipped. A present but malformed `skill.md` stops discovery with an error containing the file path and parse failure; malformed skills are not silently ignored.
+`DiscoverAll(workDir, builtinFS)` first discovers embedded builtins: parses top-level `*.md` files from the embedded FS, ignores embedded directories and non-Markdown entries, and fails on nil or malformed builtin FS or content. Then it discovers disk global and project skills and filters collisions where reserved builtin names take priority. Returns `(map[string]*Skill, []CompatDiag, error)`.
+
+### Compatibility Diagnostics
+
+A legacy disk skill with missing `[BODY]` or `[DESCRIPTION]` sections (e.g. still using obsolete `[BEHAVIOR]` or `[DATA]`) produces a `CompatDiag` instead of a fatal error. The diagnostic preserves the absolute file path, skill name, scope, and original parse error. Non-compatibility errors such as read failures or malformed builtin content remain fatal.
+
+Valid disk skills are still discovered alongside diagnostics. The invalid skill is never added to the valid skills map. Missing scope directories and skill subdirectories without `skill.md` are skipped silently.
+
+### Prompt Integration
+
+The `buildSkillsSection` method in the prompt builder renders compatibility diagnostics as a `[SKILL COMPATIBILITY DIAGNOSTICS]` section before the available skill descriptions. This means the LLM sees the file path and error, and can immediately call `load_skill skill-manager` to remediate the legacy format. Builtin `skill-manager` is always available because embedded builtins are never subject to disk compatibility diagnostics.
 
 Descriptions are rediscovered from the immutable embedded FS and disk on every prompt build. The system prompt renders one compact entry per discovered skill:
 
@@ -79,7 +89,9 @@ Because loaded bodies are ordinary history, session resume and context compactio
 - Empty or missing `[DESCRIPTION]`: `ErrMissingDescription`.
 - Empty or missing `[BODY]`: `ErrMissingBody`.
 - Missing skill: explicit resolution error.
-- Malformed discovered file: contextual discovery error with path.
+- Malformed discovered builtin: contextual discovery error with path (fatal).
+- Legacy disk skill (missing section): `CompatDiag` with path and parse error (non-fatal).
+- Non-compatibility disk error (read failure, etc.): fatal discovery error.
 - Invalid JSON or empty tool name: explicit tool error.
 - Variable rendering failure: propagated as a load error.
 - No compatibility fallback for old section names.

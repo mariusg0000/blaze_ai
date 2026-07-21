@@ -751,3 +751,79 @@ func TestBuildRuntimePartDisplaysBuiltinSkillWithoutInternalPrefix(t *testing.T)
 		t.Fatal("non-conflicting project skill missing")
 	}
 }
+
+// TestBuildRuntimePartCompatDiag verifies that a legacy disk skill produces a
+// [SKILL COMPATIBILITY DIAGNOSTICS] section in the rendered prompt while valid
+// builtin skills remain loadable.
+func TestBuildRuntimePartCompatDiag(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	promptsDir := filepath.Join(root, "prompts")
+	workDir := filepath.Join(root, "work")
+	for _, dir := range []string{promptsDir, workDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("cannot create dir %s: %v", dir, err)
+		}
+	}
+	writePromptFixtures(t, promptsDir)
+
+	appHome, err := platform.AppHome()
+	if err != nil {
+		t.Fatalf("AppHome() error: %v", err)
+	}
+	// Write a legacy-format skill (raw file, no writeFile conversion).
+	legacyDir := filepath.Join(appHome, "skills", "legacy-tool")
+	if err := os.MkdirAll(legacyDir, 0755); err != nil {
+		t.Fatalf("cannot create legacy dir: %v", err)
+	}
+	legacyContent := "[DESCRIPTION]\nLegacy tool.\n\n[BEHAVIOR]\nOld instructions.\n\n[DATA]\nk=v\n"
+	if err := os.WriteFile(filepath.Join(legacyDir, "skill.md"), []byte(legacyContent), 0644); err != nil {
+		t.Fatalf("cannot write legacy skill: %v", err)
+	}
+	// Write a valid global skill.
+	validDir := filepath.Join(appHome, "skills", "good-tool")
+	if err := os.MkdirAll(validDir, 0755); err != nil {
+		t.Fatalf("cannot create valid dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(validDir, "skill.md"),
+		[]byte("[DESCRIPTION]\nGood tool.\n\n[BODY]\nGood instructions.\n"), 0644); err != nil {
+		t.Fatalf("cannot write valid skill: %v", err)
+	}
+
+	builtin := fstest.MapFS{
+		"skill-manager.md": &fstest.MapFile{Data: []byte("[DESCRIPTION]\nBuiltin manager.\n\n[BODY]\nBuiltin body.")},
+	}
+
+	b := &Builder{
+		PromptsFS:       os.DirFS(promptsDir),
+		BuiltinSkillsFS: builtin,
+		WorkDir:         workDir,
+		OS:              platform.Linux,
+		TransportName:   "console",
+	}
+
+	result, err := b.BuildRuntimePart()
+	if err != nil {
+		t.Fatalf("BuildRuntimePart() error: %v", err)
+	}
+
+	// Compatibility diagnostics section must be present.
+	if !strings.Contains(result, "SKILL COMPATIBILITY DIAGNOSTICS") {
+		t.Fatalf("compat diagnostics section missing:\n%s", result)
+	}
+	// Must mention the legacy skill path.
+	if !strings.Contains(result, "legacy-tool") {
+		t.Errorf("legacy skill path missing from diag:\n%s", result)
+	}
+	// Must still list valid skills (good-tool and builtin skill-manager).
+	if !strings.Contains(result, "- good-tool =") {
+		t.Errorf("valid global skill missing from listing:\n%s", result)
+	}
+	if !strings.Contains(result, "- skill-manager =") {
+		t.Errorf("builtin skill-manager missing from listing:\n%s", result)
+	}
+	// Legacy skill must not appear as valid.
+	if strings.Contains(result, "- legacy-tool") {
+		t.Errorf("legacy skill appeared in valid listing:\n%s", result)
+	}
+}

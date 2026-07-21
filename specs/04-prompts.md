@@ -161,7 +161,8 @@ Builder.Build(session)
   │    ├─ 5. helpers.Detect(lookup) → statuses
   │    │    └─ buildHostHelpersSection(statuses)
    │    ├─ 6. buildSkillsSection()
-   │    │    ├─ skills.DiscoverAll(workDir, builtinSkillsFS) → merge embedded builtins with disk global/project skills (builtin collision priority)
+   │    │    ├─ skills.DiscoverAll(workDir, builtinSkillsFS) → merge embedded builtins with disk global/project skills, return compat diags for legacy format
+   │    │    ├─ Surface compatibility diagnostics before the available skills list
    │    │    └─ Format available skills list
   │    ├─ 7. buildAgentsSection() → AGENTS_AVAILABLE (from Builder.Agents, mode-filtered)
   │    ├─ 8. readFileOptional("specs.md") → PROJECT_CONTENT
@@ -194,7 +195,27 @@ The system prompt contains compact one-line descriptions only:
 - another-skill = Description text
 ```
 
-Every discovered skill has already passed strict `[DESCRIPTION]` and `[BODY]` validation. Skill bodies never enter the system prompt. When `load_skill` runs, `RenderSkillBody()` expands body variables and the tool returns the body through the ordinary tool-result message path. The persisted result then participates in session resume and compaction like any other conversation message.
+Every discovered skill has passed strict `[DESCRIPTION]` and `[BODY]` validation. Skill bodies never enter the system prompt.
+
+### Compatibility Diagnostics
+
+When a legacy disk skill (using obsolete `[BEHAVIOR]`/`[DATA]` sections) is found, `DiscoverAll` returns a `CompatDiag` containing the file path and parse error. `buildSkillsSection` renders this as a `[SKILL COMPATIBILITY DIAGNOSTICS]` section before the available skills list:
+
+```text
+[SKILL COMPATIBILITY DIAGNOSTICS]
+
+Unparseable legacy skills found. Use `load_skill skill-manager` to fix them.
+
+- /home/.../python-epub/skill.md: skill missing [BODY] section
+
+[SKILLS — use load_skill to load]
+
+- skill-name = Description text
+```
+
+The diagnostic preserves the original error and path. The invalid skill is not available for loading. The builtin `skill-manager` remains loadable so the LLM can immediately remediate the legacy format.
+
+When `load_skill` runs, `RenderSkillBody()` expands body variables and the tool returns the body through the ordinary tool-result message path. The persisted result then participates in session resume and compaction like any other conversation message.
 
 ## Host Helpers in Prompts
 

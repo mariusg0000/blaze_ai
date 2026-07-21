@@ -1,5 +1,5 @@
 [DESCRIPTION]
-MUST load first before creating, reviewing, modifying, repairing, or debugging any skill. Use for skill structure, separating instructions from facts, and turning user corrections or failed workflows into better skill rules.
+MUST load first before creating, reviewing, modifying, repairing, or debugging any skill. Use for skill structure, separating instructions from facts, migrating legacy BEHAVIOR/DATA skills, and turning user corrections or failed workflows into better skill rules.
 
 [BODY]
 # Skill Manager
@@ -11,7 +11,7 @@ Design, review, or improve skill content. A skill improves future behavior by de
 
 Every skill is a folder containing `skill.md`.
 
-Required sections: `[DESCRIPTION]` and `[BODY]` only.
+Required sections: `[DESCRIPTION]` and `[BODY]` only. Legacy section names such as `[BEHAVIOR]` or `[DATA]` are invalid and produce compatibility diagnostics. Migrate legacy skills by moving instructions and facts under `[BODY]`.
 
 Skills are loaded with `load_skill`. Their `[BODY]` is returned as a standard tool message in conversation history. Use native tools such as `shell` for execution.
 
@@ -30,32 +30,17 @@ Rules:
 Example:
 `Load when the user wants Node-RED, MQTT, Zigbee, or smart-home actions. Use for MQTT workflows, Zigbee2MQTT troubleshooting, SSH access patterns, and safe smart-home command guidance.`
 
-### BEHAVIOR
+### BODY
 
-Use BEHAVIOR for workflow, decision rules, strategy, pitfalls, fallbacks, validation, and safety constraints.
+The body contains all instructions, workflows, reference data, and rules inside a single `[BODY]` section. Use Markdown headings to organize content:
 
-A good BEHAVIOR section answers:
-- What should the agent do first?
-- What should the agent not try first?
-- What assumptions are dangerous?
-- What signals indicate success or failure?
-- When should the agent stop and ask the user?
+- **Purpose** — what the skill achieves and when to use it.
+- **Workflow** — step-by-step procedure, what to try first, what to avoid.
+- **Pitfalls** — known failure modes, dangerous assumptions, validation steps.
+- **Reference data** — durable facts, key-value mappings, configuration keys.
 
-### DATA
+Structure the body in logical order:
 
-Use DATA for durable facts, reference data, mappings, and preferences. Keep `scope.key=value`, one fact per line.
-
-Keep DATA short, dense, and factual. No headings, prose, narratives, credentials, or step-by-step procedures.
-
-### BEHAVIOR vs DATA
-- BEHAVIOR: how to work.
-- DATA: what is true.
-
-A skill may contain only BEHAVIOR, only DATA, or both. If a skill needs persistent domain facts, put them in its own DATA section. Do not create a separate skill just for data.
-
-## Recommended Structure
-
-For most operational skills, structure BEHAVIOR in this order:
 1. Purpose
 2. Preferred workflow
 3. First checks or first strategy
@@ -64,8 +49,6 @@ For most operational skills, structure BEHAVIOR in this order:
 6. Validation
 7. Stop conditions
 8. Examples
-
-For data-only skills, use a concise DATA section with `key=value` facts.
 
 Do not force this structure for very small skills. Concise procedural rules are better than many headings.
 
@@ -132,7 +115,7 @@ If promoting a project skill to global:
 
 Builtin skills (`skill-manager`, `config-manager`, and `audit-manager`) are immutable and loaded directly from the binary. They cannot be edited, replaced, or restored from `{GLOBAL_SKILLS_DIR}`; update the BlazeAI source and rebuild the binary to change them. Never create global or project skills with these reserved names.
 
-skill.format=folder/<name>/skill.md with \[DESCRIPTION\] (required) and at least one of \[BEHAVIOR\] or \[DATA\]
+skill.format=folder/<name>/skill.md with required \[DESCRIPTION\] and \[BODY\] sections only
 skill.ids=bare name for global skills (default); project/name for project-scoped skills
 skill.resolution=bare name resolves to global by default; project/name resolves to project scope exactly
 skill.scopes=three runtime scopes: builtin, global, and project; builtin names always have priority

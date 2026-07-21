@@ -63,7 +63,7 @@ RunTurn(ctx, userInput)
   └─ for {  (tool call loop)
        │
        ├─ sanitizeSession() → drop invalid tool rounds
-       ├─ Builder.Build(session, active)    → full prompt from disk + history
+        ├─ Builder.Build(session, active)    → full prompt from disk + history; includes compat diagnostics for legacy skills
        ├─ Compactor.StripReasoningFromPayload(messages)  → keep newest N reasoning
        ├─ Write prompt.json debug file when config.debugPrompt is true
        ├─ injectDirective(messages, mode.Directive)  → volatile mode injection
@@ -260,7 +260,7 @@ NewAgent(cfg, sess, os, promptsFS, workDir, handler, transportName)
   ├─ provider.NewClient(cfg, summarizationModel)  → secondary (if different model)
   ├─ prompt.Builder{...}            → prompt assembler
   ├─ compaction.NewManager(...)     → compaction orchestrator
-  ├─ skills.DiscoverAll(workDir)    → skill resolvers
+   ├─ skills.DiscoverAll(workDir, builtinFS) → skills map + compat diags; prompt builder surfaces diags, load_skill still resolves builtin skill-manager
   ├─ tools.NewRegistry()
   │    ├─ shell, load_skill
   │    ├─ analyze_image (with oneShotCaller via llmcall, forced vision role)

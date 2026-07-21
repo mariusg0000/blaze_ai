@@ -222,32 +222,51 @@ func readProjectFileOptional(dir, filename string) (string, error) {
 }
 
 // buildSkillsSection assembles loadable skill descriptions.
+// Legacy disk skills that could not be parsed are surfaced as compatibility
+// diagnostics so the LLM sees the file path and can load skill-manager for
+// remediation. Fatal discovery errors are still propagated.
 func (b *Builder) buildSkillsSection() (string, error) {
-	discovered, err := skills.DiscoverAll(b.WorkDir, b.BuiltinSkillsFS)
+	discovered, diags, err := skills.DiscoverAll(b.WorkDir, b.BuiltinSkillsFS)
 	if err != nil {
 		return "", fmt.Errorf("skills discovery: %w", err)
 	}
+
+	var section strings.Builder
+
+	// Surface compatibility diagnostics first, before any valid skills.
+	if len(diags) > 0 {
+		section.WriteString("\n[SKILL COMPATIBILITY DIAGNOSTICS]\n\n")
+		section.WriteString("Unparseable legacy skills found. Use `load_skill skill-manager` to fix them.\n\n")
+		for _, d := range diags {
+			section.WriteString(fmt.Sprintf("- %s: %s\n", d.Path, d.Err))
+		}
+		section.WriteString("\n")
+	}
+
 	if len(discovered) == 0 {
+		if section.Len() > 0 {
+			return section.String(), nil
+		}
 		return "", nil
 	}
 
 	// Available loadable skills as compact-language list.
-	var avail strings.Builder
-	hasAvail := false
+	section.WriteString("\n[SKILLS \u2014 use load_skill to load]\n\n")
 	for _, id := range skills.SortedNames(discovered) {
 		skill := discovered[id]
-		displayName := strings.TrimPrefix(strings.TrimPrefix(id, "builtin/"), "global/")
+		displayName := displaySkillName(id)
 		desc, err := b.injectVariablesForSkill(skill.Description, skill.Dir)
 		if err != nil {
 			return "", err
 		}
-		if !hasAvail {
-			avail.WriteString("\n[SKILLS — use load_skill to load]\n\n")
-			hasAvail = true
-		}
-		avail.WriteString(fmt.Sprintf("- %s = %s\n", displayName, desc))
+		section.WriteString(fmt.Sprintf("- %s = %s\n", displayName, desc))
 	}
-	return avail.String(), nil
+	return section.String(), nil
+}
+
+// displaySkillName strips builtin/ and global/ scope prefixes for prompt display.
+func displaySkillName(id string) string {
+	return strings.TrimPrefix(strings.TrimPrefix(id, "builtin/"), "global/")
 }
 
 // RenderSkillBody expands variables in a parsed skill body for tool loading.

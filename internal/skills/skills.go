@@ -34,6 +34,22 @@ var ErrMissingDescription = errors.New("skill missing [DESCRIPTION] section")
 // ErrMissingBody is returned when a skill file lacks a non-empty [BODY] section.
 var ErrMissingBody = errors.New("skill missing [BODY] section")
 
+// CompatDiag describes a legacy disk skill that could not be parsed.
+// The diagnostic preserves the file path and original parse error so the
+// runtime can report it while keeping valid skills loadable.
+type CompatDiag struct {
+	Path  string // absolute path to the malformed skill.md
+	Name  string // skill folder name
+	Scope Scope  // scope under which the skill was found
+	Err   error  // original parse error (usually ErrMissingBody or ErrMissingDescription)
+}
+
+// isCompatError returns true when the error is a known section-missing error
+// from a disk skill that uses legacy section names.
+func isCompatError(err error) bool {
+	return errors.Is(err, ErrMissingBody) || errors.Is(err, ErrMissingDescription)
+}
+
 // Skill represents a parsed skill file.
 //
 // WHAT:  Holds the parsed content of a single prompt skill.
@@ -117,14 +133,14 @@ func extractSection(content, sectionName string) (string, error) {
 // WHY:   Project skills are stored alongside sessions under app_home/projects/.
 // PARAMS: workDir — the current working directory (project root).
 // RETURNS: map[string]*Skill — project skills keyed as project/name; error on read failure.
-func DiscoverProject(workDir string) (map[string]*Skill, error) {
+func DiscoverProject(workDir string, diags *[]CompatDiag) (map[string]*Skill, error) {
 	projectDir, err := platform.ProjectDir(workDir)
 	if err != nil {
 		return nil, err
 	}
 	skillsDir := filepath.Join(projectDir, "skills")
 	sk := make(map[string]*Skill)
-	if err := discoverFromSubdirs(skillsDir, sk, ScopeProject); err != nil {
+	if err := discoverFromSubdirs(skillsDir, sk, ScopeProject, diags); err != nil {
 		return nil, fmt.Errorf("project skills: %w", err)
 	}
 	return sk, nil
@@ -135,18 +151,22 @@ func DiscoverProject(workDir string) (map[string]*Skill, error) {
 // Project skills are read from app_home/projects/<project>/skills/ (via platform.ProjectDir).
 // Keys use global/ or project/ prefix.
 //
+// Legacy disk skills with missing [BODY] or [DESCRIPTION] sections produce
+// compatibility diagnostics instead of fatal errors. The returned diags slice
+// may be non-nil even when err is nil.
+//
 // WHAT:  Full discovery across global and project.
 // WHY:   Prompt building and skill resolution need all available skills.
 // PARAMS: workDir — current working directory.
-// RETURNS: map[string]*Skill — all skills; error on discovery failure.
-func DiscoverAll(workDir string, builtinFS fs.FS) (map[string]*Skill, error) {
+// RETURNS: map[string]*Skill — all skills; []CompatDiag — legacy skill diagnostics; error on fatal discovery failure.
+func DiscoverAll(workDir string, builtinFS fs.FS) (map[string]*Skill, []CompatDiag, error) {
 	if builtinFS == nil {
-		return nil, fmt.Errorf("builtin skills filesystem is nil")
+		return nil, nil, fmt.Errorf("builtin skills filesystem is nil")
 	}
 	skills := make(map[string]*Skill)
 	entries, err := fs.ReadDir(builtinFS, ".")
 	if err != nil {
-		return nil, fmt.Errorf("builtin skills: cannot list embedded skills: %w", err)
+		return nil, nil, fmt.Errorf("builtin skills: cannot list embedded skills: %w", err)
 	}
 	builtinNames := make(map[string]bool)
 	for _, entry := range entries {
@@ -156,11 +176,11 @@ func DiscoverAll(workDir string, builtinFS fs.FS) (map[string]*Skill, error) {
 		name := strings.TrimSuffix(entry.Name(), ".md")
 		data, err := fs.ReadFile(builtinFS, entry.Name())
 		if err != nil {
-			return nil, fmt.Errorf("builtin skills: cannot read embedded skill %s: %w", entry.Name(), err)
+			return nil, nil, fmt.Errorf("builtin skills: cannot read embedded skill %s: %w", entry.Name(), err)
 		}
 		skill, err := Parse(name, string(data))
 		if err != nil {
-			return nil, fmt.Errorf("builtin skills: cannot parse embedded skill %s: %w", entry.Name(), err)
+			return nil, nil, fmt.Errorf("builtin skills: cannot parse embedded skill %s: %w", entry.Name(), err)
 		}
 		skill.Scope = ScopeBuiltin
 		builtinNames[name] = true
@@ -168,18 +188,19 @@ func DiscoverAll(workDir string, builtinFS fs.FS) (map[string]*Skill, error) {
 	}
 	home, err := platform.AppHome()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	globalDir := filepath.Join(home, "skills")
 
+	var diags []CompatDiag
 	diskSkills := make(map[string]*Skill)
-	if err := discoverFromSubdirs(globalDir, diskSkills, ScopeGlobal); err != nil {
-		return nil, fmt.Errorf("global skills: %w", err)
+	if err := discoverFromSubdirs(globalDir, diskSkills, ScopeGlobal, &diags); err != nil {
+		return nil, nil, fmt.Errorf("global skills: %w", err)
 	}
 
-	project, err := DiscoverProject(workDir)
+	project, err := DiscoverProject(workDir, &diags)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for k, v := range project {
 		diskSkills[k] = v
@@ -190,7 +211,7 @@ func DiscoverAll(workDir string, builtinFS fs.FS) (map[string]*Skill, error) {
 		}
 		skills[k] = v
 	}
-	return skills, nil
+	return skills, diags, nil
 }
 
 // Resolve finds the canonical skill ID for a given name.
@@ -243,16 +264,21 @@ func SortedNames(skills map[string]*Skill) []string {
 // PARAMS: dir — path to the skills directory containing skill subdirectories.
 // RETURNS: map[string]*Skill — discovered skills keyed as global/name; error on read failure.
 func DiscoverGlobalFromDir(dir string) (map[string]*Skill, error) {
+	var diags []CompatDiag
 	skills := make(map[string]*Skill)
-	if err := discoverFromSubdirs(dir, skills, ScopeGlobal); err != nil {
+	if err := discoverFromSubdirs(dir, skills, ScopeGlobal, &diags); err != nil {
 		return nil, err
 	}
+	// discoverFromSubdirs continues on compat errors in the new flow, so
+	// DiscoverGlobalFromDir keeps its original contract: no diags returned.
 	return skills, nil
 }
 
 // discoverFromSubdirs reads skills from subdirectory layout: <dir>/<name>/skill.md.
 // Skills are stored with scope prefix as canonical ID (global/name or project/name).
-func discoverFromSubdirs(root string, skills map[string]*Skill, scope Scope) error {
+// Parse errors caused by legacy section names (missing [BODY] or [DESCRIPTION])
+// are collected as compatibility diagnostics instead of failing fatally.
+func discoverFromSubdirs(root string, skills map[string]*Skill, scope Scope, diags *[]CompatDiag) error {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -276,6 +302,19 @@ func discoverFromSubdirs(root string, skills map[string]*Skill, scope Scope) err
 		}
 		skill, err := Parse(name, string(data))
 		if err != nil {
+			// Legacy section-format errors are compatibility diagnostics,
+			// not fatal failures. Non-compatibility errors still fail fast.
+			if isCompatError(err) {
+				if diags != nil {
+					*diags = append(*diags, CompatDiag{
+						Path:  skillFile,
+						Name:  name,
+						Scope: scope,
+						Err:   err,
+					})
+				}
+				continue
+			}
 			return fmt.Errorf("cannot parse skill %s: %w", skillFile, err)
 		}
 		skill.Dir = skillDir

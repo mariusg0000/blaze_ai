@@ -227,7 +227,7 @@ func newAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 	registry := tools.NewRegistry()
 	registry.Register(tools.NewShellTool(os, func() string { return agent.WorkDir }))
 	registry.Register(tools.NewLoadSkillTool(func(name string) (string, string, error) {
-		all, err := skills.DiscoverAll(agent.WorkDir, agent.Builder.BuiltinSkillsFS)
+		all, _, err := skills.DiscoverAll(agent.WorkDir, agent.Builder.BuiltinSkillsFS)
 		if err != nil {
 			return "", "", fmt.Errorf("skill discovery failed: %w", err)
 		}
