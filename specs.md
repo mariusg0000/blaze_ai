@@ -1,6 +1,6 @@
 # Project: BlazeAI
 
-## Project Directives and Rules (Mandatory)
+## Project and User Directives and Rules (Mandatory)
 
 Follow every entry below as a binding project instruction.
 
@@ -9,63 +9,80 @@ Follow every entry below as a binding project instruction.
 
 ## Overview
 
-BlazeAI is a cross-platform AI terminal agent for experienced users, implemented as a Go module (`go 1.25.0`, `toolchain go1.26.4`). The system is a greenfield rebuild with a shell-native runtime, console and Telegram transports, OpenAI-compatible HTTP streaming, and direct shell execution on the host OS. It favors fast interaction, low overhead, and explicit failure over silent degradation. The primary transport is a terminal REPL; Telegram is a long-polling bridge. Agent behavior is shaped by system prompt files and Markdown agent definitions, not runtime logic.
+BlazeAI is a Go 1.25 terminal AI agent with console and opt-in Telegram transports. `main.go` bootstraps the platform, configuration, embedded prompts and skills, session, and selected transport; the runtime then streams OpenAI-compatible responses and dispatches native tools. Prompt content and Markdown definitions shape agent behavior, while file-backed sessions and project-scoped work directories provide continuity. The former desktop transports were removed; no active desktop implementation is part of the current repository.
+
+## Operating Model
+
+- `main.go` is the composition root: it detects the OS, bootstraps app home, loads or creates configuration, prepares embedded assets, selects Telegram when requested, and otherwise opens the console session.
+- `internal/runtime/` owns turn execution, prompt construction, streaming, tool dispatch, session updates, compaction, modes, and child-agent orchestration. Providers supply the LLM stream; transports consume runtime callbacks.
+- `internal/prompt/` rebuilds prompt input for each LLM call from embedded templates and disk-backed project/user sources. Optional project map and agent content are injected only where the prompt template provides their placeholders.
+- `internal/config/`, `internal/platform/`, and `internal/session/` own startup prerequisites, host/project paths, validated configuration, and persistent session files. Required failures are surfaced rather than silently replaced.
+- `internal/tools/` exposes the runtime tool registry. Shell execution remains host-native; direct `read_file` and `write_file` tools resolve relative paths through the work directory, as does `replace_block`.
+- `internal/compaction/` limits context and preserves continuation state through chronological summaries, pruning, and reasoning handling. Telegram is a long-polling single-chat bridge with text/image intake and streamed activity adaptation.
+- `prompts/` and builtin `skills/` are embedded at build time; user/project sources remain disk-backed. `decisions/` records accepted changes and rationale but does not override implemented behavior when code differs.
 
 ## Source Authority
 
-Current source code, tests, and config define implemented behavior. `decisions/` is authoritative for recorded decisions and rationale. `AGENTS.md` defines working rules. No Wiki is present.
+Current source code, tests, schemas, and configuration define implemented behavior. `decisions/` is authoritative for recorded decisions, constraints, rationale, and committed change context. Existing specs are maintained context and must be checked against those sources; conflicts must be flagged rather than silently reconciled.
 
 ## Project Map
 
-- `main.go` - CLI entrypoint. Parses flags, bootstraps app home, loads config or runs first-run, opens session, starts transport.
-- `embed.go` - Embeds `prompts/` and `skills/` into the binary with `go:embed`.
-- `firstrun.go` - Interactive first-run provider, API key, model, and role setup.
-- `go.mod` - Module root, Go toolchain declaration, and dependency pins.
-- `internal/runtime/` - Agent core: handler contract, RunTurn loop, prompt build, streaming, tool dispatch, persistence, compaction.
-  - `runtime.go` - Handler interface, Agent struct, NewAgent, RunTurn, model/mode management.
-  - `agent_orchestration.go` - One-shot child-agent execution, persistent child sessions, dual timeout, activity forwarding.
-  - `mode_capabilities.go` - Mode tool deny-list and sub-agent allow-list enforcement.
-- `internal/agents/` - Markdown agent definition discovery, parsing, validation, and resolution.
-- `internal/console/` - Terminal REPL transport: raw input, slash commands, Markdown rendering, streaming output.
-- `internal/telegram/` - Telegram bridge: long polling, single-chat enforcement, text/image handling, streaming adaptation.
-- `internal/prompt/` - Rebuilds runtime prompt from disk sources on every LLM call, injects variables.
-- `internal/config/` - Config and mode load/save/validate, provider/role resolution, first-run detection.
-- `internal/session/` - File-based session persistence under project-scoped folders.
-- `internal/compaction/` - Context compaction, pruning, summary management, reasoning stripping.
-- `internal/tools/` - Native tool interface, registry, shell, skill tools, ask_a_friend, analyze_image, replace_block, task tools, read_file, write_file, run_agent, agent_done, filtered registries.
-- `internal/skills/` - Skill discovery, parsing, validation, scoping, active list management.
-- `internal/platform/` - OS detection, shell selection, app home bootstrap, project directory resolution.
-- `internal/provider/` - OpenAI-compatible HTTP client, streaming, tool-call decoding, usage reporting.
-- `internal/llmcall/` - One-shot secondary LLM calls routed by role.
-- `internal/usage/` - Provider-agnostic token usage extraction and normalization.
-- `internal/helpers/` - Host helper detection (rg, fd, jq, git, etc.).
-- `prompts/` - Embeds immutable system and transport prompt templates read directly from the binary.
-- `skills/` - Contains immutable builtin skill definitions read directly from the binary; user skills remain disk-backed.
-- `deploy_nas.sh` - Build linux/amd64, package self-contained installer, SCP to NAS, SSH install. Default target: `nas@192.168.0.104`. To deploy: `./deploy_nas.sh` or `./deploy_nas.sh user@host`.
-- `specs/` - Detailed specification fragments for each subsystem.
-- `decisions/` - Timestamped session decision summaries with rationale.
+- `main.go` - application entrypoint and console/Telegram transport selection.
+- `embed.go` - embeds builtin prompts and skills.
+- `firstrun.go` - interactive initial provider, model, API key, and role setup.
+- `go.mod` - Go module, toolchain, and dependency declarations.
+- `internal/runtime/` - agent turn lifecycle, orchestration, modes, streaming, tools, and persistence coordination.
+- `internal/agents/` - Markdown agent discovery, parsing, validation, and resolution.
+- `internal/console/` - terminal REPL, commands, input, rendering, and streaming display.
+- `internal/telegram/` - Telegram long polling, commands, single-chat state, images, and streaming adaptation.
+- `internal/prompt/` - per-call prompt assembly and variable injection.
+- `internal/config/` - configuration, provider/role/mode validation, persistence, and first-run detection.
+- `internal/session/` - project-scoped file session persistence and resume lifecycle.
+- `internal/compaction/` - context pruning, summarization, and reasoning cleanup.
+- `internal/tools/` - native tool implementations and filtered registries.
+- `internal/skills/` - skill discovery, parsing, validation, scoping, and active skills.
+- `internal/platform/` - OS detection, shell selection, app-home bootstrap, and project paths.
+- `internal/provider/` - OpenAI-compatible HTTP streaming and tool-call decoding.
+- `internal/llmcall/` - secondary role-routed LLM calls.
+- `internal/usage/` - provider-independent usage extraction and normalization.
+- `internal/helpers/` - advisory host helper detection.
+- `prompts/` - embedded system and transport prompt templates.
+- `skills/` - embedded builtin skill definitions.
+- `deploy_nas.sh` - Linux amd64 packaging and NAS deployment script.
+- `specs/` - detailed subsystem specifications.
+- `decisions/` - authoritative decision records and rationale.
+
+## Task Routing
+
+- Runtime turns, tool calls, modes, or child agents → `internal/runtime/` and the matching runtime/orchestration detailed spec.
+- Prompt injection, project maps, or skill descriptions → `internal/prompt/`, `prompts/`, `internal/skills/`, and `specs/04-prompts.md` or `specs/09-skill-system.md`.
+- Console interaction → `internal/console/` and `specs/13-console-ui.md`.
+- Telegram behavior → `internal/telegram/` and `specs/14-telegram-bridge.md`.
+- Configuration, startup, paths, or sessions → `internal/config/`, `internal/platform/`, `internal/session/`, and specs 03, 10, 16, or 17.
+- Context limits and continuation summaries → `internal/compaction/` and `specs/11-context-compaction.md`.
+- Accepted rationale or historical constraints → relevant files under `decisions/`.
 
 ## Detailed Specs
 
-- `specs/01-product-scope.md`: Product identity, priorities, interaction model, execution model, no-fallback rule, architecture overview, app home, configuration, sessions, skills, agents, safety, release targets, non-goals
-- `specs/02-architecture.md`: Module dependency graph, layer stack, package roles, data flow, startup sequence, build constraints
-- `specs/03-config-schema.md`: Config struct, JSON schema, provider model, roles, compaction, strip reasoning, modes, validation rules
-- `specs/04-prompts.md`: Prompt assembly, system prompt structure, transport prompts, variable injection, skill descriptions, AGENTS section
-- `specs/05-tools.md`: Tool interface, Registry, OpenAI format, tool call lifecycle, multi-call, timeout, conventions, emoji display, file tools, agent tools
-- `specs/06-shell-execution.md`: Shell tool, platform shell selection, command execution, sudo pipeline, output cap, process groups
-- `specs/07-file-editing.md`: replace_block tool, block matching, context lines, edit precision
-- `specs/08-cross-model-delegation.md`: ask_a_friend tool, secondary model calls, role-based routing, timeout
-- `specs/09-skill-system.md`: Skill format, discovery, scoping, load_skill tool, active list, body rendering
-- `specs/10-sessions.md`: Session creation, resume, close, file layout, session.json structure, sanitization
-- `specs/11-context-compaction.md`: Compaction triggers, pruning, summarization, reasoning stripping, summary files
-- `specs/12-handler-contract.md`: Handler interface, optional extensions, StreamPhaseHandler, AgentActivityHandler, contract rules
-- `specs/13-console-ui.md`: Console struct, REPL loop, rendering, slash commands, input handling, spinner, status bar
-- `specs/14-telegram-bridge.md`: Telegram transport, long polling, single-chat, text/image handling, commands
-- `specs/15-runtime-core.md`: Agent struct, RunTurn loop, abort handling, session sanitization, mode injection, model management, startup wiring
-- `specs/16-first-run.md`: First-run detection, interactive setup flow, provider selection, API key, model, roles
-- `specs/17-platform.md`: OS detection, shell chain, app home bootstrap, project directory resolution
-- `specs/18-safety.md`: Sudo approval, password handling, secrets policy, Telegram safety
-- `specs/19-build-deploy.md`: Build targets, cross-compilation, deployment, release artifacts
-- `specs/20-agent-orchestration.md`: Agent definition format, front matter, one-shot execution, child sessions, agent_done protocol, parallel execution, cleanup
-- `specs/21-mode-capabilities.md`: Mode struct, denied_tools, agents allow-list, refreshModeCapabilities, modeAllowsAgent, example configurations
-- `specs/22-usage-normalization.md`: Usage struct, raw variants, provider normalization, cache status, extraction rules
+- `specs/01-product-scope.md`: product, interaction, execution, configuration, sessions, skills, agents, safety, release, non-goals
+- `specs/02-architecture.md`: packages, layers, dependencies, startup, dataflow, boundaries, build, runtime, transport
+- `specs/03-config-schema.md`: Config, JSON, providers, roles, modes, compaction, validation, defaults, persistence
+- `specs/04-prompts.md`: prompt, templates, injection, variables, project-map, agents, skills, transports, system
+- `specs/05-tools.md`: Tool, Registry, calls, dispatch, timeout, OpenAI, shell, files, agents, errors
+- `specs/06-shell-execution.md`: shell, platform, commands, sudo, output, processes, timeout, errors, workdir
+- `specs/07-file-editing.md`: replace_block, paths, workdir, matching, context, edits, precision, errors
+- `specs/08-cross-model-delegation.md`: ask_a_friend, roles, secondary, models, routing, timeout, input, output
+- `specs/09-skill-system.md`: skills, discovery, parsing, validation, scope, active, load_skill, builtin, project
+- `specs/10-sessions.md`: sessions, resume, close, files, JSON, project, sanitization, lifecycle, persistence
+- `specs/11-context-compaction.md`: compaction, pruning, summaries, chronology, reasoning, thresholds, task-switching, context
+- `specs/12-handler-contract.md`: Handler, callbacks, streaming, phases, activity, extensions, contracts, runtime
+- `specs/13-console-ui.md`: console, REPL, commands, readline, rendering, streaming, spinner, status, input
+- `specs/14-telegram-bridge.md`: Telegram, polling, chat, commands, images, typing, streaming, retry, session
+- `specs/15-runtime-core.md`: Agent, RunTurn, abort, sessions, modes, models, prompts, startup, lifecycle
+- `specs/16-first-run.md`: first-run, provider, API key, model, roles, setup, config, validation, prompts
+- `specs/17-platform.md`: OS, shell, app-home, paths, project, bootstrap, Windows, Linux, environment
+- `specs/18-safety.md`: sudo, password, secrets, Telegram, approval, filtering, safety, errors, handling
+- `specs/19-build-deploy.md`: Go, build, cross-compile, installer, NAS, linux, amd64, release, deployment
+- `specs/20-agent-orchestration.md`: agents, frontmatter, child, sessions, agent_done, parallel, timeout, cleanup, activity
+- `specs/21-mode-capabilities.md`: Mode, denied_tools, agents, allow-list, refresh, permissions, capabilities, configuration
+- `specs/22-usage-normalization.md`: Usage, tokens, providers, normalization, cache, extraction, raw, input, output
