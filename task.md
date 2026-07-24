@@ -1,445 +1,353 @@
----
-status: completed
----
+# Task: Harden active-turn reliability and cancellation
 
-# Bring the builtin config-manager skill up to date
+status: completed
+created: 2026-07-24
 
 ## User outcome
 
-Update the embedded builtin `config-manager` skill so that it accurately and
-completely explains current BlazeAI configuration, especially how interactive
-and executor agents are defined and how the UI concept named “mode” is now set,
-selected, cycled, and persisted. Remove instructions that present legacy
-`modes.json` as active configuration. Preserve the valid Telegram and host-helper
-guidance.
-
-The revised skill must be operational guidance an agent can safely follow, not
-an architecture history or a dump of every project subsystem.
-
-## Current state and rigorous findings
-
-- `skills/config-manager.md` is a 380-line embedded builtin skill using the
-  required `[DESCRIPTION]` and `[BODY]` sections. `embed.go` embeds `skills/`;
-  builtin discovery resolves it as `builtin/config-manager`. It is not copied to
-  app home and cannot be overridden by a same-named global/project skill.
-- The provider, role, Telegram, and helper guidance is largely current.
-- The app-home inventory is incomplete: runtime creates `skills`, `scripts`,
-  `backups`, `projects`, `config`, `telegram`, and `agents` under the user-home
-  `blazeai` directory. Current source resolves Unix app home as `~/blazeai` and
-  Windows app home as `%USERPROFILE%\blazeai`.
-- The `config.json` example omits `helperSetup` and `debugPrompt`. It also omits
-  `last_model`, but that field is vestigial: first run writes it once and no
-  production runtime path reads it. Active model state belongs to
-  `agents.json` or Telegram `state.json`.
-- Favorites, compaction, and `stripReasoning` appear in JSON but lack enough
-  operational explanation. `/model`, `/model +`, `/model -`, and Ctrl+\ are not
-  fully connected to provider listing, favorite persistence, and per-agent
-  model state.
-- The entire “Work Modes (modes.json)” section is stale. `modes.json` is now
-  legacy migration input only; first run does not create it and operational
-  runtime behavior never reads it after migration.
-- Active modes are interactive Markdown agent definitions under
-  `{APP_HOME}/agents/*.md`. `/mode <name>` selects an interactive agent and Tab
-  cycles interactive agents with wrap-around. Executor agents cannot be
-  selected as modes.
-- `agents.json` is runtime state, not the definition source. It stores each
-  interactive agent’s active model plus `last_agent`. The model declared in an
-  interactive definition seeds a missing state entry; later `/model` changes
-  update `agents.json`, not the Markdown definition.
-- Definitions are loaded only at Agent construction. There is no hot reload or
-  create/rename/delete command; filesystem definition changes require restart.
-- Creating a new interactive definition is reconciled automatically into
-  `agents.json`. Renaming/deleting an interactive identity is not: stale state
-  or `last_agent` produces an explicit startup error. Renaming/deleting an
-  executor requires updating every interactive `agents:` reference.
-- With no interactive definitions and no `agents.json`, startup provisions
-  `agents/default.md`. If `agents.json` exists, even empty, deleting all
-  interactive definitions causes a hard error and does not recreate the
-  default.
-- The existing ad-hoc `fetch_models` script section is redundant and
-  incomplete. The console’s `/model` flow already calls the configured
-  provider’s model-list endpoint and handles the existing OAuth client path.
-- No test checks config-manager’s exact prose. Existing skill tests cover the
-  parser/discovery contract, and root tests cover embedded assets.
-
-## Supporting evidence
-
-- `.agents/explorer/000008-configuration-contract.md`
-- `.agents/explorer/000009-agents-modes-contract.md`
-- `.agents/explorer/000010-config-skill-conformance.md`
-- `.agents/explorer/000011-agent-edit-lifecycle.md`
-
-These reports are navigation evidence. Current source remains authoritative
-where older specs still describe mode-based runtime state.
-
-## Resolved scope and design
-
-1. Modify only `skills/config-manager.md`.
-2. Keep its `[DESCRIPTION]` / `[BODY]` format and builtin name unchanged.
-3. Replace the description with this exact scope statement:
-
-   `Load for BlazeAI configuration: providers, API keys, models, roles, compaction, reasoning stripping, interactive and executor agents (the active mode system), Telegram bridges, and host helpers.`
-
-4. Rewrite the body as one coherent current guide. Preserve the source-backed
-   Telegram and helper instructions, but integrate them under the same file
-   ownership and safe-editing rules.
-5. Remove the active `modes.json` operations and ad-hoc `fetch_models` script.
-   Replace them with current agent configuration, runtime model commands, and a
-   narrowly labeled legacy migration note.
-6. Do not modify source, tests, specs, decisions, TODOs, other skills, embedded
-   wiring, or runtime behavior.
-
-## Exact content contract
-
-The rewritten `[BODY]` must use the following heading order and contain all
-listed facts. Wording may be concise, but it must preserve every stated
-contract, distinction, warning, and example without introducing unsupported
-behavior.
-
-### 1. `# Config Manager`
-
-State that the skill edits durable BlazeAI configuration and definitions. It
-must inspect the complete current file before changing it, preserve unrelated
-valid settings, write valid JSON/Markdown, keep secrets out of output, and stop
-on missing required values or validation errors. It must never invent API keys,
-provider endpoints, model IDs, tool names, agent names, Telegram IDs, or paths.
-
-### 2. `## Configuration Sources and Ownership`
-
-Document:
-
-- `{APP_HOME}` is `<user-home>/blazeai` (`~/blazeai` on Unix,
-  `%USERPROFILE%\blazeai` on Windows).
-- Runtime-created subdirectories: `skills/`, `scripts/`, `backups/`,
-  `projects/`, `config/`, `telegram/`, `agents/`.
-- Manually editable sources:
-  - `{APP_HOME}/config/config.json` — providers, favorites, roles, compaction,
-    reasoning stripping, helper state, diagnostic prompt capture;
-  - `{APP_HOME}/agents/*.md` — interactive and executor definitions;
-  - `{APP_HOME}/telegram/<instance>/bridge.json` — Telegram credentials,
-    authorization, and workdir.
-- Runtime-managed state:
-  - `{APP_HOME}/config/agents.json` — interactive agent model state and
-    `last_agent`;
-  - `{APP_HOME}/telegram/<instance>/state.json` — Telegram selected model and
-    pending selection state.
-- Legacy-only input:
-  - `{APP_HOME}/config/modes.json` — one-time migration source, not current mode
-    configuration.
-- Persist JSON/state and generated agent files with private `0600` file mode.
-- Manual `config.json` or `agents/*.md` edits require process restart. Runtime
-  `/model`, `/mode`, favorite commands, and Tab act immediately and persist
-  through the runtime-owned files.
-
-### 3. `## Global config.json`
-
-Include one complete valid template with placeholder values, covering exactly:
-
-```json
-{
-  "providers": [
-    {
-      "name": "provider-name",
-      "endpoint": "https://provider.example/v1",
-      "api_key": "REPLACE_WITH_SECRET"
-    }
-  ],
-  "favorite_models": [
-    "provider-name/model-name"
-  ],
-  "roles": {
-    "default": "provider-name/model-name",
-    "vision": "provider-name/model-name",
-    "summarization": "provider-name/model-name",
-    "advisor": "provider-name/model-name"
-  },
-  "compaction": {
-    "maxContextTokens": 100000,
-    "minContextTokens": 50000,
-    "summaryMaxTokens": 2000,
-    "maxSummaryFiles": 10,
-    "tokenCoefficient": 3.5,
-    "maxBackoffOffsetTokens": 25000
-  },
-  "stripReasoning": {
-    "enable": true,
-    "preserveLast": 5
-  },
-  "helperSetup": {
-    "dismissed": false,
-    "declined": []
-  },
-  "debugPrompt": false
-}
-```
-
-Explain that optional role keys may be omitted rather than set to invalid empty
-model IDs. Do not put `last_model` in the editable template; identify it in a
-runtime-managed/legacy note as vestigial first-run output that active model
-selection does not use.
-
-Add these subsections and rules:
-
-- `### Providers`: unique non-empty `name`, non-empty endpoint, OpenAI-compatible
-  API; API-key providers require `api_key`; ChatGPT OAuth uses
-  `auth_type: "oauth"` plus OAuth credentials and should be configured through
-  `/auth openai`; no provider fallback.
-- `### Model IDs and Roles`: exact `provider/model_name` format, no `|` suffix;
-  referenced provider must exist; `default` required; `vision`,
-  `summarization`, `advisor` optional; requesting an unset role fails
-  explicitly.
-- `### Favorites and Model Selection`: `/model` opens live provider/model
-  selection, `/model <provider/model>` assigns the current interactive agent’s
-  model, `/model +` adds the current model to favorites, `/model -` removes it,
-  Ctrl+\ cycles favorites, and zero/one favorites produce no cycle change.
-- `### Compaction and Reasoning Payload`: list the six displayed defaults;
-  explain that compaction thresholds govern context summarization and
-  `stripReasoning.enable` removes older reasoning payload text while
-  `preserveLast` keeps the newest N reasoning-bearing messages. Explicitly say
-  this does not configure request-time reasoning effort or console reasoning
-  display.
-- `### Helper and Diagnostic Settings`: `helperSetup.dismissed` suppresses all
-  optional helper suggestions; `helperSetup.declined` suppresses named helper
-  suggestions; `debugPrompt: true` writes `prompt.json` in the session folder
-  for diagnosis and defaults to false.
-- `### Editing and Reload`: read-modify-validate-write the complete file;
-  preserve credentials and unrelated fields; restart after manual edits;
-  runtime commands update live state without requiring a restart.
-
-### 4. `## Agent Definitions and Active Modes`
-
-Begin with the exact clarification: an active BlazeAI “mode” is now an
-interactive agent; `modes.json` is not the active configuration source.
-
-#### `### Location and Discovery`
-
-State that definitions are direct, non-recursive `.md` files under
-`{APP_HOME}/agents/`, sorted by path at load, with globally unique frontmatter
-`name` values. Invalid files, duplicate names, bad references, bad tools, or no
-interactive definition stop startup with an explicit error. Definitions load
-only at process startup.
-
-#### `### Definition Format`
-
-Include this exact schema example:
-
-```markdown
----
-name: agent-name
-description: What this agent does
-type: interactive
-model: provider-name/model-name
-timeout: 15m
-directive: A short per-turn directive
-tools:
-  - read_file
-  - shell
-agents:
-  - worker
----
-Markdown instructions for the agent.
-```
-
-Document only the accepted keys: `name`, `description`, `type`, `model`,
-`timeout`, `directive`, `tools`, `agents`. `kind:` is legacy and must not be
-written. Explain:
-
-- `name` and `description` are required;
-- `type` is exactly `interactive` or `executor`;
-- `model` is required for interactive agents and optional for executors;
-- an executor without `model` inherits the parent interactive model;
-- `timeout`, when present, is a positive Go duration;
-- `tools` is required, non-empty, unique, and every name must exist in the
-  runtime registry;
-- `directive` and `agents` are interactive-only;
-- `agents` contains unique names of existing executor definitions;
-- executors cannot reference other agents or use `run_agent`;
-- when an interactive agent allows at least one executor, runtime exposes
-  `run_agent` automatically;
-- the Markdown body is the agent’s instruction text;
-- an interactive directive is appended ephemerally to the latest user message
-  for the provider call and is not persisted into session history.
-
-#### `### Interactive Agent Example`
-
-Include a valid example named `planning`, with `type: interactive`, a placeholder
-provider/model, a non-empty `tools` list, `agents: [worker]`, an optional
-directive, and a body explaining its role. Do not include ellipses as tool or
-agent entries.
-
-#### `### Executor Agent Example`
-
-Include a valid example named `worker`, with `type: executor`, no `directive`, no
-`agents`, a non-empty valid-looking tool list, optional omitted model to
-demonstrate inheritance, and a focused body.
-
-Label tool names in examples as examples that must be replaced with names from
-the actual runtime registry when unavailable; never claim an unverified tool is
-universally installed.
-
-#### `### Selecting a Mode and Assigning Its Model`
-
-Document:
-
-- `/mode <interactive-name>` selects by exact name;
-- Tab cycles loaded interactive agents with wrap-around;
-- executor definitions are not selectable;
-- `/model <provider/model>` changes the selected interactive agent’s active
-  model and writes that state to `agents.json`;
-- the definition’s `model` seeds state only when the interactive agent has no
-  state entry;
-- `last_agent` controls next-start selection and is updated by `/mode`/Tab;
-- `agents.json` is normally runtime-managed and should not be used to define
-  tools, directives, instructions, or executor permissions.
-
-#### `### Creating, Editing, Renaming, and Deleting Safely`
-
-Provide this exact operation contract:
-
-1. Create/edit the Markdown definitions, validate all names/tools/references,
-   then restart. New interactive state entries are added automatically.
-2. Renaming only a filename is safe because frontmatter `name` is identity.
-3. Renaming an interactive `name` requires updating/removing the old
-   `agents.json` state entry and updating `last_agent` when it points to the old
-   name; otherwise startup fails.
-4. Deleting an interactive requires removing its state entry, selecting an
-   existing `last_agent`, and leaving at least one interactive definition.
-5. Renaming/deleting an executor requires updating every interactive `agents:`
-   reference first; otherwise startup fails.
-6. Do not delete all interactive definitions while `agents.json` exists; the
-   default is not recreated in that condition.
-7. Preserve unrelated runtime state and never silently repair an ambiguous
-   rename or choose a replacement agent/model without user confirmation.
-
-#### `### Fresh-Install Default Agent`
-
-Explain that zero interactive definitions plus absent `agents.json` provisions
-`agents/default.md` from the validated default role and available runtime tools.
-It is user-editable and never overwritten. Existing `agents.json` suppresses
-re-provisioning.
-
-### 5. `## Legacy modes.json Migration Only`
-
-State prominently: do not create or edit `modes.json` to configure current
-modes. Document it only for existing installations:
-
-- migration runs only when `agents.json` is absent and `modes.json` exists;
-- each legacy mode becomes `<mode.name>.md` with `type: interactive`;
-- `model` and `directive` transfer;
-- allowed tools are derived by subtracting `denied_tools` and control tools
-  from the runtime tool set;
-- legacy `agents` become executor references;
-- existing destination files are never overwritten;
-- unsafe names and invalid content fail explicitly;
-- legacy `kind: one-shot` definitions are migrated to `type: executor`, but all
-  new definitions must use `type`;
-- legacy `modes` embedded directly in `config.json` have no active production
-  migration caller and must not be claimed as automatically migrated.
-
-### 6. `## Telegram Bridge Guide`
-
-Retain the existing source-backed guide, including:
-
-- instance path and required `bridge.json` keys `bot_token`,
-  `allowed_chat_id`, `workdir`;
-- non-empty token, non-zero chat ID, absolute existing directory;
-- runtime-managed `state.json` with valid `selected_model`;
-- `-telegram <instance>` startup, service setup, restart, authorization, and
-  verification;
-- no invented token/chat ID/model/path and explicit stop conditions.
-
-Correct ownership wording so `state.json` is never presented as a definition
-file users should freely rewrite.
-
-### 7. `## Host Helper Setup Guide`
-
-Retain the existing source-backed helper scope, detection, supported helper
-table, OS-specific installation, verification, `helperSetup` dismissal/decline
-behavior, and optional Python venv guidance. Preserve explicit approval before
-privileged/package-manager changes and no silent fallback.
-
-### 8. `## Final Validation Checklist`
-
-End with a concise checklist requiring:
-
-- valid complete JSON and private file permissions;
-- required provider/default role and valid model references;
-- unique agent names, valid types/tools/executor references, and at least one
-  interactive agent;
-- consistent `agents.json` only when a rename/delete requires state repair;
-- absolute Telegram workdir and authorized chat;
-- restart after manual config/definition edits;
-- no fallback, guessed secret, guessed model/tool/agent, or overwrite of
-  unrelated settings.
-
-## Rejected or deferred alternatives
-
-- Do not update stale subsystem specs in this task; the user requested the
-  builtin skill, and source-backed corrections can be made entirely there.
-- Do not change runtime code to revive `modes.json`, add hot reload, add agent
-  management commands, or reconcile stale state automatically.
-- Do not add a dedicated content-lock test for headings/prose. The skill parser
-  is generic, and such a test would make future documentation maintenance
-  brittle without testing runtime behavior.
-- Do not document sessions, project skill authoring, or every CLI flag. Those
-  belong to separate skill/session guidance and are not configuration-manager
-  omissions.
-- Do not keep the user-created `fetch_models` script; use the existing `/model`
-  provider-listing flow.
-
-## Exact write path
-
-- `skills/config-manager.md`: modify
-
-No other path may be created, modified, formatted, regenerated, or deleted.
-
-## Delegation and execution
-
-After approval, delegate the exact Markdown rewrite to `operator`, not Coder.
-The operation must preserve valid Telegram/helper facts while replacing stale
-mode and model-fetch guidance. Operator must not infer additional schema,
-commands, defaults, paths, or behavior beyond this contract.
+Audit and harden BlazeAI so that transient LLM failures are retried only when
+safe, terminal failures stop promptly, agent and tool timeouts have explicit
+semantics, and ESC interrupts every operation inside an active console turn,
+including sudo approval and shell processes.
+
+Implementation is not authorized until the user answers `proceed` or `go`.
+
+## Audit evidence
+
+Supporting reports:
+
+- `.agents/explorer/260724-llm-retry-timeouts.md`
+- `.agents/explorer/260724-agents-tools-cancel.md`
+- `.agents/explorer/260724-console-esc.md`
+- `.agents/explorer/260724-timeout-coverage.md`
+- `.agents/explorer/260724-approval-contract.md`
+- `.agents/explorer/260724-compaction-contract.md`
+- `.agents/explorer/260724-windows-shell-contract.md`
+
+### Critical findings
+
+1. Provider streaming has no retry. A transient 429, 5xx, network failure, or
+   stream interruption ends the turn immediately. No status-code policy exists.
+2. The ChatGPT Responses SSE parser has no idle timeout. A connection can stay
+   open indefinitely after the last event.
+3. Retry must not replay a response that already emitted content, reasoning, or
+   tool calls; replay could duplicate visible output or side effects.
+4. Compaction calls the summarizer with `context.Background()`. ESC cannot
+   cancel a summarization already in progress.
+5. Compaction silently skips summarization below the hard cap and force-prunes
+   above it. This is a fallback and conflicts with the project rule that
+   missing/failed required work must surface an error.
+6. Tool timeouts are local to shell, helper, `ask_a_friend`, and image calls;
+   they return a result string to the LLM. They are not automatic retries.
+7. Child agents already have a 2-minute inactivity timeout and a 20-minute
+   overall timeout, with optional positive `timeout:` front matter. Parent
+   cancellation propagates, but actual timer paths have little test coverage.
+8. ESC already cancels model streaming, normal tool execution, child agents,
+   and Unix shell process groups. It is not reliable during sudo approval:
+   approval reads `/dev/tty` synchronously, drops ESC, and receives no context.
+9. Windows shell cancellation kills only the shell parent; background children
+   can survive. Unix process-group cancellation already kills the full group.
+10. Telegram polling has its own infinite transient-error retry and remains
+    outside this active-turn provider policy.
+
+## Resolved behavior and policy
+
+### Provider retry policy
+
+Apply one policy to provider streaming calls, which also covers the secondary
+LLM and compaction calls because they use the provider client:
+
+- Three total attempts: the initial attempt plus at most two retries.
+- Wait one second before retry one and two seconds before retry two. Each wait
+  must select on the caller context; cancellation stops the wait immediately.
+- Retry only when no semantic response data has been received yet and the
+  failure is one of:
+  - HTTP 408, 429, or 500-599;
+  - a temporary/timeout network error;
+  - `io.EOF` or `io.ErrUnexpectedEOF` before semantic data;
+  - the provider stream idle timeout before semantic data.
+- Never retry after content, reasoning, or a tool call has been accumulated.
+  This includes a partial stream that later fails or idles.
+- Never retry `context.Canceled`, `context.DeadlineExceeded`, user abort,
+  authentication/authorization errors, invalid requests, other 4xx statuses,
+  provider `response.failed`/error events, malformed response errors, or a
+  retry budget exhaustion.
+- After the budget is exhausted, return the provider error to the turn. Do not
+  switch models, invent a response, replay tools, or silently continue.
+- Preserve existing partial-response and user-abort persistence semantics.
+
+The retry loop stays in `Client.StreamWithPhase`; no new exported provider API
+or user configuration key is introduced. The existing
+`providerStreamIdleTimeout` remains the single idle limit for both SSE paths.
+
+### Abandon and timeout policy
+
+- User ESC/Ctrl-C: abort immediately, never retry, persist already received
+  assistant content, mark unexecuted tool calls as aborted, append the existing
+  abort marker, and return `runtime.ErrTurnAborted`.
+- Provider terminal error or exhausted safe retries: fail the turn with the
+  provider error; do not invoke another LLM or replay a tool call.
+- A shell/helper/secondary/image tool timeout: end only that tool invocation
+  and return its explicit timeout result to the current LLM; do not retry the
+  tool automatically. The LLM may decide the next step.
+- Child-agent inactivity or overall timeout: terminate that child, return its
+  existing formatted timeout result to the parent tool call, and do not
+  automatically restart the child. Parent execution may continue unless the
+  user cancels the parent turn.
+- Parent user cancellation: propagate to every child, provider call, tool, shell
+  process, approval reader, and compaction call; classify it as cancellation,
+  not as a child timeout or provider retryable error.
+- Compaction summarization failure, empty summary, or cancellation is surfaced;
+  no silent skip and no force-prune fallback is allowed. The session must not
+  be pruned when the required summary was not produced.
+- Existing 60-second tool defaults, 2-minute child inactivity timeout,
+  20-minute child overall default, per-agent positive `timeout:` override, and
+  150 KB shell output cap remain unchanged in this task.
+
+### ESC contract
+
+The scope is every blocking operation nested in an active console turn. Idle
+readline input, startup setup, Telegram polling, and process exit shortcuts are
+not changed.
+
+- Keep the existing turn abort watcher for streaming, tools, and shells.
+- Make `RequestSudoApproval` context-aware and error-returning. ESC or Ctrl-C
+  in approval input must return `context.Canceled`; cancellation from the turn
+  context must terminate the approval read and restore terminal state.
+- Make approval and hidden-password readers context-aware. Their byte loop must
+  recognize ESC instead of dropping it, and must preserve raw-mode restoration
+  and file cleanup on every return path.
+- Runtime must distinguish approval cancellation from a normal sudo decline:
+  cancellation uses the standard turn-abort path; decline remains a tool error
+  and does not abort the turn; non-cancellation reader errors fail the turn.
+- Unix shell cancellation continues to kill the complete process group and wait
+  for `cmd.Wait()` before returning partial output.
+- Windows shell cancellation must terminate the shell process tree as well as
+  the root process. Keep the existing unexported helper signatures and use the
+  native Windows tree-termination operation before returning from the helper.
+
+## Exact implementation scope
+
+Only the following repository paths may be created or modified during
+implementation. `task.md` is owned by Architect; all other writes belong to
+Coder.
+
+- `internal/provider/provider.go` — modify provider stream retry classification,
+  bounded context-aware backoff, and shared idle-timeout behavior.
+- `internal/provider/openai_responses.go` — modify ChatGPT SSE parsing to use
+  the standard idle timeout and preserve partial-response cancellation rules.
+- `internal/provider/provider_test.go` — add retry classification, retry budget,
+  partial-response no-retry, and cancellation-during-backoff tests.
+- `internal/provider/openai_responses_test.go` — add ChatGPT idle-timeout and
+  no-retry-after-data tests.
+- `internal/compaction/compaction.go` — thread context through `Compact`,
+  `summarize`, and the provider call; surface summary errors and empty output
+  instead of skipping or force-pruning.
+- `internal/compaction/compaction_test.go` — update fallback expectations and
+  add cancellation/no-prune assertions.
+- `internal/runtime/runtime.go` — pass turn context into compaction, handle
+  cancelled compaction with the existing abort persistence path, and consume
+  the context-aware approval result.
+- `internal/runtime/runtime_test.go` — add cancelled-compaction and cancelled-
+  sudo-approval assertions; update Handler test doubles.
+- `internal/runtime/agent_orchestration.go` — update Handler forwarding and
+  stubs for the approval signature only; keep child limits, ordering, and
+  cleanup unchanged.
+- `internal/runtime/agent_orchestration_test.go` — add parent-cancellation and
+  configured-overall-timeout assertions without changing production limits.
+- `internal/console/console.go` — pass context into approval, map approval
+  cancellation to the turn-abort contract, and preserve normal decline/error
+  behavior.
+- `internal/console/reader.go` — add context parameters to approval/password
+  reads, recognize ESC as cancellation, and preserve raw terminal cleanup.
+- `internal/console/reader_test.go` — add input cancellation assertions if the
+  existing reader seams permit them; do not add an unrelated input abstraction.
+- `internal/console/reader_input_unix.go` — create only if required by the
+  existing platform split for nonblocking context-aware terminal-byte polling.
+- `internal/console/reader_input_windows.go` — create only if required by the
+  existing platform split for context-aware console-byte polling.
+- `internal/console/console_test.go` — update handler doubles and add approval
+  cancellation/decline rendering assertions where existing seams permit.
+- `internal/telegram/handler.go` — update the stub to the new Handler method
+  signature; Telegram continues to deny sudo.
+- `internal/tools/shell_process_windows.go` — modify tree termination while
+  preserving `prepareShellCommand(*exec.Cmd)` and
+  `killShellCommand(*exec.Cmd)` signatures.
+- `internal/tools/shell_test.go` — retain Unix timeout/abort assertions and add
+  only platform-appropriate process-tree coverage.
+
+Do not modify prompts, configuration schemas, public provider APIs, timeout
+values, Telegram retry behavior, session file formats, or unrelated tools.
+Do not add fallback models, generic retry frameworks, new global state, or
+unrequested abstractions.
+
+## Implementation recipe
+
+1. **Provider: bounded safe retries**
+   - Preserve `Client.Stream` and `Client.StreamWithPhase` signatures.
+   - Wrap the existing request/parse attempt in `StreamWithPhase` with the
+     exact three-attempt policy above.
+   - Classify HTTP status before returning the existing status error. Classify
+     transport/EOF/idle errors only when the accumulated response has empty
+     content, reasoning, and tool calls.
+   - Use a context-aware timer for each fixed backoff. Return `ErrAborted` when
+     the caller cancels during an attempt or backoff.
+   - Reset per-attempt phase reporting and do not emit duplicate semantic
+     callbacks from a retry because retries are allowed only before data.
+   - Make `parseChatGPTSSE` use `providerStreamIdleTimeout`, reset it for each
+     received line, close the response body on idle/cancel, and return partial
+     data plus the established abort sentinel on cancellation.
+
+2. **Compaction: context and fail-fast semantics**
+   - Change signatures exactly to:
+     - `func (m *Manager) Compact(ctx context.Context, sess *session.Session, usage *provider.Usage) (bool, error)`
+     - `func (m *Manager) summarize(ctx context.Context, sessionFolder string, pruned []session.Message) (string, error)`
+     - `func (a *Agent) compact(ctx context.Context, usage *provider.Usage) (bool, error)`
+   - Pass the `RunTurn` context at the existing compaction call site and use it
+     for the summarizer provider stream.
+   - If summarization returns an error, return it even below the hard cap. If
+     the response content is empty, return an explicit error. Do not save a
+     pruned session in either case.
+   - If compaction returns a context cancellation/deadline, reuse the existing
+     `appendAbortedToolResults`, `appendAbortMarker`, and `ErrTurnAborted` path;
+     do not report it as an ordinary maintenance failure.
+
+3. **Approval and ESC cancellation**
+   - Change the Handler method exactly to:
+     `RequestSudoApproval(ctx context.Context, command string) (approved bool, password string, err error)`.
+   - Update `Console`, Telegram and child stubs, `activityForwarder`, and both
+     test mocks. Pass the existing turn context from the runtime tool loop.
+   - Change `ReadApproval`, `ReadHiddenInput`, and the private terminal-line
+     routine to accept context. Preserve `/dev/tty` ownership, raw-mode
+     restoration, and close defers.
+   - Use a small platform-specific byte-read helper only if needed: Unix polls
+     the raw terminal with a 10 ms wait and Windows waits for console input with
+     the same 10 ms cadence. Both check context on every poll. The line reader
+     maps byte `0x1b` and Ctrl-C to `context.Canceled`.
+   - At the runtime call site, context cancellation or `context.Canceled` from
+     approval invokes the same abort-history path as other user aborts. A normal
+     `approved == false` result remains `error: sudo command declined by user`.
+     Any other approval error is returned as a terminal `sudo approval failed`
+     error and never executes the shell.
+
+4. **Shell and agent boundaries**
+   - Leave the existing turn-context-to-tool flow and Unix process-group kill
+     intact; add regression assertions that ESC/parent cancellation reaches a
+     shell and that `cmd.Wait()` completes before the tool result returns.
+   - Preserve child-agent first-error sibling cancellation, ordered results,
+     inactivity reset on tool activity, and overall deadline behavior.
+   - Add tests for parent cancellation classification and a short positive
+     agent `timeout:` value; do not add automatic child retries.
+   - On Windows, preserve both helper signatures and terminate the complete
+     process tree before the shell wait is released.
+
+## Required tests and exact assertions
+
+- Provider transient status: first response 503, second response success;
+  assert exactly two requests and the successful response.
+- Provider permanent status: 401; assert exactly one request and the original
+  status error.
+- Provider retry exhaustion: three transient failures; assert exactly three
+  requests and the final provider error.
+- Provider partial stream: emit content/tool data, then fail; assert one
+  request, partial response preservation, and no retry.
+- Provider cancel during backoff: cancel after the first transient failure;
+  assert `errors.Is(err, provider.ErrAborted)` and no second attempt.
+- ChatGPT idle stream: shorten `providerStreamIdleTimeout` in the test, leave
+  the stream open without events, and assert an idle-timeout error.
+- Compaction failure below and above hard cap: assert an error, no summary file,
+  no pruning, and unchanged session messages.
+- Compaction cancellation: cancel the supplied context; assert the provider
+  receives cancellation and the compaction result is classified as cancellation.
+- Runtime cancellation during compaction: assert `ErrTurnAborted`, one abort
+  marker, and no unexecuted tool call is run.
+- Runtime sudo approval cancellation: fake approval returns
+  `context.Canceled`; assert `ErrTurnAborted`, no shell execution, and the
+  existing abort marker/history behavior. A normal decline must remain a tool
+  result and must not return `ErrTurnAborted`.
+- Reader cancellation: assert ESC and Ctrl-C map to `context.Canceled`, a
+  cancelled context exits promptly, and terminal cleanup is retained.
+- Child overall timeout and parent cancellation: assert the existing formatted
+  timeout/cancelled distinctions and no automatic second child run.
+- Existing shell timeout, user-abort partial output, output cap, and Unix
+  background-child-kill tests must continue to pass.
+- Windows tools package must compile with:
+  `GOOS=windows GOARCH=amd64 go test -c -o /tmp/blazeai-tools.test.exe ./internal/tools`.
 
 ## Verification commands
 
-1. `go test ./internal/skills`
+1. `go test ./internal/provider ./internal/compaction ./internal/runtime ./internal/console ./internal/tools ./internal/telegram`
 2. `go test ./...`
-
-Run both after the final skill write. Return one concise `PASS`, `FAIL`, or
-`NOT RUN` result per command, without raw logs.
+3. `GOOS=windows GOARCH=amd64 go test -c -o /tmp/blazeai-tools.test.exe ./internal/tools`
 
 ## Acceptance criteria
 
-- Only `skills/config-manager.md` changes.
-- The skill still parses as embedded builtin `config-manager` with exactly one
-  `[DESCRIPTION]` and one `[BODY]` section.
-- Every current user-editable config field relevant to config-manager is
-  covered; vestigial/runtime-managed fields are identified but not promoted as
-  manual configuration.
-- Agent definition schema, interactive/executor rules, selection, model state,
-  restart behavior, bootstrap, and safe rename/delete invariants are complete.
-- Active mode instructions use interactive agents; `modes.json` appears only as
-  legacy migration input.
-- The ad-hoc model-fetch script is removed in favor of `/model`.
-- Telegram and helper guidance remains complete and source-consistent.
-- Both verification commands pass.
+- A transient provider failure is retried only before semantic output, at most
+  twice, with context-aware 1s/2s waits; permanent and partial-stream errors
+  are not retried.
+- Both provider SSE implementations have the same 180-second idle behavior.
+- No provider/model fallback or tool/agent replay exists.
+- Compaction uses the turn context and never silently skips or force-prunes on a
+  failed/empty summary.
+- ESC/Ctrl-C aborts provider streaming, compaction, every nested tool and child
+  agent, sudo approval, and Unix/Windows shell process trees in an active turn.
+- Sudo decline remains distinct from cancellation and does not abort the turn.
+- Agent timeout values and existing tool timeout values remain unchanged, with
+  explicit tested classification and no automatic retries for side-effecting
+  tools or agents.
+- All requested verification commands pass after the final write.
+- No path outside the allowlist is changed.
 
 ## Unresolved questions
 
-None.
+None for the defined active-turn scope. Idle readline/startup ESC behavior and
+Telegram polling retry are explicitly out of scope.
 
 ## Stop conditions
 
-Stop if the update would require changing runtime behavior, reviving active
-`modes.json`, inventing a tool/model/provider/secret, modifying another file,
-or reconciling a source contradiction not resolved in this plan.
+Stop before editing if implementation requires a new public API, a new config
+key, a timeout-value change, a session-format change, a fallback, or a write
+path outside this task. Resolve that scope change with the user first.
 
 ## Completion
 
-- Accepted outcome: The embedded builtin `config-manager` skill now documents
-  current config ownership/schema, interactive and executor agent definitions,
-  agent selection/model persistence, bootstrap and safe edit lifecycle, and
-  legacy-only modes migration while retaining Telegram and helper guidance.
-- Changed paths: `skills/config-manager.md`.
-- Verification: `go test ./internal/skills` — PASS; `go test ./...` — PASS.
-- Remaining issues: None.
+Accepted outcome: transient provider failures now use bounded safe retries;
+both SSE paths have idle cancellation; compaction propagates turn context and
+fails without pruning when summarization fails; active-turn ESC/Ctrl-C reaches
+approval, tools, agents, compaction, and shell cancellation; and Windows shell
+termination targets the process tree.
+
+Changed paths:
+
+- `internal/provider/provider.go`
+- `internal/provider/openai_responses.go`
+- `internal/provider/provider_test.go`
+- `internal/provider/openai_responses_test.go`
+- `internal/compaction/compaction.go`
+- `internal/compaction/compaction_test.go`
+- `internal/runtime/runtime.go`
+- `internal/runtime/runtime_test.go`
+- `internal/runtime/agent_orchestration.go`
+- `internal/runtime/agent_orchestration_test.go`
+- `internal/console/console.go`
+- `internal/console/reader.go`
+- `internal/console/reader_input_unix.go`
+- `internal/console/reader_input_windows.go`
+- `internal/console/console_test.go`
+- `internal/telegram/handler.go`
+- `internal/tools/shell_process_windows.go`
+
+Verification results:
+
+- `go test ./internal/provider` — PASS
+- `go test ./internal/provider -run 'Test(Stream|Client|NewClient)'` — PASS
+- `go test ./internal/compaction` — PASS
+- `go test ./internal/runtime` — PASS
+- `go test ./internal/console` — PASS
+- `go test ./internal/telegram` — PASS
+- `go test ./internal/tools` — PASS
+- `go test ./internal/provider ./internal/compaction ./internal/runtime ./internal/console ./internal/tools ./internal/telegram` — PASS
+- `go test ./...` — PASS
+- `GOOS=windows GOARCH=amd64 go test -c -o /tmp/blazeai-tools.test.exe ./internal/tools` — PASS
+
+Remaining issues: None within the approved active-turn scope.

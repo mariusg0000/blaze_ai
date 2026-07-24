@@ -59,7 +59,7 @@ type Handler interface {
 	// The handler prompts the user for confirmation, then reads a hidden password if approved.
 	// approved: false means the user declined — the tool call is skipped.
 	// password: empty on decline; the sudo password on approval. Never stored in session JSON.
-	RequestSudoApproval(command string) (approved bool, password string)
+	RequestSudoApproval(ctx context.Context, command string) (approved bool, password string, err error)
 }
 
 // StreamPhaseHandler is an optional transport extension for richer provider wait-state updates.
@@ -602,8 +602,17 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		// This covers both tool-call and final responses — context can grow past
 		// MaxContextTokens during a multi-call turn, not just at turn end.
 		if resp.Usage != nil && a.Compactor != nil && a.Compactor.ShouldCompact(resp.Usage) {
-			if _, err := a.compact(resp.Usage); err != nil {
-				return err
+			if _, compactErr := a.compact(ctx, resp.Usage); compactErr != nil {
+				if ctx.Err() != nil || errors.Is(compactErr, context.Canceled) || errors.Is(compactErr, context.DeadlineExceeded) || errors.Is(compactErr, provider.ErrAborted) {
+					if err := a.appendAbortedToolResults(resp.ToolCalls, 0); err != nil {
+						return err
+					}
+					if err := a.appendAbortMarker(); err != nil {
+						return err
+					}
+					return ErrTurnAborted
+				}
+				return compactErr
 			}
 		}
 
@@ -632,7 +641,19 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 					Command string `json:"command"`
 				}
 				if err := json.Unmarshal([]byte(tc.Arguments), &shellArgs); err == nil && containsSudo(shellArgs.Command) {
-					approved, password := a.Handler.RequestSudoApproval(shellArgs.Command)
+					approved, password, approvalErr := a.Handler.RequestSudoApproval(ctx, shellArgs.Command)
+					if approvalErr != nil {
+						if ctx.Err() != nil || errors.Is(approvalErr, context.Canceled) || errors.Is(approvalErr, context.DeadlineExceeded) {
+							if err := a.appendAbortedToolResults(resp.ToolCalls, idx); err != nil {
+								return err
+							}
+							if err := a.appendAbortMarker(); err != nil {
+								return err
+							}
+							return ErrTurnAborted
+						}
+						return fmt.Errorf("sudo approval failed: %w", approvalErr)
+					}
 					if !approved {
 						result := "error: sudo command declined by user"
 						a.Handler.OnToolResult(tc.Name, result)
@@ -706,11 +727,11 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 
 // compact runs token compaction on the current session using provider-reported usage.
 // Emits maintenance UI notifications and returns the success of the compaction.
-func (a *Agent) compact(usage *provider.Usage) (bool, error) {
+func (a *Agent) compact(ctx context.Context, usage *provider.Usage) (bool, error) {
 	if a.Handler != nil {
 		a.Handler.OnMaintenanceCall("compaction", "Compacting on max token limits")
 	}
-	compacted, err := a.Compactor.Compact(a.Session, usage)
+	compacted, err := a.Compactor.Compact(ctx, a.Session, usage)
 	if err != nil {
 		if a.Handler != nil {
 			a.Handler.OnMaintenanceResult("compaction", maintenanceErrorResult(err))

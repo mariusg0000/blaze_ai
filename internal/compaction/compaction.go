@@ -207,9 +207,9 @@ func (m *Manager) hardMinTokens() int {
 //
 // WHAT:  Checks trigger, prunes, summarizes, stores summary, rebuilds session.
 // WHY:   Called after each LLM turn to keep context within limits.
-// PARAMS: sess — the current session; usage — token usage from the last response.
+// PARAMS: ctx — cancellation context; sess — the current session; usage — token usage from the last response.
 // RETURNS: bool — true if compaction happened; error if summarization fails fatally.
-func (m *Manager) Compact(sess *session.Session, usage *provider.Usage) (bool, error) {
+func (m *Manager) Compact(ctx context.Context, sess *session.Session, usage *provider.Usage) (bool, error) {
 	if !m.ShouldCompact(usage) {
 		return false, nil
 	}
@@ -233,23 +233,13 @@ func (m *Manager) Compact(sess *session.Session, usage *provider.Usage) (bool, e
 	retained = cleanRetained
 
 	// Attempt summarization.
-	summary, err := m.summarize(sess.Folder, pruned)
+	summary, err := m.summarize(ctx, sess.Folder, pruned)
 	if err != nil {
-		if aboveHardCap {
-			// Force prune without summary.
-			sess.Messages = retained
-			return true, sess.Save()
-		}
-		// Below hard cap: skip prune.
-		return false, nil
+		return false, err
 	}
 
 	if strings.TrimSpace(summary) == "" {
-		if aboveHardCap {
-			sess.Messages = retained
-			return true, sess.Save()
-		}
-		return false, nil
+		return false, fmt.Errorf("summarization returned an empty summary")
 	}
 
 	// Save the summary chunk.
@@ -271,9 +261,9 @@ func (m *Manager) Compact(sess *session.Session, usage *provider.Usage) (bool, e
 // summarize builds a transcript from pruned messages and sends it to the LLM for summarization.
 //
 // WHAT:  Creates a transcript of pruned messages and asks the LLM for a dense summary.
-// PARAMS: sessionFolder — path to the session folder (for reading existing summaries); pruned — messages to summarize.
+// PARAMS: ctx — cancellation context; sessionFolder — path to the session folder (for reading existing summaries); pruned — messages to summarize.
 // RETURNS: string — summary text; error if the LLM call fails.
-func (m *Manager) summarize(sessionFolder string, pruned []session.Message) (string, error) {
+func (m *Manager) summarize(ctx context.Context, sessionFolder string, pruned []session.Message) (string, error) {
 	transcript := m.buildTranscript(pruned)
 	if strings.TrimSpace(transcript) == "" {
 		return "", nil
@@ -289,7 +279,7 @@ func (m *Manager) summarize(sessionFolder string, pruned []session.Message) (str
 		summaryClient = m.Provider
 	}
 	resp, err := summaryClient.Stream(
-		context.Background(),
+		ctx,
 		[]session.Message{
 			{Role: "system", Content: summaryPrompt},
 			{Role: "user", Content: "Summarize the above conversation segment."},

@@ -2,12 +2,14 @@
 package compaction
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -169,7 +171,7 @@ func TestCompactSanitizesRetainedTail(t *testing.T) {
 	}
 	sess := makeSession(t, msgs)
 
-	compacted, err := m.Compact(sess, &provider.Usage{PromptTokens: 150})
+	compacted, err := m.Compact(context.Background(), sess, &provider.Usage{PromptTokens: 150})
 	if err != nil {
 		t.Fatalf("Compact() error: %v", err)
 	}
@@ -210,7 +212,7 @@ func TestCompactSummarizeAndPrune(t *testing.T) {
 	originalCount := len(sess.Messages)
 
 	usage := &provider.Usage{PromptTokens: 150}
-	compacted, err := m.Compact(sess, usage)
+	compacted, err := m.Compact(context.Background(), sess, usage)
 	if err != nil {
 		t.Fatalf("Compact() error: %v", err)
 	}
@@ -239,7 +241,7 @@ func TestCompactSkipBelowThreshold(t *testing.T) {
 	originalCount := len(sess.Messages)
 
 	usage := &provider.Usage{PromptTokens: 50}
-	compacted, err := m.Compact(sess, usage)
+	compacted, err := m.Compact(context.Background(), sess, usage)
 	if err != nil {
 		t.Fatalf("Compact() error: %v", err)
 	}
@@ -259,7 +261,7 @@ func TestCompactNilUsage(t *testing.T) {
 	msgs := []session.Message{{Role: "user", Content: "hi"}}
 	sess := makeSession(t, msgs)
 
-	compacted, err := m.Compact(sess, nil)
+	compacted, err := m.Compact(context.Background(), sess, nil)
 	if err != nil {
 		t.Fatalf("Compact() error: %v", err)
 	}
@@ -268,7 +270,7 @@ func TestCompactNilUsage(t *testing.T) {
 	}
 }
 
-// TestCompactSummarizationFailure verifies skip when summarization fails below hard cap.
+// TestCompactSummarizationFailure verifies failed summarization does not mutate the session.
 func TestCompactSummarizationFailure(t *testing.T) {
 	m, server := setupManager(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -284,19 +286,23 @@ func TestCompactSummarizationFailure(t *testing.T) {
 
 	// 110 is above threshold (100) but below hard cap (125).
 	usage := &provider.Usage{PromptTokens: 110}
-	compacted, err := m.Compact(sess, usage)
-	if err != nil {
-		t.Fatalf("Compact() error: %v", err)
+	before := append([]session.Message(nil), sess.Messages...)
+	compacted, err := m.Compact(context.Background(), sess, usage)
+	if err == nil {
+		t.Fatal("Compact() error = nil, want summarization failure")
 	}
 	if compacted {
 		t.Error("Compact() = true, want false (summarization failed, below hard cap)")
 	}
-	if len(sess.Messages) != originalCount {
-		t.Errorf("messages = %d, want %d (unchanged)", len(sess.Messages), originalCount)
+	if len(sess.Messages) != originalCount || !reflect.DeepEqual(sess.Messages, before) {
+		t.Error("messages changed")
+	}
+	if _, statErr := os.Stat(filepath.Join(sess.Folder, "summaries")); !os.IsNotExist(statErr) {
+		t.Error("summary file or directory exists")
 	}
 }
 
-// TestCompactForcePruneAboveHardCap verifies forced prune without summary above hard cap.
+// TestCompactForcePruneAboveHardCap verifies failed summarization does not mutate the session above the hard cap.
 func TestCompactForcePruneAboveHardCap(t *testing.T) {
 	m, server := setupManager(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -312,15 +318,19 @@ func TestCompactForcePruneAboveHardCap(t *testing.T) {
 
 	// 200 is above hard cap (125).
 	usage := &provider.Usage{PromptTokens: 200}
-	compacted, err := m.Compact(sess, usage)
-	if err != nil {
-		t.Fatalf("Compact() error: %v", err)
+	before := append([]session.Message(nil), sess.Messages...)
+	compacted, err := m.Compact(context.Background(), sess, usage)
+	if err == nil {
+		t.Fatal("Compact() error = nil, want summarization failure")
 	}
-	if !compacted {
-		t.Error("Compact() = false, want true (forced prune above hard cap)")
+	if compacted {
+		t.Error("Compact() = true, want false")
 	}
-	if len(sess.Messages) >= originalCount {
-		t.Errorf("messages = %d, want < %d (pruned)", len(sess.Messages), originalCount)
+	if len(sess.Messages) != originalCount || !reflect.DeepEqual(sess.Messages, before) {
+		t.Error("messages changed")
+	}
+	if _, statErr := os.Stat(filepath.Join(sess.Folder, "summaries")); !os.IsNotExist(statErr) {
+		t.Error("summary file or directory exists")
 	}
 }
 

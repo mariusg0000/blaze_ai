@@ -149,8 +149,8 @@ func (h *Handler) OnMaintenanceResult(name string, result string) {
 
 // RequestSudoApproval is not supported in the Telegram transport.
 // Sudo commands are not allowed via Telegram for security.
-func (h *Handler) RequestSudoApproval(command string) (bool, string) {
-	return false, ""
+func (h *Handler) RequestSudoApproval(ctx context.Context, command string) (bool, string, error) {
+	return false, "", nil
 }
 
 // OnContent appends a streamed text delta to the Telegram buffer.

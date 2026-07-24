@@ -342,8 +342,8 @@ func TestStreamIdleTimeout(t *testing.T) {
 	if !strings.Contains(err.Error(), "idle timeout") {
 		t.Fatalf("Stream() error = %v, want idle timeout error", err)
 	}
-	if resp != nil {
-		t.Fatalf("Stream() response = %#v, want nil on idle timeout", resp)
+	if resp == nil || resp.Content != "Hello" {
+		t.Fatalf("Stream() response = %#v, want partial response", resp)
 	}
 }
 

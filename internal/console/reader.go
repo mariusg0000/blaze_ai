@@ -5,6 +5,7 @@ package console
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -83,13 +84,13 @@ func (r *Reader) ReadLine() (string, error) {
 // WHAT: Opens /dev/tty and reads Y/N input byte by byte in raw mode.
 // WHY: stdin belongs to the readline lifecycle and may not be the controlling terminal.
 // RETURNS: submitted line, or an explicit terminal/input error.
-func (r *Reader) ReadApproval() (string, error) {
+func (r *Reader) ReadApproval(ctx context.Context) (string, error) {
 	tty, err := openApprovalTTY()
 	if err != nil {
 		return "", err
 	}
 	defer tty.Close()
-	return readTerminalLine(tty, true)
+	return readTerminalLine(ctx, tty, true)
 }
 
 // ReadEvent is no longer used by the main REPL, which is managed by readline.
@@ -139,14 +140,14 @@ func deleteBeforeCursor(buf []byte, pos int) ([]byte, int) {
 // WHY:   Password input is an auxiliary prompt and must not echo secrets.
 // PARAMS: prompt — label printed before the password.
 // RETURNS: password, or cancellation/input error.
-func (r *Reader) ReadHiddenInput(prompt string) (string, error) {
+func (r *Reader) ReadHiddenInput(ctx context.Context, prompt string) (string, error) {
 	fmt.Fprint(os.Stdout, prompt)
 	tty, err := openApprovalTTY()
 	if err != nil {
 		return "", err
 	}
 	defer tty.Close()
-	return readTerminalLine(tty, false)
+	return readTerminalLine(ctx, tty, false)
 }
 
 // openApprovalTTY opens the controlling terminal independently of stdin/readline.
@@ -159,7 +160,7 @@ func openApprovalTTY() (*os.File, error) {
 }
 
 // readTerminalLine reads one raw terminal line and optionally echoes printable input.
-func readTerminalLine(tty *os.File, echo bool) (string, error) {
+func readTerminalLine(ctx context.Context, tty *os.File, echo bool) (string, error) {
 	fd := int(tty.Fd())
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
@@ -169,14 +170,14 @@ func readTerminalLine(tty *os.File, echo bool) (string, error) {
 
 	var buf []byte
 	for {
-		var one [1]byte
-		if _, err := tty.Read(one[:]); err != nil {
+		one, err := readTerminalByte(ctx, tty)
+		if err != nil {
 			return "", err
 		}
-		switch one[0] {
-		case 0x03:
+		switch one {
+		case 0x03, 0x1b:
 			fmt.Fprint(os.Stdout, "\r\n")
-			return "", fmt.Errorf("cancelled")
+			return "", context.Canceled
 		case 0x0a, 0x0d:
 			fmt.Fprint(os.Stdout, "\r\n")
 			return string(buf), nil
@@ -192,10 +193,10 @@ func readTerminalLine(tty *os.File, echo bool) (string, error) {
 				}
 			}
 		default:
-			if one[0] >= 0x20 {
-				buf = append(buf, one[0])
+			if one >= 0x20 {
+				buf = append(buf, one)
 				if echo {
-					fmt.Fprintf(os.Stdout, "%c", one[0])
+					fmt.Fprintf(os.Stdout, "%c", one)
 				}
 			}
 		}

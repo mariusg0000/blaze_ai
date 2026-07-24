@@ -55,7 +55,9 @@ func (h childHandler) OnMaintenanceCall(name, args string) {
 func (h childHandler) OnMaintenanceResult(name, result string) {
 	h.emit(AgentActivity{Agent: h.agentID, Kind: "tool_result", Tool: name, Status: "ok", Text: result})
 }
-func (h childHandler) RequestSudoApproval(string) (bool, string) { return false, "" }
+func (h childHandler) RequestSudoApproval(context.Context, string) (bool, string, error) {
+	return false, "", nil
+}
 
 // activityForwarder wraps a Handler and signals an activity channel on each tool event.
 // WHAT: Bridges childHandler events to the inactivity timer reset channel.
@@ -80,8 +82,8 @@ func (f *activityForwarder) OnMaintenanceCall(name, args string) {
 func (f *activityForwarder) OnMaintenanceResult(name, result string) {
 	f.inner.OnMaintenanceResult(name, result)
 }
-func (f *activityForwarder) RequestSudoApproval(cmd string) (bool, string) {
-	return f.inner.RequestSudoApproval(cmd)
+func (f *activityForwarder) RequestSudoApproval(ctx context.Context, cmd string) (bool, string, error) {
+	return f.inner.RequestSudoApproval(ctx, cmd)
 }
 
 func (f *activityForwarder) OnToolCall(name, args string) {

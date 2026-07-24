@@ -3,6 +3,7 @@ package console
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -73,7 +74,9 @@ func (h *mockHandler) OnUsage(promptTokens, cachedTokens, uncachedTokens int) {}
 func (h *mockHandler) OnSystem(message string)                                {}
 func (h *mockHandler) OnMaintenanceCall(name string, args string)             {}
 func (h *mockHandler) OnMaintenanceResult(name string, result string)         {}
-func (h *mockHandler) RequestSudoApproval(command string) (bool, string)      { return false, "" }
+func (h *mockHandler) RequestSudoApproval(ctx context.Context, command string) (bool, string, error) {
+	return false, "", nil
+}
 
 // newConsole creates a Console with a buffer for output in TTY mode.
 func newConsole(agent *runtime.Agent) (*Console, *bytes.Buffer) {

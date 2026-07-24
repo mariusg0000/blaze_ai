@@ -60,7 +60,9 @@ func (h *mockHandler) OnMaintenanceCall(name string, args string) {
 func (h *mockHandler) OnMaintenanceResult(name string, result string) {
 	h.maintenanceResults = append(h.maintenanceResults, name+": "+result)
 }
-func (h *mockHandler) RequestSudoApproval(command string) (bool, string) { return false, "" }
+func (h *mockHandler) RequestSudoApproval(context.Context, string) (bool, string, error) {
+	return false, "", nil
+}
 
 // writeAgentFixtures creates a minimal interactive agent definition in the temp HOME's agents dir.
 func writeAgentFixtures(t *testing.T) {

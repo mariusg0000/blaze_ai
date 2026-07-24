@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"blazeai/internal/session"
 	"blazeai/internal/tools"
@@ -479,6 +480,9 @@ func mustJSON(value interface{}) json.RawMessage {
 }
 
 func parseChatGPTSSE(ctx context.Context, reader io.ReadCloser, onContent func(string), onReasoning func(string), onPhase func(StreamPhase), capture *session.RawCapture) (*Response, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
 	result := &Response{}
@@ -486,106 +490,135 @@ func parseChatGPTSSE(ctx context.Context, reader io.ReadCloser, onContent func(s
 	toolOrder := make([]string, 0)
 	seenFirstEvent := false
 	hiddenReasoningStarted := false
+	type scanResult struct {
+		line string
+		err  error
+	}
+	scanCh := make(chan scanResult, 1)
+	go func() {
+		for scanner.Scan() {
+			scanCh <- scanResult{line: scanner.Text()}
+		}
+		scanCh <- scanResult{err: scanner.Err()}
+	}()
+	idleTimer := time.NewTimer(providerStreamIdleTimeout)
+	defer idleTimer.Stop()
 	for {
-		if ctx.Err() != nil {
+		select {
+		case <-ctx.Done():
+			_ = reader.Close()
+			finalizeChatGPTToolCalls(result, toolCalls, toolOrder)
 			return result, ErrAborted
-		}
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				return nil, fmt.Errorf("error reading ChatGPT SSE stream: %w", err)
-			}
+		case <-idleTimer.C:
+			_ = reader.Close()
 			finalizeChatGPTToolCalls(result, toolCalls, toolOrder)
-			return result, nil
-		}
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
-		if data == "[DONE]" {
-			finalizeChatGPTToolCalls(result, toolCalls, toolOrder)
-			return result, nil
-		}
-		if capture != nil {
-			_ = capture.Append([]byte(data))
-		}
-		var event chatGPTStreamEvent
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			continue
-		}
-		if !seenFirstEvent {
-			seenFirstEvent = true
-			if onPhase != nil {
-				onPhase(PhaseStreaming)
+			return result, fmt.Errorf("provider stream idle timeout after %s with no events", providerStreamIdleTimeout)
+		case scan := <-scanCh:
+			if !idleTimer.Stop() {
+				select {
+				case <-idleTimer.C:
+				default:
+				}
 			}
-		}
-		switch event.Type {
-		case "response.output_text.delta":
-			result.Content += event.Delta
-			if onContent != nil {
-				onContent(event.Delta)
+			idleTimer.Reset(providerStreamIdleTimeout)
+			if scan.err != nil {
+				if ctx.Err() != nil {
+					finalizeChatGPTToolCalls(result, toolCalls, toolOrder)
+					return result, ErrAborted
+				}
+				finalizeChatGPTToolCalls(result, toolCalls, toolOrder)
+				return result, fmt.Errorf("error reading ChatGPT SSE stream: %w", scan.err)
 			}
-		case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
-			if onReasoning == nil && !hiddenReasoningStarted {
-				hiddenReasoningStarted = true
+			line := scan.line
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			data := strings.TrimPrefix(line, "data: ")
+			if data == "[DONE]" {
+				finalizeChatGPTToolCalls(result, toolCalls, toolOrder)
+				return result, nil
+			}
+			if capture != nil {
+				_ = capture.Append([]byte(data))
+			}
+			var event chatGPTStreamEvent
+			if err := json.Unmarshal([]byte(data), &event); err != nil {
+				continue
+			}
+			if !seenFirstEvent {
+				seenFirstEvent = true
 				if onPhase != nil {
-					onPhase(PhaseHiddenReasoning)
+					onPhase(PhaseStreaming)
 				}
 			}
-			result.Reasoning += event.Delta
-			if onReasoning != nil {
-				onReasoning(event.Delta)
-			}
-		case "response.output_item.added", "response.output_item.done":
-			if event.Item.Type == "reasoning" && event.Item.EncryptedContent != "" {
-				result.ReasoningEncrypted = event.Item.EncryptedContent
-			}
-			if event.Item.Type == "function_call" {
-				key := event.Item.ID
-				if key == "" {
-					key = event.Item.CallID
+			switch event.Type {
+			case "response.output_text.delta":
+				result.Content += event.Delta
+				if onContent != nil {
+					onContent(event.Delta)
 				}
-				call := toolCalls[key]
+			case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
+				if onReasoning == nil && !hiddenReasoningStarted {
+					hiddenReasoningStarted = true
+					if onPhase != nil {
+						onPhase(PhaseHiddenReasoning)
+					}
+				}
+				result.Reasoning += event.Delta
+				if onReasoning != nil {
+					onReasoning(event.Delta)
+				}
+			case "response.output_item.added", "response.output_item.done":
+				if event.Item.Type == "reasoning" && event.Item.EncryptedContent != "" {
+					result.ReasoningEncrypted = event.Item.EncryptedContent
+				}
+				if event.Item.Type == "function_call" {
+					key := event.Item.ID
+					if key == "" {
+						key = event.Item.CallID
+					}
+					call := toolCalls[key]
+					if call == nil {
+						call = &tools.ToolCall{ID: event.Item.CallID, Name: event.Item.Name}
+						toolCalls[key] = call
+						toolOrder = append(toolOrder, key)
+					}
+					if event.Item.CallID != "" {
+						call.ID = event.Item.CallID
+					}
+					if event.Item.Name != "" {
+						call.Name = event.Item.Name
+					}
+					if event.Item.Arguments != "" {
+						call.Arguments = json.RawMessage(event.Item.Arguments)
+					}
+				}
+			case "response.function_call_arguments.delta":
+				call := toolCalls[event.ItemID]
 				if call == nil {
-					call = &tools.ToolCall{ID: event.Item.CallID, Name: event.Item.Name}
-					toolCalls[key] = call
-					toolOrder = append(toolOrder, key)
+					call = &tools.ToolCall{}
+					toolCalls[event.ItemID] = call
+					toolOrder = append(toolOrder, event.ItemID)
 				}
-				if event.Item.CallID != "" {
-					call.ID = event.Item.CallID
+				call.Arguments = append(call.Arguments, []byte(event.Delta)...)
+			case "response.function_call_arguments.done":
+				call := toolCalls[event.ItemID]
+				if call != nil && event.Arguments != "" {
+					call.Arguments = json.RawMessage(event.Arguments)
 				}
-				if event.Item.Name != "" {
-					call.Name = event.Item.Name
+			case "response.completed":
+				if normalized, ok := usagepkg.Extract([]byte(data)); ok {
+					result.Usage = normalized
 				}
-				if event.Item.Arguments != "" {
-					call.Arguments = json.RawMessage(event.Item.Arguments)
+				finalizeChatGPTToolCalls(result, toolCalls, toolOrder)
+				return result, nil
+			case "response.failed", "error":
+				message := "ChatGPT response failed"
+				if event.Error != nil && event.Error.Message != "" {
+					message = event.Error.Message
 				}
+				return nil, fmt.Errorf("%s", message)
 			}
-		case "response.function_call_arguments.delta":
-			call := toolCalls[event.ItemID]
-			if call == nil {
-				call = &tools.ToolCall{}
-				toolCalls[event.ItemID] = call
-				toolOrder = append(toolOrder, event.ItemID)
-			}
-			call.Arguments = append(call.Arguments, []byte(event.Delta)...)
-		case "response.function_call_arguments.done":
-			call := toolCalls[event.ItemID]
-			if call != nil && event.Arguments != "" {
-				call.Arguments = json.RawMessage(event.Arguments)
-			}
-		case "response.completed":
-			if normalized, ok := usagepkg.Extract([]byte(data)); ok {
-				result.Usage = normalized
-			}
-			finalizeChatGPTToolCalls(result, toolCalls, toolOrder)
-			return result, nil
-		case "response.failed", "error":
-			message := "ChatGPT response failed"
-			if event.Error != nil && event.Error.Message != "" {
-				message = event.Error.Message
-			}
-			return nil, fmt.Errorf("%s", message)
 		}
 	}
 }

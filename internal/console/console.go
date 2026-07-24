@@ -1042,7 +1042,7 @@ func (c *Console) renderToolResult(name string, result string, showContext bool,
 // HOW:   Shows the command, asks Y/N, then reads hidden input.
 // PARAMS: command — the shell command that contains sudo.
 // RETURNS: approved — true if user confirmed; password — the sudo password, empty if declined.
-func (c *Console) RequestSudoApproval(command string) (approved bool, password string) {
+func (c *Console) RequestSudoApproval(ctx context.Context, command string) (approved bool, password string, err error) {
 	c.lockOutput()
 	defer c.unlockOutput()
 	c.ensureLineBreakBeforeBlock()
@@ -1053,22 +1053,26 @@ func (c *Console) RequestSudoApproval(command string) (approved bool, password s
 	// Use a dedicated raw reader after the main readline call has returned.
 	// Starting a second readline shell here causes duplicate prompts and cursor
 	// capability errors in terminal emulators.
-	line, err := c.Reader.ReadApproval()
+	line, err := c.Reader.ReadApproval(ctx)
 	if err != nil {
-		return false, ""
+		return false, "", err
 	}
 	line = strings.TrimSpace(line)
 	if line != "y" && line != "Y" {
 		fmt.Fprintln(c.Out)
-		return false, ""
+		return false, "", nil
 	}
 
-	pass, err := c.Reader.ReadHiddenInput("Sudo password: ")
-	if err != nil || pass == "" {
+	pass, err := c.Reader.ReadHiddenInput(ctx, "Sudo password: ")
+	if err != nil {
 		fmt.Fprintln(c.Out)
-		return false, ""
+		return false, "", err
 	}
-	return true, pass
+	if pass == "" {
+		fmt.Fprintln(c.Out)
+		return false, "", nil
+	}
+	return true, pass, nil
 }
 
 // parseToolResult extracts a display badge, useful content, and color from raw tool output.

@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,8 @@ const (
 )
 
 var providerStreamIdleTimeout = 180 * time.Second
+
+var providerStatusPattern = regexp.MustCompile(`status (\d+)`)
 
 // Usage aliases the shared normalized usage record for existing provider callers.
 type Usage = usagepkg.Usage
@@ -438,11 +441,13 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, toolDef
 // StreamWithPhase sends a chat completion request with streaming and reports high-level
 // provider phases for transports that want richer waiting indicators.
 func (c *Client) StreamWithPhase(ctx context.Context, messages []session.Message, toolDefs []tools.OpenAITool, onContent func(string), onReasoning func(string), onPhase func(StreamPhase)) (*Response, error) {
-	if c.AuthType == config.OAuthAuthType {
-		return c.streamChatGPT(ctx, messages, toolDefs, onContent, onReasoning, onPhase)
-	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if c.AuthType == config.OAuthAuthType {
+		return c.streamWithRetry(ctx, func() (*Response, error) {
+			return c.streamChatGPT(ctx, messages, toolDefs, onContent, onReasoning, onPhase)
+		})
 	}
 	var capture *session.RawCapture
 	if c.RawCaptureFolder != "" {
@@ -466,34 +471,84 @@ func (c *Client) StreamWithPhase(ctx context.Context, messages []session.Message
 		return nil, fmt.Errorf("cannot marshal request: %w", err)
 	}
 
-	url := strings.TrimRight(c.Endpoint, "/") + "/chat/completions"
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyData))
-	if err != nil {
-		return nil, fmt.Errorf("cannot create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.APIKey)
-	req.Header.Set("Accept", "text/event-stream")
-
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		if ctx.Err() != nil {
-			return &Response{}, ErrAborted
+	return c.streamWithRetry(ctx, func() (*Response, error) {
+		url := strings.TrimRight(c.Endpoint, "/") + "/chat/completions"
+		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyData))
+		if err != nil {
+			return nil, fmt.Errorf("cannot create request: %w", err)
 		}
-		return nil, fmt.Errorf("HTTP request failed: %w", err)
-	}
-	defer resp.Body.Close()
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+		req.Header.Set("Accept", "text/event-stream")
+		resp, err := c.HTTP.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return &Response{}, ErrAborted
+			}
+			return nil, fmt.Errorf("HTTP request failed: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			respBody, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(respBody))
+		}
+		if onPhase != nil {
+			onPhase(PhaseWaitingFirstEvent)
+		}
+		return parseSSEStream(ctx, resp.Body, onContent, onReasoning, onPhase, capture)
+	})
+}
 
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(respBody))
+// streamWithRetry retries only safe, data-free transient stream failures.
+func (c *Client) streamWithRetry(ctx context.Context, attempt func() (*Response, error)) (*Response, error) {
+	for n := 0; n < 3; n++ {
+		response, err := attempt()
+		if err == nil || responseHasSemanticData(response) || !retryableProviderError(err) || n == 2 {
+			return response, err
+		}
+		if err := waitProviderRetry(ctx, time.Duration(n+1)*time.Second); err != nil {
+			return &Response{}, err
+		}
 	}
+	return nil, nil
+}
 
-	if onPhase != nil {
-		onPhase(PhaseWaitingFirstEvent)
+func responseHasSemanticData(response *Response) bool {
+	return response != nil && (response.Content != "" || response.Reasoning != "" || len(response.ToolCalls) != 0)
+}
+
+func retryableProviderError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrAborted) {
+		return false
 	}
+	if strings.Contains(err.Error(), "provider stream idle timeout") {
+		return true
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Timeout() || netErr.Temporary()
+	}
+	match := providerStatusPattern.FindStringSubmatch(err.Error())
+	if len(match) == 2 {
+		var status int
+		_, _ = fmt.Sscan(match[1], &status)
+		return status == 408 || status == 429 || status >= 500
+	}
+	return false
+}
 
-	return parseSSEStream(ctx, resp.Body, onContent, onReasoning, onPhase, capture)
+func waitProviderRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ErrAborted
+	case <-timer.C:
+		return nil
+	}
 }
 
 // oauthAccessToken returns a valid ChatGPT access token, refreshing and persisting it when needed.
@@ -569,7 +624,8 @@ func parseSSEStream(ctx context.Context, reader io.ReadCloser, onContent func(st
 			return result, ErrAborted
 		case <-idleTimer.C:
 			_ = reader.Close()
-			return nil, fmt.Errorf("provider stream idle timeout after %s with no events", providerStreamIdleTimeout)
+			finalizeToolCalls(result, toolCallMap, toolCallOrder)
+			return result, fmt.Errorf("provider stream idle timeout after %s with no events", providerStreamIdleTimeout)
 		case scan := <-scanCh:
 			if !idleTimer.Stop() {
 				select {
@@ -583,7 +639,8 @@ func parseSSEStream(ctx context.Context, reader io.ReadCloser, onContent func(st
 					finalizeToolCalls(result, toolCallMap, toolCallOrder)
 					return result, ErrAborted
 				}
-				return nil, fmt.Errorf("error reading SSE stream: %w", scan.err)
+				finalizeToolCalls(result, toolCallMap, toolCallOrder)
+				return result, fmt.Errorf("error reading SSE stream: %w", scan.err)
 			}
 			if scan.line == "" {
 				continue
