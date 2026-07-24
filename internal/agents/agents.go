@@ -15,29 +15,35 @@ import (
 	"blazeai/internal/tools"
 )
 
-// Kind identifies the execution lifecycle of a Markdown sub-agent.
-type Kind string
+// Type identifies the execution role of a Markdown agent definition.
+type Type string
 
 const (
-	// KindOneShot identifies an ephemeral delegated child agent.
-	KindOneShot Kind = "one-shot"
+	// TypeInteractive identifies a main-session agent selectable by the user.
+	TypeInteractive Type = "interactive"
+	// TypeExecutor identifies an ephemeral delegated child agent.
+	TypeExecutor Type = "executor"
 )
 
 // Definition is the validated, executable description of one Markdown agent.
 type Definition struct {
-	Name         string
-	Description  string
-	Kind         Kind
-	Model        string
-	ToolNames    []string
-	Timeout      time.Duration
-	Instructions string
-	Path         string
+	Name          string
+	Description   string
+	Type          Type
+	Model         string
+	ToolNames     []string
+	Timeout       time.Duration
+	Instructions  string
+	Path          string
+	Directive     string
+	ExecutorNames []string
 }
 
 // Load discovers and validates only Markdown files directly inside dir.
 // WHAT: Loads all user-defined agents and rejects invalid definitions.
-// HOW: Sorts direct .md entries, parses front matter, then validates names, models, and tools.
+// HOW: Sorts direct .md entries, parses front matter, then validates names,
+//
+//	models, tools, and cross-definition executor references.
 func Load(dir string, registry *tools.Registry) ([]Definition, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -69,6 +75,10 @@ func Load(dir string, registry *tools.Registry) ([]Definition, error) {
 		}
 		result = append(result, definition)
 	}
+	// Validate cross-definition executor references for interactive definitions.
+	if err := validateExecutorReferences(result); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
@@ -89,6 +99,8 @@ func ParseFile(path string) (Definition, error) {
 }
 
 // parse parses front matter and retains the Markdown body as instructions.
+// WHAT: Converts front-matter text and Markdown body into a Definition.
+// HOW: Iterates key: value lines and YAML-style list items under tools/agents context.
 func parse(content string) (Definition, error) {
 	content = strings.ReplaceAll(content, "\r\n", "\n")
 	if !strings.HasPrefix(content, "---\n") {
@@ -109,14 +121,21 @@ func parse(content string) (Definition, error) {
 			continue
 		}
 		if strings.HasPrefix(line, "-") {
-			if currentList != "tools" {
-				return Definition{}, fmt.Errorf("line %d: list item outside tools", lineNumber+1)
+			if currentList != "tools" && currentList != "agents" {
+				return Definition{}, fmt.Errorf("line %d: list item outside tools or agents", lineNumber+1)
 			}
 			name := strings.TrimSpace(strings.TrimPrefix(line, "-"))
 			if name == "" {
-				return Definition{}, fmt.Errorf("line %d: empty tool name", lineNumber+1)
+				if currentList == "tools" {
+					return Definition{}, fmt.Errorf("line %d: empty tool name", lineNumber+1)
+				}
+				return Definition{}, fmt.Errorf("line %d: empty agent name", lineNumber+1)
 			}
-			definition.ToolNames = append(definition.ToolNames, name)
+			if currentList == "tools" {
+				definition.ToolNames = append(definition.ToolNames, name)
+			} else {
+				definition.ExecutorNames = append(definition.ExecutorNames, name)
+			}
 			continue
 		}
 		parts := strings.SplitN(line, ":", 2)
@@ -134,8 +153,10 @@ func parse(content string) (Definition, error) {
 			definition.Name = value
 		case "description":
 			definition.Description = value
+		case "type":
+			definition.Type = Type(value)
 		case "kind":
-			definition.Kind = Kind(value)
+			return Definition{}, fmt.Errorf("unknown metadata key %q; use type instead of kind", key)
 		case "model":
 			definition.Model = value
 		case "timeout":
@@ -144,6 +165,8 @@ func parse(content string) (Definition, error) {
 				return Definition{}, fmt.Errorf("line %d: invalid timeout %q: %w", lineNumber+1, value, err)
 			}
 			definition.Timeout = d
+		case "directive":
+			definition.Directive = value
 		case "tools":
 			currentList = "tools"
 			if value != "" {
@@ -155,6 +178,17 @@ func parse(content string) (Definition, error) {
 					definition.ToolNames = append(definition.ToolNames, item)
 				}
 			}
+		case "agents":
+			currentList = "agents"
+			if value != "" {
+				for _, item := range strings.Split(value, ",") {
+					item = strings.TrimSpace(item)
+					if item == "" {
+						return Definition{}, fmt.Errorf("empty agent name")
+					}
+					definition.ExecutorNames = append(definition.ExecutorNames, item)
+				}
+			}
 		default:
 			return Definition{}, fmt.Errorf("unknown metadata key %q", key)
 		}
@@ -164,6 +198,8 @@ func parse(content string) (Definition, error) {
 }
 
 // validateDefinition applies structural and registry-dependent validation.
+// WHAT: Checks name, description, type, model, tools, timeout, and tool registry.
+// HOW: Enforces type-specific rules for interactive and executor definitions.
 func validateDefinition(definition Definition, registry *tools.Registry) error {
 	if strings.TrimSpace(definition.Name) == "" {
 		return fmt.Errorf("name is required")
@@ -171,8 +207,11 @@ func validateDefinition(definition Definition, registry *tools.Registry) error {
 	if strings.TrimSpace(definition.Description) == "" {
 		return fmt.Errorf("description is required")
 	}
-	if definition.Kind != KindOneShot {
-		return fmt.Errorf("agents must use kind %q; interactive agents are not supported", KindOneShot)
+	if definition.Type == "" {
+		return fmt.Errorf("type is required")
+	}
+	if definition.Type != TypeInteractive && definition.Type != TypeExecutor {
+		return fmt.Errorf("unsupported type %q; must be %q or %q", definition.Type, TypeInteractive, TypeExecutor)
 	}
 	if definition.Model != "" {
 		if err := config.ValidateModelFormat(definition.Model); err != nil {
@@ -181,6 +220,19 @@ func validateDefinition(definition Definition, registry *tools.Registry) error {
 	}
 	if definition.Timeout != 0 && definition.Timeout <= 0 {
 		return fmt.Errorf("timeout must be positive")
+	}
+	// Type-specific model requirement.
+	if definition.Type == TypeInteractive && definition.Model == "" {
+		return fmt.Errorf("interactive agent requires a model")
+	}
+	// Executor definitions may not have directive or agents.
+	if definition.Type == TypeExecutor {
+		if definition.Directive != "" {
+			return fmt.Errorf("executor agent must not have a directive")
+		}
+		if len(definition.ExecutorNames) > 0 {
+			return fmt.Errorf("executor agent must not list agents")
+		}
 	}
 	if len(definition.ToolNames) == 0 {
 		return fmt.Errorf("tools allowlist is required and cannot be empty")
@@ -195,10 +247,44 @@ func validateDefinition(definition Definition, registry *tools.Registry) error {
 			continue
 		}
 		if name == "run_agent" {
-			return fmt.Errorf("one-shot agents cannot use run_agent")
+			if definition.Type == TypeExecutor {
+				return fmt.Errorf("executor agents cannot use run_agent")
+			}
+			continue
 		}
 		if registry == nil || registry.Get(name) == nil {
 			return fmt.Errorf("unknown tool %q", name)
+		}
+	}
+	return nil
+}
+
+// validateExecutorReferences checks that every executor name referenced by an
+// interactive definition resolves to a loaded TypeExecutor definition.
+// WHAT: Ensures no dangling executor references across all loaded definitions.
+// HOW: Builds a name→type index and checks each ExecutorNames entry.
+func validateExecutorReferences(defs []Definition) error {
+	typeIndex := make(map[string]Type, len(defs))
+	for _, d := range defs {
+		typeIndex[d.Name] = d.Type
+	}
+	for _, d := range defs {
+		if d.Type != TypeInteractive {
+			continue
+		}
+		seen := make(map[string]bool, len(d.ExecutorNames))
+		for _, ref := range d.ExecutorNames {
+			if seen[ref] {
+				return fmt.Errorf("agent %q: duplicate executor reference %q", d.Name, ref)
+			}
+			seen[ref] = true
+			t, ok := typeIndex[ref]
+			if !ok {
+				return fmt.Errorf("agent %q: unknown executor reference %q", d.Name, ref)
+			}
+			if t != TypeExecutor {
+				return fmt.Errorf("agent %q: executor reference %q is not an executor", d.Name, ref)
+			}
 		}
 	}
 	return nil

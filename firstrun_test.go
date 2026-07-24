@@ -134,6 +134,12 @@ func TestFirstRunFullFlow(t *testing.T) {
 	if _, err := os.Stat(configPath); err != nil {
 		t.Errorf("config.json not saved at %s: %v", configPath, err)
 	}
+
+	// Verify modes.json was NOT created.
+	modesPath := filepath.Join(tmpHome, "blazeai", "config", "modes.json")
+	if _, err := os.Stat(modesPath); !os.IsNotExist(err) {
+		t.Errorf("modes.json should not exist after first run, but found at %s", modesPath)
+	}
 }
 
 // TestFirstRunNoModels verifies error when provider returns no models.
@@ -231,5 +237,41 @@ func TestPlatformOS(t *testing.T) {
 	}
 	if osType == "" {
 		t.Error("osType is empty")
+	}
+}
+
+// TestFirstRunDoesNotCreateLegacyModes verifies that first-run setup does not
+// write config/modes.json. Legacy active-mode creation has been removed.
+//
+// WHAT: First-run must not create modes.json.
+// HOW: Runs firstRun with a mock endpoint and asserts modes.json does not exist.
+func TestFirstRunDoesNotCreateLegacyModes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			fmt.Fprint(w, `{"data":[{"id":"gpt-4"}]}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	originalProviders := knownProviders
+	knownProviders = []config.Provider{
+		{Name: "testprov", Endpoint: server.URL},
+	}
+	defer func() { knownProviders = originalProviders }()
+
+	tmpHome := t.TempDir()
+	overrideAppHome(t, tmpHome)
+
+	var out bytes.Buffer
+	_, err := firstRun(&out, newBufReader("1\ntest-key\n1\nn\nn\nn\n"))
+	if err != nil {
+		t.Fatalf("firstRun() error: %v", err)
+	}
+
+	modesPath := filepath.Join(tmpHome, "blazeai", "config", "modes.json")
+	if _, statErr := os.Stat(modesPath); !os.IsNotExist(statErr) {
+		t.Errorf("modes.json must not be created by first run, but found at %s", modesPath)
 	}
 }

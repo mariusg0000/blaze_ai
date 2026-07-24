@@ -16,6 +16,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"blazeai/internal/agents"
 	"blazeai/internal/config"
 	"blazeai/internal/platform"
 	"blazeai/internal/session"
@@ -61,13 +62,39 @@ func (h *mockHandler) OnMaintenanceResult(name string, result string) {
 }
 func (h *mockHandler) RequestSudoApproval(command string) (bool, string) { return false, "" }
 
+// writeAgentFixtures creates a minimal interactive agent definition in the temp HOME's agents dir.
+func writeAgentFixtures(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	agentsHome := filepath.Join(home, "blazeai")
+	agentsDir := filepath.Join(agentsHome, "agents")
+	if err := os.MkdirAll(agentsDir, 0755); err != nil {
+		t.Fatalf("cannot create agents dir: %v", err)
+	}
+	def := "---\nname: default\ndescription: Test agent\ntype: interactive\nmodel: test/test-model\ntools:\n  - shell\n  - read_file\n  - write_file\n  - replace_block\n  - ask_a_friend\n  - analyze_image\n  - load_skill\n  - task_write\n  - task_read\n---\nDefault test agent instructions.\n"
+	if err := os.WriteFile(filepath.Join(agentsDir, "default.md"), []byte(def), 0600); err != nil {
+		t.Fatalf("cannot write agent definition: %v", err)
+	}
+}
+
 // setupAgent creates a fully wired Agent with a mock SSE server.
 func setupAgent(t *testing.T, handler http.HandlerFunc) (*Agent, *mockHandler, *httptest.Server) {
 	t.Helper()
 	server := httptest.NewServer(handler)
 
 	// Override HOME so config.Save() writes to a temp directory.
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Create interactive agent definition in the agent dir.
+	agentsHome := filepath.Join(home, "blazeai")
+	agentsDir := filepath.Join(agentsHome, "agents")
+	os.MkdirAll(agentsDir, 0755)
+	def := "---\nname: default\ndescription: Test agent\ntype: interactive\nmodel: test/test-model\ntools:\n  - shell\n  - read_file\n  - write_file\n  - replace_block\n  - ask_a_friend\n  - analyze_image\n  - load_skill\n  - task_write\n  - task_read\n---\nDefault test agent instructions.\n"
+	if err := os.WriteFile(filepath.Join(agentsDir, "default.md"), []byte(def), 0600); err != nil {
+		t.Fatalf("cannot write agent definition: %v", err)
+	}
 
 	cfg := &config.Config{
 		Providers: []config.Provider{
@@ -159,7 +186,16 @@ func TestRunTurnDebugPromptGate(t *testing.T) {
 			defer server.Close()
 			agent.Config.DebugPrompt = tc.debug
 			if tc.debug {
-				agent.CurrentMode.Directive = "use concise mode"
+				// Set a directive on the current agent definition for testing.
+				directive := "use concise mode"
+				agent.CurrentAgent = &agents.Definition{
+					Name:         "default",
+					Type:         agents.TypeInteractive,
+					Model:        agent.ModelID,
+					Directive:    directive,
+					ToolNames:    []string{"shell"},
+					Instructions: "test instructions",
+				}
 			}
 			if err := agent.RunTurn(context.Background(), "debug gate"); err != nil {
 				t.Fatalf("RunTurn() error: %v", err)
@@ -182,14 +218,14 @@ func TestRunTurnDebugPromptGate(t *testing.T) {
 				t.Fatalf("prompt.json does not contain built user message: %q", data)
 			}
 			if !strings.Contains(string(data), "use concise mode") {
-				t.Fatalf("prompt.json does not contain mode directive: %q", data)
+				t.Fatalf("prompt.json does not contain agent directive: %q", data)
 			}
 			providerData, err := json.Marshal(providerMessages)
 			if err != nil {
 				t.Fatalf("marshal provider messages: %v", err)
 			}
 			if !strings.Contains(string(providerData), "use concise mode") {
-				t.Fatalf("provider-bound messages do not contain mode directive: %s", providerData)
+				t.Fatalf("provider-bound messages do not contain agent directive: %s", providerData)
 			}
 		})
 	}
@@ -416,29 +452,12 @@ func TestSetModelLocal(t *testing.T) {
 	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
 	defer server.Close()
 
-	agent.Modes.Modes = []config.Mode{{Name: "default", Model: "test/test-model"}}
-	agent.Modes.LastMode = "default"
-	agent.CurrentMode = &agent.Modes.Modes[0]
-	if err := agent.Modes.Save(); err != nil {
-		t.Fatalf("Save() modes failed: %v", err)
-	}
-
 	err := agent.SetModelLocal("test/other-model")
 	if err != nil {
 		t.Fatalf("SetModelLocal() error: %v", err)
 	}
 	if agent.ModelID != "test/other-model" {
 		t.Errorf("ModelID = %q, want 'test/other-model'", agent.ModelID)
-	}
-	if agent.CurrentMode.Model != "test/test-model" {
-		t.Errorf("CurrentMode.Model = %q, want unchanged 'test/test-model'", agent.CurrentMode.Model)
-	}
-	loaded, err := config.LoadModes("test/test-model")
-	if err != nil {
-		t.Fatalf("LoadModes() error: %v", err)
-	}
-	if loaded.Modes[0].Model != "test/test-model" {
-		t.Errorf("persisted mode model = %q, want unchanged 'test/test-model'", loaded.Modes[0].Model)
 	}
 	if agent.Compactor == nil || agent.Compactor.Provider != agent.Provider {
 		t.Fatal("compactor provider not synced after local model switch")
@@ -536,7 +555,10 @@ func TestNewAgent(t *testing.T) {
 
 // TestNewAgentBadModel verifies error when model ID is invalid.
 func TestNewAgentBadModel(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	home := isolatedHome(t)
+
+	// Create an interactive definition with the same bad model as the role default.
+	writeAgentFile(t, home, "default.md", "---\nname: default\ndescription: Test\ntype: interactive\nmodel: ghost/test-model\ntools:\n  - shell\n---\n")
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer server.Close()
@@ -556,9 +578,38 @@ func TestNewAgentBadModel(t *testing.T) {
 	}
 }
 
-// TestNewAgentWithMode verifies CurrentMode initialization from LastMode.
-func TestNewAgentWithMode(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+// isolatedHome sets HOME to a temp dir and returns it.
+// Use the returned path for all agent/config file creation.
+func isolatedHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	return home
+}
+
+// writeAgentFile writes an agent definition file under the given home dir.
+func writeAgentFile(t *testing.T, home, filename, content string) {
+	t.Helper()
+	agentsDir := filepath.Join(home, "blazeai", "agents")
+	os.MkdirAll(agentsDir, 0755)
+	if err := os.WriteFile(filepath.Join(agentsDir, filename), []byte(content), 0600); err != nil {
+		t.Fatalf("cannot write agent definition %s: %v", filename, err)
+	}
+}
+
+// writeAgentsConfig writes an agents.json config file under the given home dir.
+func writeAgentsConfig(t *testing.T, home, content string) {
+	t.Helper()
+	configDir := filepath.Join(home, "blazeai", "config")
+	os.MkdirAll(configDir, 0755)
+	if err := os.WriteFile(filepath.Join(configDir, "agents.json"), []byte(content), 0600); err != nil {
+		t.Fatalf("cannot write agents.json: %v", err)
+	}
+}
+
+// TestNewAgentLoadsPersistedInteractiveAgent verifies CurrentAgent initialization from LastAgent.
+func TestNewAgentLoadsPersistedInteractiveAgent(t *testing.T) {
+	home := isolatedHome(t)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer server.Close()
@@ -573,17 +624,8 @@ func TestNewAgentWithMode(t *testing.T) {
 		StripReasoning: config.DefaultStripReasoning(),
 	}
 
-	// Write modes to modes.json so NewAgent picks them up.
-	modes := &config.ModesConfig{
-		Modes: []config.Mode{
-			{Name: "default", Model: "test/model-a"},
-			{Name: "planning", Model: "test/model-b", Directive: "read-only"},
-		},
-		LastMode: "planning",
-	}
-	if err := modes.Save(); err != nil {
-		t.Fatalf("Save() modes failed: %v", err)
-	}
+	writeAgentFile(t, home, "planner.md", "---\nname: planner\ndescription: Plan tasks\ntype: interactive\nmodel: test/model-b\ntools:\n  - shell\n---\nPlan instructions.\n")
+	writeAgentsConfig(t, home, `{"agents":[{"name":"planner","model":"test/model-b"}],"last_agent":"planner"}`)
 
 	dir := t.TempDir()
 	sess, _ := session.CreateInDir(dir)
@@ -595,20 +637,21 @@ func TestNewAgentWithMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
-	if agent.CurrentMode == nil {
-		t.Fatal("CurrentMode is nil")
+	if agent.CurrentAgent == nil {
+		t.Fatal("CurrentAgent is nil")
 	}
-	if agent.CurrentMode.Name != "planning" {
-		t.Errorf("CurrentMode.Name = %q, want 'planning'", agent.CurrentMode.Name)
+	if agent.CurrentAgent.Name != "planner" {
+		t.Errorf("CurrentAgent.Name = %q, want 'planner'", agent.CurrentAgent.Name)
 	}
 	if agent.ModelID != "test/model-b" {
 		t.Errorf("ModelID = %q, want 'test/model-b'", agent.ModelID)
 	}
 }
 
-// TestNewAgentWithModeFallbackToFirstMode verifies fallback when LastMode is empty.
-func TestNewAgentWithModeFallbackToFirstMode(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+// TestNewAgentInitializesAgentStateFromDefinitions verifies state initialization
+// when no persisted state exists but interactive definitions are loaded.
+func TestNewAgentInitializesAgentStateFromDefinitions(t *testing.T) {
+	home := isolatedHome(t)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer server.Close()
@@ -623,14 +666,11 @@ func TestNewAgentWithModeFallbackToFirstMode(t *testing.T) {
 		StripReasoning: config.DefaultStripReasoning(),
 	}
 
-	modes := &config.ModesConfig{
-		Modes: []config.Mode{
-			{Name: "default", Model: "test/model-a"},
-		},
-	}
-	if err := modes.Save(); err != nil {
-		t.Fatalf("Save() modes failed: %v", err)
-	}
+	// Create an interactive agent definition.
+	agentsHome := filepath.Join(home, "blazeai")
+	agentsDir := filepath.Join(agentsHome, "agents")
+	os.MkdirAll(agentsDir, 0755)
+	os.WriteFile(filepath.Join(agentsDir, "default.md"), []byte("---\nname: default\ndescription: Default agent\ntype: interactive\nmodel: test/model-a\ntools:\n  - shell\n---\nDefault instructions.\n"), 0600)
 
 	dir := t.TempDir()
 	sess, _ := session.CreateInDir(dir)
@@ -642,103 +682,216 @@ func TestNewAgentWithModeFallbackToFirstMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
-	if agent.CurrentMode == nil {
-		t.Fatal("CurrentMode is nil, want first mode")
+	if agent.CurrentAgent == nil {
+		t.Fatal("CurrentAgent is nil")
 	}
-	if agent.CurrentMode.Name != "default" {
-		t.Errorf("CurrentMode.Name = %q, want 'default'", agent.CurrentMode.Name)
+	if agent.CurrentAgent.Name != "default" {
+		t.Errorf("CurrentAgent.Name = %q, want 'default'", agent.CurrentAgent.Name)
 	}
 }
 
-// TestSetMode verifies mode switching and provider recreation.
-func TestSetMode(t *testing.T) {
-	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+// TestSetAgentPersistsLastAgentAndRefreshesCapabilities verifies agent switching
+// updates CurrentAgent, persists LastAgent, and refreshes capabilities.
+func TestSetAgentPersistsLastAgentAndRefreshesCapabilities(t *testing.T) {
+	home := isolatedHome(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer server.Close()
 
-	agent.Modes.Modes = []config.Mode{
-		{Name: "default", Model: "test/test-model"},
-		{Name: "planning", Model: "test/test-model", Directive: "read-only"},
+	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
+		},
+		Roles:          config.Roles{Default: "test/test-model"},
+		FavoriteModels: []string{"test/test-model"},
+		Compaction:     config.DefaultCompaction(),
+		StripReasoning: config.DefaultStripReasoning(),
 	}
-	agent.Modes.LastMode = "default"
-	agent.CurrentMode = &agent.Modes.Modes[0]
-	agent.Modes.Save()
 
-	err := agent.SetMode("planning")
+	// Create interactive agent definitions.
+	agentsHome := filepath.Join(home, "blazeai")
+	agentsDir := filepath.Join(agentsHome, "agents")
+	os.MkdirAll(agentsDir, 0755)
+	os.WriteFile(filepath.Join(agentsDir, "default.md"), []byte("---\nname: default\ndescription: Default\ntype: interactive\nmodel: test/test-model\ntools:\n  - shell\n---\n"), 0600)
+	os.WriteFile(filepath.Join(agentsDir, "planning.md"), []byte("---\nname: planning\ndescription: Planning\ntype: interactive\nmodel: test/test-model\ndirective: read-only\ntools:\n  - shell\n---\n"), 0600)
+
+	dir := t.TempDir()
+	sess, _ := session.CreateInDir(dir)
+	promptsDir := filepath.Join(dir, "prompts")
+	os.MkdirAll(promptsDir, 0755)
+	writePromptFixtures(t, promptsDir)
+
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), fstest.MapFS{}, dir, &mockHandler{}, "console")
 	if err != nil {
-		t.Fatalf("SetMode() error: %v", err)
+		t.Fatalf("NewAgent() error: %v", err)
 	}
-	if agent.CurrentMode.Name != "planning" {
-		t.Errorf("CurrentMode.Name = %q, want 'planning'", agent.CurrentMode.Name)
+	if agent.CurrentAgent == nil || agent.CurrentAgent.Name != "default" {
+		t.Fatalf("CurrentAgent = %v, want default", agent.CurrentAgent)
 	}
-	if agent.Modes.LastMode != "planning" {
-		t.Errorf("LastMode = %q, want 'planning'", agent.Modes.LastMode)
-	}
-	loaded, err := config.LoadModes("test/test-model")
+
+	err = agent.SetAgent("planning")
 	if err != nil {
-		t.Fatalf("LoadModes() error: %v", err)
+		t.Fatalf("SetAgent() error: %v", err)
 	}
-	if loaded.LastMode != "planning" {
-		t.Errorf("persisted LastMode = %q, want 'planning'", loaded.LastMode)
+	if agent.CurrentAgent.Name != "planning" {
+		t.Errorf("CurrentAgent.Name = %q, want 'planning'", agent.CurrentAgent.Name)
+	}
+	if agent.AgentStates.LastAgent != "planning" {
+		t.Errorf("LastAgent = %q, want 'planning'", agent.AgentStates.LastAgent)
 	}
 	if agent.Compactor == nil || agent.Compactor.Provider != agent.Provider {
-		t.Fatal("compactor provider not synced after mode switch")
+		t.Fatal("compactor provider not synced after agent switch")
 	}
 }
 
-// TestSetModeNotFound verifies error for non-existent mode.
-func TestSetModeNotFound(t *testing.T) {
-	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+// TestSetAgentRejectsExecutor verifies SetAgent rejects executor type names.
+func TestSetAgentRejectsExecutor(t *testing.T) {
+	home := isolatedHome(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer server.Close()
 
-	agent.Modes.Modes = []config.Mode{
-		{Name: "default", Model: "test/test-model"},
+	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
+		},
+		Roles:          config.Roles{Default: "test/test-model"},
+		FavoriteModels: []string{"test/test-model"},
+		Compaction:     config.DefaultCompaction(),
+		StripReasoning: config.DefaultStripReasoning(),
 	}
 
-	err := agent.SetMode("nonexistent")
+	// Create an interactive + executor definition.
+	agentsHome := filepath.Join(home, "blazeai")
+	agentsDir := filepath.Join(agentsHome, "agents")
+	os.MkdirAll(agentsDir, 0755)
+	os.WriteFile(filepath.Join(agentsDir, "default.md"), []byte("---\nname: default\ndescription: Default\ntype: interactive\nmodel: test/test-model\ntools:\n  - shell\n---\n"), 0600)
+	os.WriteFile(filepath.Join(agentsDir, "coder.md"), []byte("---\nname: coder\ndescription: Code executor\ntype: executor\ntools:\n  - shell\n---\n"), 0600)
+
+	dir := t.TempDir()
+	sess, _ := session.CreateInDir(dir)
+	promptsDir := filepath.Join(dir, "prompts")
+	os.MkdirAll(promptsDir, 0755)
+	writePromptFixtures(t, promptsDir)
+
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), fstest.MapFS{}, dir, &mockHandler{}, "console")
+	if err != nil {
+		t.Fatalf("NewAgent() error: %v", err)
+	}
+
+	err = agent.SetAgent("coder")
 	if err == nil {
-		t.Fatal("SetMode() expected error for non-existent mode, got nil")
+		t.Fatal("SetAgent() expected error for executor name, got nil")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("SetAgent() error = %v, want 'not found' for executor", err)
 	}
 }
 
-// TestNextMode verifies cyclic mode switching.
-func TestNextMode(t *testing.T) {
-	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+// TestNextAgentCyclesInteractiveDefinitions verifies cyclic agent switching.
+func TestNextAgentCyclesInteractiveDefinitions(t *testing.T) {
+	home := isolatedHome(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer server.Close()
 
-	agent.Modes.Modes = []config.Mode{
-		{Name: "default", Model: "test/test-model"},
-		{Name: "planning", Model: "test/test-model", Directive: "plan"},
-		{Name: "quick", Model: "test/test-model", Directive: "fast"},
-	}
-	agent.Modes.LastMode = "default"
-	agent.CurrentMode = &agent.Modes.Modes[0]
-	agent.Modes.Save()
-
-	// Cycle: default -> planning
-	mode, err := agent.NextMode()
-	if err != nil {
-		t.Fatalf("NextMode() error: %v", err)
-	}
-	if mode.Name != "planning" {
-		t.Errorf("NextMode() = %q, want 'planning'", mode.Name)
+	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
+		},
+		Roles:          config.Roles{Default: "test/test-model"},
+		FavoriteModels: []string{"test/test-model"},
+		Compaction:     config.DefaultCompaction(),
+		StripReasoning: config.DefaultStripReasoning(),
 	}
 
-	// Cycle: planning -> quick
-	mode, err = agent.NextMode()
+	// Create three interactive agent definitions.
+	agentsHome := filepath.Join(home, "blazeai")
+	agentsDir := filepath.Join(agentsHome, "agents")
+	os.MkdirAll(agentsDir, 0755)
+	os.WriteFile(filepath.Join(agentsDir, "alpha.md"), []byte("---\nname: alpha\ndescription: Alpha\ntype: interactive\nmodel: test/test-model\ntools:\n  - shell\n---\n"), 0600)
+	os.WriteFile(filepath.Join(agentsDir, "beta.md"), []byte("---\nname: beta\ndescription: Beta\ntype: interactive\nmodel: test/test-model\ntools:\n  - shell\n---\n"), 0600)
+	os.WriteFile(filepath.Join(agentsDir, "gamma.md"), []byte("---\nname: gamma\ndescription: Gamma\ntype: interactive\nmodel: test/test-model\ntools:\n  - shell\n---\n"), 0600)
+
+	dir := t.TempDir()
+	sess, _ := session.CreateInDir(dir)
+	promptsDir := filepath.Join(dir, "prompts")
+	os.MkdirAll(promptsDir, 0755)
+	writePromptFixtures(t, promptsDir)
+
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), fstest.MapFS{}, dir, &mockHandler{}, "console")
 	if err != nil {
-		t.Fatalf("NextMode() error: %v", err)
-	}
-	if mode.Name != "quick" {
-		t.Errorf("NextMode() = %q, want 'quick'", mode.Name)
+		t.Fatalf("NewAgent() error: %v", err)
 	}
 
-	// Cycle: quick -> default (wrap around)
-	mode, err = agent.NextMode()
+	// Cycle: alpha -> beta
+	def, err := agent.NextAgent()
 	if err != nil {
-		t.Fatalf("NextMode() error: %v", err)
+		t.Fatalf("NextAgent() error: %v", err)
 	}
-	if mode.Name != "default" {
-		t.Errorf("NextMode() = %q, want 'default'", mode.Name)
+	if def.Name != "beta" {
+		t.Errorf("NextAgent() = %q, want 'beta'", def.Name)
+	}
+
+	// Cycle: beta -> gamma
+	def, err = agent.NextAgent()
+	if err != nil {
+		t.Fatalf("NextAgent() error: %v", err)
+	}
+	if def.Name != "gamma" {
+		t.Errorf("NextAgent() = %q, want 'gamma'", def.Name)
+	}
+
+	// Cycle: gamma -> alpha (wrap around)
+	def, err = agent.NextAgent()
+	if err != nil {
+		t.Fatalf("NextAgent() error: %v", err)
+	}
+	if def.Name != "alpha" {
+		t.Errorf("NextAgent() = %q, want 'alpha'", def.Name)
+	}
+}
+
+// TestSetModelPersistsPerInteractiveAgent verifies that SetModel updates the
+// persisted model for the current interactive agent in agents.json.
+func TestSetModelPersistsPerInteractiveAgent(t *testing.T) {
+	home := isolatedHome(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
+		},
+		Roles:          config.Roles{Default: "test/model-a"},
+		FavoriteModels: []string{"test/model-a"},
+		Compaction:     config.DefaultCompaction(),
+		StripReasoning: config.DefaultStripReasoning(),
+	}
+
+	agentsHome := filepath.Join(home, "blazeai")
+	agentsDir := filepath.Join(agentsHome, "agents")
+	os.MkdirAll(agentsDir, 0755)
+	os.WriteFile(filepath.Join(agentsDir, "default.md"), []byte("---\nname: default\ndescription: Default\ntype: interactive\nmodel: test/model-a\ntools:\n  - shell\n---\n"), 0600)
+
+	dir := t.TempDir()
+	sess, _ := session.CreateInDir(dir)
+	promptsDir := filepath.Join(dir, "prompts")
+	os.MkdirAll(promptsDir, 0755)
+	writePromptFixtures(t, promptsDir)
+
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), fstest.MapFS{}, dir, &mockHandler{}, "console")
+	if err != nil {
+		t.Fatalf("NewAgent() error: %v", err)
+	}
+
+	err = agent.SetModel("test/other-model")
+	if err != nil {
+		t.Fatalf("SetModel() error: %v", err)
+	}
+	if agent.ModelID != "test/other-model" {
+		t.Errorf("ModelID = %q, want 'test/other-model'", agent.ModelID)
 	}
 }
 
@@ -828,42 +981,9 @@ func TestNextFavoriteModelNotInList(t *testing.T) {
 	}
 }
 
-// TestSetModelUpdatesMode verifies that SetModel updates CurrentMode.Model.
-func TestSetModelUpdatesMode(t *testing.T) {
-	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
-	defer server.Close()
-
-	agent.Modes.Modes = []config.Mode{
-		{Name: "default", Model: "test/test-model"},
-	}
-	agent.Modes.LastMode = "default"
-	if err := agent.Modes.Save(); err != nil {
-		t.Fatalf("Save() modes failed: %v", err)
-	}
-	agent.CurrentMode = &agent.Modes.Modes[0]
-
-	err := agent.SetModel("test/other-model")
-	if err != nil {
-		t.Fatalf("SetModel() error: %v", err)
-	}
-	if agent.CurrentMode.Model != "test/other-model" {
-		t.Errorf("CurrentMode.Model = %q, want 'test/other-model'", agent.CurrentMode.Model)
-	}
-	loaded, err := config.LoadModes("test/test-model")
-	if err != nil {
-		t.Fatalf("LoadModes() error: %v", err)
-	}
-	if loaded.Modes[0].Model != "test/other-model" {
-		t.Errorf("persisted mode model = %q, want 'test/other-model'", loaded.Modes[0].Model)
-	}
-	if loaded.LastMode != "default" {
-		t.Errorf("persisted LastMode = %q, want 'default'", loaded.LastMode)
-	}
-}
-
-// TestNewAgentIgnoresLastModelWhenLastModeExists verifies that the active mode wins over legacy last_model.
-func TestNewAgentIgnoresLastModelWhenLastModeExists(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+// TestNewAgentIgnoresLastModelWhenLastAgentExists verifies that the active agent wins over legacy last_model.
+func TestNewAgentIgnoresLastModelWhenLastAgentExists(t *testing.T) {
+	home := isolatedHome(t)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer server.Close()
@@ -876,16 +996,18 @@ func TestNewAgentIgnoresLastModelWhenLastModeExists(t *testing.T) {
 		StripReasoning: config.DefaultStripReasoning(),
 		LastModel:      "test/model-c",
 	}
-	modes := &config.ModesConfig{
-		Modes: []config.Mode{
-			{Name: "default", Model: "test/model-a"},
-			{Name: "planning", Model: "test/model-b"},
-		},
-		LastMode: "planning",
-	}
-	if err := modes.Save(); err != nil {
-		t.Fatalf("Save() modes failed: %v", err)
-	}
+
+	// Create interactive definitions.
+	agentsHome := filepath.Join(home, "blazeai")
+	agentsDir := filepath.Join(agentsHome, "agents")
+	os.MkdirAll(agentsDir, 0755)
+	os.WriteFile(filepath.Join(agentsDir, "default.md"), []byte("---\nname: default\ndescription: Default\ntype: interactive\nmodel: test/model-a\ntools:\n  - shell\n---\n"), 0600)
+	os.WriteFile(filepath.Join(agentsDir, "planning.md"), []byte("---\nname: planning\ndescription: Planning\ntype: interactive\nmodel: test/model-b\ntools:\n  - shell\n---\n"), 0600)
+
+	// Persist agent state selecting "planning".
+	configDir := filepath.Join(agentsHome, "config")
+	os.MkdirAll(configDir, 0755)
+	os.WriteFile(filepath.Join(configDir, "agents.json"), []byte(`{"agents":[{"name":"default","model":"test/model-a"},{"name":"planning","model":"test/model-b"}],"last_agent":"planning"}`), 0600)
 
 	dir := t.TempDir()
 	sess, _ := session.CreateInDir(dir)
@@ -897,8 +1019,8 @@ func TestNewAgentIgnoresLastModelWhenLastModeExists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
-	if agent.CurrentMode == nil || agent.CurrentMode.Name != "planning" {
-		t.Fatalf("CurrentMode = %#v, want planning", agent.CurrentMode)
+	if agent.CurrentAgent == nil || agent.CurrentAgent.Name != "planning" {
+		t.Fatalf("CurrentAgent = %v, want planning", agent.CurrentAgent)
 	}
 	if agent.ModelID != "test/model-b" {
 		t.Errorf("ModelID = %q, want 'test/model-b'", agent.ModelID)
@@ -922,8 +1044,8 @@ func TestInjectDirective(t *testing.T) {
 	if !ok {
 		t.Fatal("result[1].Content is not string")
 	}
-	if !strings.Contains(last, "[MODE DIRECTIVE]") {
-		t.Error("result[1].Content missing [MODE DIRECTIVE]")
+	if !strings.Contains(last, "[AGENT DIRECTIVE]") {
+		t.Error("result[1].Content missing [AGENT DIRECTIVE]")
 	}
 	if !strings.Contains(last, "be quick") {
 		t.Error("result[1].Content missing directive text")
@@ -954,7 +1076,7 @@ func TestInjectDirectiveSkipsToolTail(t *testing.T) {
 	if !ok {
 		t.Fatal("result[1].Content is not string")
 	}
-	if !strings.Contains(userContent, "[MODE DIRECTIVE]") || !strings.Contains(userContent, "be quick") {
+	if !strings.Contains(userContent, "[AGENT DIRECTIVE]") || !strings.Contains(userContent, "be quick") {
 		t.Fatalf("user content missing directive: %q", userContent)
 	}
 }
@@ -967,8 +1089,86 @@ func TestInjectDirectiveEmpty(t *testing.T) {
 	}
 }
 
-// TestNewAgentAutoCreatesDefaultMode verifies that NewAgent creates a default mode when modes are empty.
-func TestNewAgentAutoCreatesDefaultMode(t *testing.T) {
+// TestRunTurnInjectsInteractiveDirectiveEphemerally verifies that the agent directive
+// is injected into the provider-bound user message but never persisted to the session.
+func TestRunTurnInjectsInteractiveDirectiveEphemerally(t *testing.T) {
+	var providerMessages []map[string]interface{}
+	response := func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Messages []map[string]interface{} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode provider request: %v", err)
+		}
+		providerMessages = payload.Messages
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"ok"}}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "data: [DONE]")
+		fmt.Fprintln(w)
+	}
+
+	home := isolatedHome(t)
+
+	server := httptest.NewServer(http.HandlerFunc(response))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
+		},
+		Roles:          config.Roles{Default: "test/test-model"},
+		FavoriteModels: []string{"test/test-model"},
+		Compaction:     config.DefaultCompaction(),
+		StripReasoning: config.DefaultStripReasoning(),
+	}
+
+	// Create interactive definition with a directive.
+	agentsHome := filepath.Join(home, "blazeai")
+	agentsDir := filepath.Join(agentsHome, "agents")
+	os.MkdirAll(agentsDir, 0755)
+	os.WriteFile(filepath.Join(agentsDir, "default.md"), []byte("---\nname: default\ndescription: Default\ntype: interactive\nmodel: test/test-model\ndirective: Be concise always.\ntools:\n  - shell\n---\n"), 0600)
+
+	dir := t.TempDir()
+	sess, _ := session.CreateInDir(dir)
+	promptsDir := filepath.Join(dir, "prompts")
+	os.MkdirAll(promptsDir, 0755)
+	writePromptFixtures(t, promptsDir)
+
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), fstest.MapFS{}, dir, &mockHandler{}, "console")
+	if err != nil {
+		t.Fatalf("NewAgent() error: %v", err)
+	}
+
+	err = agent.RunTurn(context.Background(), "hello")
+	if err != nil {
+		t.Fatalf("RunTurn() error: %v", err)
+	}
+
+	// Session must NOT contain the directive — it is ephemeral.
+	for _, msg := range agent.Session.Messages {
+		content, _ := msg.Content.(string)
+		if strings.Contains(content, "[AGENT DIRECTIVE]") {
+			t.Fatalf("session message contains ephemeral directive: role=%q content=%q", msg.Role, content)
+		}
+	}
+
+	// Provider-bound messages must contain the directive.
+	providerData, err := json.Marshal(providerMessages)
+	if err != nil {
+		t.Fatalf("marshal provider messages: %v", err)
+	}
+	if !strings.Contains(string(providerData), "[AGENT DIRECTIVE]") {
+		t.Fatalf("provider-bound messages missing [AGENT DIRECTIVE]: %s", providerData)
+	}
+	if !strings.Contains(string(providerData), "Be concise always.") {
+		t.Fatalf("provider-bound messages missing directive text: %s", providerData)
+	}
+}
+
+// TestNewAgentRequiresInteractiveDefinition verifies that NewAgent returns an error
+// when no interactive agent definitions are found.
+func TestNewAgentRequiresInteractiveDefinition(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer server.Close()
 
@@ -983,7 +1183,6 @@ func TestNewAgentAutoCreatesDefaultMode(t *testing.T) {
 		FavoriteModels: []string{"test/test-model"},
 		Compaction:     config.DefaultCompaction(),
 		StripReasoning: config.DefaultStripReasoning(),
-		// No Modes — should be auto-created.
 	}
 
 	dir := t.TempDir()
@@ -992,21 +1191,12 @@ func TestNewAgentAutoCreatesDefaultMode(t *testing.T) {
 	os.MkdirAll(promptsDir, 0755)
 	writePromptFixtures(t, promptsDir)
 
-	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), fstest.MapFS{}, dir, &mockHandler{}, "console")
-	if err != nil {
-		t.Fatalf("NewAgent() error: %v", err)
+	_, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), fstest.MapFS{}, dir, &mockHandler{}, "console")
+	if err == nil {
+		t.Fatal("NewAgent() expected error for no interactive definitions, got nil")
 	}
-	if len(agent.Modes.Modes) != 1 {
-		t.Fatalf("Modes = %d, want 1 (auto-created)", len(agent.Modes.Modes))
-	}
-	if agent.Modes.Modes[0].Name != "default" {
-		t.Errorf("Modes[0].Name = %q, want 'default'", agent.Modes.Modes[0].Name)
-	}
-	if agent.Modes.LastMode != "default" {
-		t.Errorf("LastMode = %q, want 'default'", agent.Modes.LastMode)
-	}
-	if agent.CurrentMode == nil {
-		t.Fatal("CurrentMode is nil, want auto-created default mode")
+	if !strings.Contains(err.Error(), "no interactive agent") {
+		t.Fatalf("NewAgent() error = %v, want 'no interactive agent'", err)
 	}
 }
 

@@ -20,7 +20,19 @@ import (
 
 func newTelegramAgent(t *testing.T) (*runtime.Agent, *config.Config, *State, string) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Create agent definitions and interactive-agent state in the isolated app home
+	// so that runtime.NewAgent finds the required Markdown definitions and agents.json.
+	agentsHome := filepath.Join(home, "blazeai")
+	agentsDir := filepath.Join(agentsHome, "agents")
+	if err := os.MkdirAll(agentsDir, 0755); err != nil {
+		t.Fatalf("mkdir agents dir: %v", err)
+	}
+	writeTestAgentDefinitions(t, agentsDir)
+	writeTestAgentsConfig(t, agentsHome)
+
 	cfg := &config.Config{
 		Providers:      []config.Provider{{Name: "test", Endpoint: "https://example.com", APIKey: "sk-test"}},
 		FavoriteModels: []string{"test/main", "test/other"},
@@ -63,6 +75,48 @@ func writePromptFixtures(t *testing.T, promptsDir string) {
 	}
 	if err := os.WriteFile(filepath.Join(promptsDir, "transport.telegram.md"), []byte("telegram transport"), 0644); err != nil {
 		t.Fatalf("write transport.telegram.md: %v", err)
+	}
+}
+
+// writeTestAgentDefinitions creates valid agent Markdown definitions for the
+// Telegram test fixture: two interactive definitions (default, planning) and
+// one executor definition (worker).
+func writeTestAgentDefinitions(t *testing.T, agentsDir string) {
+	t.Helper()
+
+	defaultDef := "---\nname: default\ndescription: Default test agent\ntype: interactive\nmodel: test/main\ntools:\n  - shell\n  - read_file\n  - write_file\n  - replace_block\n  - ask_a_friend\n  - analyze_image\n  - load_skill\n  - task_write\n  - task_read\n---\nDefault test agent instructions.\n"
+	if err := os.WriteFile(filepath.Join(agentsDir, "default.md"), []byte(defaultDef), 0600); err != nil {
+		t.Fatalf("write default.md: %v", err)
+	}
+
+	planningDef := "---\nname: planning\ndescription: Planning test agent\ntype: interactive\nmodel: test/main\ntools:\n  - shell\n  - read_file\n  - write_file\n  - replace_block\n  - ask_a_friend\n  - analyze_image\n  - load_skill\n  - task_write\n  - task_read\ndirective: Focus on planning and analysis.\n---\nPlanning test agent instructions.\n"
+	if err := os.WriteFile(filepath.Join(agentsDir, "planning.md"), []byte(planningDef), 0600); err != nil {
+		t.Fatalf("write planning.md: %v", err)
+	}
+
+	workerDef := "---\nname: worker\ndescription: Worker test agent\ntype: executor\ntools:\n  - shell\n  - read_file\n  - write_file\n  - replace_block\n---\nWorker test agent instructions.\n"
+	if err := os.WriteFile(filepath.Join(agentsDir, "worker.md"), []byte(workerDef), 0600); err != nil {
+		t.Fatalf("write worker.md: %v", err)
+	}
+}
+
+// writeTestAgentsConfig creates the initial agents.json state file with
+// LastAgent set to "default" and matching model entries for both interactive agents.
+func writeTestAgentsConfig(t *testing.T, agentsHome string) {
+	t.Helper()
+	cfgDir := filepath.Join(agentsHome, "config")
+	if err := os.MkdirAll(cfgDir, 0755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	agentsCfg := &config.AgentsConfig{
+		Agents: []config.InteractiveAgentState{
+			{Name: "default", Model: "test/main"},
+			{Name: "planning", Model: "test/main"},
+		},
+		LastAgent: "default",
+	}
+	if err := agentsCfg.SaveTo(filepath.Join(cfgDir, "agents.json")); err != nil {
+		t.Fatalf("write agents.json: %v", err)
 	}
 }
 

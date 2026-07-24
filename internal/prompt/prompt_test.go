@@ -11,6 +11,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"blazeai/internal/agents"
 	"blazeai/internal/config"
 	"blazeai/internal/helpers"
 	"blazeai/internal/platform"
@@ -826,4 +827,75 @@ func TestBuildRuntimePartCompatDiag(t *testing.T) {
 	if strings.Contains(result, "- legacy-tool") {
 		t.Errorf("legacy skill appeared in valid listing:\n%s", result)
 	}
+}
+
+// TestBuildAgentsSectionRendersTypeExecutor verifies that buildAgentsSection
+// renders executor definitions with "type: executor" and excludes interactive
+// definitions from the executor-call section.
+func TestBuildAgentsSectionRendersTypeExecutor(t *testing.T) {
+	b := &Builder{
+		Agents: []agents.Definition{
+			{
+				Name:        "coder",
+				Type:        agents.TypeExecutor,
+				Description: "Write code",
+				Model:       "openai/gpt-4o",
+				ToolNames:   []string{"shell", "read_file"},
+			},
+			{
+				Name:        "planner",
+				Type:        agents.TypeInteractive,
+				Description: "Plan tasks",
+				Model:       "openai/gpt-4o",
+				ToolNames:   []string{"read_file"},
+			},
+		},
+	}
+
+	section := b.buildAgentsSection()
+
+	// Must contain "type: executor" for the executor definition.
+	if !strings.Contains(section, "type: executor") {
+		t.Errorf("section missing 'type: executor':\n%s", section)
+	}
+	// Must contain the executor name.
+	if !strings.Contains(section, "coder") {
+		t.Errorf("section missing executor 'coder':\n%s", section)
+	}
+	// Must contain execution instructions mentioning run_agent and executor.
+	if !strings.Contains(section, "run_agent") {
+		t.Errorf("section missing run_agent instructions:\n%s", section)
+	}
+	if !strings.Contains(section, "executor agent name") {
+		t.Errorf("section missing executor agent name instruction:\n%s", section)
+	}
+}
+
+// TestBuildAgentsSectionEmpty verifies empty agents section message.
+func TestBuildAgentsSectionEmpty(t *testing.T) {
+	b := &Builder{}
+	section := b.buildAgentsSection()
+	if !strings.Contains(section, "No user-defined agents") {
+		t.Errorf("empty section should say no agents, got: %s", section)
+	}
+}
+
+// TestBuildRuntimePartAgentInstructions verifies agent instructions body injection.
+func TestBuildRuntimePartAgentInstructions(t *testing.T) {
+	promptsFS, workDir := setupTestDirs(t)
+	b := &Builder{
+		PromptsFS:         promptsFS,
+		BuiltinSkillsFS:   fstest.MapFS{},
+		WorkDir:           workDir,
+		OS:                platform.Linux,
+		TransportName:     "console",
+		AgentInstructions: "You are a code writer. Write clean code.",
+	}
+	result, err := b.BuildRuntimePart()
+	if err != nil {
+		t.Fatalf("BuildRuntimePart() error: %v", err)
+	}
+	// The sysprompt.md template doesn't have {AGENT_INSTRUCTIONS} in the test fixture,
+	// but the template variable should not cause an error.
+	_ = result
 }

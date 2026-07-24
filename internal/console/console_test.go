@@ -37,6 +37,25 @@ func mockAgent(t *testing.T) *runtime.Agent {
 	os.MkdirAll(promptsDir, 0755)
 	writePromptFixtures(t, promptsDir)
 
+	// Create interactive agent definitions in the agent dir for NewAgent.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	agentsHome := filepath.Join(home, "blazeai")
+	agentsDir := filepath.Join(agentsHome, "agents")
+	os.MkdirAll(agentsDir, 0755)
+	defaultDef := "---\nname: default\ndescription: Default test agent\ntype: interactive\nmodel: test/test-model\ntools:\n  - shell\n  - read_file\n  - write_file\n  - replace_block\n  - ask_a_friend\n  - analyze_image\n  - load_skill\n  - task_write\n  - task_read\n---\nDefault agent instructions.\n"
+	if err := os.WriteFile(filepath.Join(agentsDir, "default.md"), []byte(defaultDef), 0600); err != nil {
+		t.Fatalf("cannot write default agent definition: %v", err)
+	}
+	planningDef := "---\nname: planning\ndescription: Planning test agent\ntype: interactive\nmodel: test/other-model\ntools:\n  - shell\n  - read_file\n  - write_file\n  - replace_block\n  - ask_a_friend\n  - analyze_image\n  - load_skill\n  - task_write\n  - task_read\n---\nPlanning agent instructions.\n"
+	if err := os.WriteFile(filepath.Join(agentsDir, "planning.md"), []byte(planningDef), 0600); err != nil {
+		t.Fatalf("cannot write planning agent definition: %v", err)
+	}
+	workerDef := "---\nname: worker\ndescription: Worker test agent\ntype: executor\nmodel: test/test-model\ntools:\n  - shell\n  - read_file\n  - write_file\n  - replace_block\n  - ask_a_friend\n  - analyze_image\n  - load_skill\n  - task_write\n  - task_read\n---\nWorker agent instructions.\n"
+	if err := os.WriteFile(filepath.Join(agentsDir, "worker.md"), []byte(workerDef), 0600); err != nil {
+		t.Fatalf("cannot write worker agent definition: %v", err)
+	}
+
 	agent, err := runtime.NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), fstest.MapFS{}, dir, &mockHandler{}, "console")
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
@@ -911,10 +930,9 @@ func TestPromptLabel(t *testing.T) {
 	}
 }
 
-// TestPromptLabelWithMode verifies mode changes do not alter the input prompt.
-func TestPromptLabelWithMode(t *testing.T) {
+// TestPromptLabelWithAgent verifies agent changes do not alter the input prompt.
+func TestPromptLabelWithAgent(t *testing.T) {
 	c, _ := newConsole(mockAgent(t))
-	c.Agent.CurrentMode = &config.Mode{Name: "planning", Model: c.Agent.ModelID}
 	if got := stripANSICodes(c.promptLabel()); got != "⚡ " {
 		t.Errorf("promptLabel() = %q, want stable lightning marker", got)
 	}
@@ -1231,5 +1249,123 @@ func TestOnAgentActivityResultStandaloneCTX(t *testing.T) {
 	}
 	if !strings.Contains(plain, "✔️") {
 		t.Errorf("standalone tool_result missing checkmark: %q", plain)
+	}
+}
+
+// TestHandleCommandModeSet verifies /mode with a valid agent name selects
+// that agent, updates the status bar, and does not submit a turn.
+//
+// WHAT: /mode <name> selects the named interactive agent.
+// HOW: Calls handleCommand with a valid interactive agent name, checks
+// handled flag, no exit, no error, and that CurrentAgent changed.
+func TestHandleCommandModeSet(t *testing.T) {
+	c, out := newConsole(mockAgent(t))
+	// Start on "default" (first interactive agent).
+	if c.Agent.CurrentAgent == nil || c.Agent.CurrentAgent.Name != "default" {
+		t.Fatalf("initial agent = %v, want 'default'", c.Agent.CurrentAgent)
+	}
+	handled, exit, err := c.handleCommand("/mode planning")
+	if err != nil {
+		t.Fatalf("/mode planning error: %v", err)
+	}
+	if !handled {
+		t.Error("/mode not handled")
+	}
+	if exit {
+		t.Error("/mode should not exit")
+	}
+	if c.Agent.CurrentAgent == nil || c.Agent.CurrentAgent.Name != "planning" {
+		t.Errorf("CurrentAgent = %v, want 'planning'", c.Agent.CurrentAgent)
+	}
+	if !strings.Contains(out.String(), "Agent set to: planning") {
+		t.Errorf("output missing confirmation: %q", out.String())
+	}
+}
+
+// TestHandleCommandModeRequiresName verifies /mode without an argument returns
+// a usage error and does not change CurrentAgent.
+//
+// WHAT: /mode alone is a usage error.
+// HOW: Calls handleCommand with just "/mode", checks error and no agent change.
+func TestHandleCommandModeRequiresName(t *testing.T) {
+	c, _ := newConsole(mockAgent(t))
+	originalAgent := c.Agent.CurrentAgent
+	_, _, err := c.handleCommand("/mode")
+	if err == nil {
+		t.Fatal("/mode without arg expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "usage") {
+		t.Errorf("error = %v, want usage error", err)
+	}
+	if c.Agent.CurrentAgent != originalAgent {
+		t.Error("CurrentAgent should not change on usage error")
+	}
+}
+
+// TestHandleCommandModeRejectsExecutor verifies /mode with an executor agent name
+// returns an error and leaves the current agent unchanged.
+//
+// WHAT: /mode rejects non-interactive (executor) agent names.
+// HOW: Calls handleCommand with "worker" (an executor), checks error and no change.
+func TestHandleCommandModeRejectsExecutor(t *testing.T) {
+	c, _ := newConsole(mockAgent(t))
+	originalAgent := c.Agent.CurrentAgent
+	_, _, err := c.handleCommand("/mode worker")
+	if err == nil {
+		t.Fatal("/mode with executor expected error, got nil")
+	}
+	if c.Agent.CurrentAgent != originalAgent {
+		t.Error("CurrentAgent should not change when selecting executor")
+	}
+}
+
+// TestTabCyclesInteractiveAgents verifies the Tab key action cycles through
+// interactive agents with wrap-around, skipping executor definitions.
+//
+// WHAT: Tab cycles InteractiveDefs with wrap-around.
+// HOW: Calls the Tab action callback twice and asserts wrap-around through
+// interactive agents only (executor "worker" is skipped).
+func TestTabCyclesInteractiveAgents(t *testing.T) {
+	c, _ := newConsole(mockAgent(t))
+	// Start on "default" (first interactive agent).
+	if c.Agent.CurrentAgent == nil || c.Agent.CurrentAgent.Name != "default" {
+		t.Fatalf("initial agent = %v, want 'default'", c.Agent.CurrentAgent)
+	}
+	// First Tab: default → planning (next interactive).
+	if _, err := c.Agent.NextAgent(); err != nil {
+		t.Fatalf("first Tab error: %v", err)
+	}
+	if c.Agent.CurrentAgent == nil || c.Agent.CurrentAgent.Name != "planning" {
+		t.Errorf("after first Tab: CurrentAgent = %v, want 'planning'", c.Agent.CurrentAgent)
+	}
+	// Second Tab: planning → default (wrap-around).
+	if _, err := c.Agent.NextAgent(); err != nil {
+		t.Fatalf("second Tab error: %v", err)
+	}
+	if c.Agent.CurrentAgent == nil || c.Agent.CurrentAgent.Name != "default" {
+		t.Errorf("after second Tab: CurrentAgent = %v, want 'default'", c.Agent.CurrentAgent)
+	}
+}
+
+// TestStartupSplashAgentTerminology verifies the startup splash uses agent
+// terminology for Tab shortcut and includes the /mode command.
+//
+// WHAT: Splash output reflects agent cycling and /mode command.
+// HOW: Calls showStartupSplash and checks for agent-specific text.
+func TestStartupSplashAgentTerminology(t *testing.T) {
+	agent := mockAgent(t)
+	out := &bytes.Buffer{}
+	c := &Console{
+		Out:   out,
+		Agent: agent,
+	}
+	c.showStartupSplash()
+
+	output := out.String()
+	if !strings.Contains(output, "/mode [agent]") {
+		t.Errorf("output missing /mode command: %q", output)
+	}
+	if !strings.Contains(output, "cycle interactive agent") {
+		t.Errorf("output missing agent cycling description: %q", output)
 	}
 }

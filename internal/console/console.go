@@ -1,6 +1,6 @@
 // console.go — terminal REPL transport implementing the handler contract.
-// Implements OnContent, OnToolCall, OnToolResult. TTY-only: reads raw input for Tab mode cycling,
-// renders Markdown with ANSI colors, and handles slash commands (/auth, /exit, /model, /cd).
+// Implements OnContent, OnToolCall, OnToolResult. TTY-only: reads raw input for Tab agent cycling,
+// renders Markdown with ANSI colors, and handles slash commands (/auth, /exit, /model, /mode, /cd).
 // Layer: transport (console). Dependencies: internal/runtime, internal/config, internal/skills.
 package console
 
@@ -59,6 +59,7 @@ type slashCmd struct {
 var slashCommands = []slashCmd{
 	{"/auth openai", "connect ChatGPT with browser OAuth"},
 	{"/model [model]", "list or switch model (+/- fav)"},
+	{"/mode [agent]", "list or switch interactive agent"},
 	{"/cd <path>", "change working folder"},
 	{"/clear", "clear current session"},
 	{"/new", "start a clean session"},
@@ -108,7 +109,7 @@ type Console struct {
 	statusTool               string
 	statusDeadline           time.Time
 
-	switchLineActive bool // true when a mode/model status line is present and can be overwritten
+	switchLineActive bool // true when an agent/model status line is present and can be overwritten
 	switchLineWidth  int  // visible width of the current status line for reliable space-padding
 }
 
@@ -345,9 +346,9 @@ func (c *Console) buildStatusBar() string {
 		rst = "\033[0m"
 	)
 
-	modeName := "default"
-	if c.Agent.CurrentMode != nil {
-		modeName = c.Agent.CurrentMode.Name
+	agentName := "default"
+	if c.Agent.CurrentAgent != nil {
+		agentName = c.Agent.CurrentAgent.Name
 	}
 	model := c.Agent.ModelID
 	if model == "" {
@@ -388,7 +389,7 @@ func (c *Console) buildStatusBar() string {
 	phase = fmt.Sprintf("%-*s", phaseWidth, phase)
 
 	// Visible text (ASCII only) for width calculation.
-	vis := " " + phase + " | " + modeName + " | " + model + " | " + workDir + " | CTX " + ctx + "(H:" + cacheHit + "|M:" + cacheMiss + "|S:" + summaries + ") "
+	vis := " " + phase + " | " + agentName + " | " + model + " | " + workDir + " | CTX " + ctx + "(H:" + cacheHit + "|M:" + cacheMiss + "|S:" + summaries + ") "
 	visLen := len(vis)
 
 	// Build ANSI-colored text.
@@ -405,7 +406,7 @@ func (c *Console) buildStatusBar() string {
 	b.WriteString(" | ")
 	b.WriteString(colorBold)
 	b.WriteString("\033[38;5;220m")
-	b.WriteString(modeName)
+	b.WriteString(agentName)
 	b.WriteString("\033[22m\033[39m")
 	b.WriteString(bg)
 	b.WriteString(sep)
@@ -628,7 +629,7 @@ func (c *Console) showStartupSplash() {
 		key  string
 		desc string
 	}{
-		{"Tab", "cycle work mode"},
+		{"Tab", "cycle interactive agent"},
 		{"Ctrl+\\", "cycle favorite model"},
 		{"Ctrl+F", "add model to favorites"},
 		{"Ctrl+R", "remove model from favorites"},
@@ -1423,7 +1424,7 @@ func (c *Console) promptLabel() string {
 // promptLabelWithStatus retains the readline callback contract while keeping the prompt state-free.
 //
 // WHAT:  Returns the stable user input marker regardless of shortcut state.
-// WHY:   Mode and model changes must update only the persistent status bar.
+// WHY:   Agent and model changes must update only the persistent status bar.
 // PARAMS: includeStatus — retained for callers; intentionally ignored.
 func (c *Console) promptLabelWithStatus(_ bool) string {
 	return c.promptLabel()
@@ -1434,7 +1435,7 @@ func (c *Console) promptLabelWithStatus(_ bool) string {
 //
 // WHAT:  The main REPL loop.
 // WHY:   This is the entrypoint for the console transport.
-// HOW:   Uses raw-mode input for Tab mode cycling, loops reading input.
+// HOW:   Uses raw-mode input for Tab agent cycling, loops reading input.
 // RETURNS: error if a fatal error occurs.
 func (c *Console) Run() error {
 	c.showStartupSplash()
@@ -1468,8 +1469,8 @@ func (c *Console) runTTY() error {
 	}
 	rl.Keymap.Register(map[string]func(){
 		"blazeai-mode-next": func() {
-			if _, err := c.Agent.NextMode(); err != nil {
-				showShortcutError("Mode switch error: %v", err)
+			if _, err := c.Agent.NextAgent(); err != nil {
+				showShortcutError("Agent switch error: %v", err)
 				return
 			}
 			c.updateStatusBar()
@@ -1597,7 +1598,7 @@ func readLineSafely(rl *readline.Shell) (line string, err error) {
 	return rl.Readline()
 }
 
-// writeSwitchStatus prints the mode/model status line, overwriting any
+// writeSwitchStatus prints the agent/model status line, overwriting any
 // previous switch line with exactly spaced padding to avoid ANSI artifacts.
 //
 // WHAT:  Reliably prints a switch status line using space-padding for clearing.
@@ -1767,6 +1768,16 @@ func (c *Console) handleCommand(input string) (bool, bool, error) {
 		}
 		c.updateStatusBar()
 		fmt.Fprintf(c.Out, "Model set to: %s\n", arg)
+		return true, false, nil
+	case "/mode":
+		if arg == "" {
+			return true, false, fmt.Errorf("usage: /mode <agent-name>")
+		}
+		if err := c.Agent.SetAgent(arg); err != nil {
+			return true, false, err
+		}
+		c.updateStatusBar()
+		fmt.Fprintf(c.Out, "Agent set to: %s\n", arg)
 		return true, false, nil
 	case "/cd":
 		if arg == "" {

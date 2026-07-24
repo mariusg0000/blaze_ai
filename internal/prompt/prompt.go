@@ -340,12 +340,12 @@ func (b *Builder) buildAgentsSection() string {
 		if model == "" {
 			model = "inherit active model"
 		}
-		fmt.Fprintf(&sb, "- %s [%s] — %s (model: %s; tools: %s)\\n", definition.Name, definition.Kind, definition.Description, model, strings.Join(definition.ToolNames, ", "))
+		fmt.Fprintf(&sb, "- %s [type: %s] — %s (model: %s; tools: %s)\\n", definition.Name, definition.Type, definition.Description, model, strings.Join(definition.ToolNames, ", "))
 	}
 	sb.WriteString("\\nExecution instructions:\n")
-	sb.WriteString("- Use run_agent only when it is present in your available tool registry and only with an explicitly listed one-shot agent name. Provide purpose as exactly three user-visible sentences; if purpose is unavailable, the UI falls back to the task truncated to 80 characters. Pass the task, optional persistent child-session id, and only the context the child needs; do not copy the full parent transcript.\\n")
+	sb.WriteString("- Use run_agent only when it is present in your available tool registry and only with an explicitly listed executor agent name. Provide purpose as exactly three user-visible sentences; if purpose is unavailable, the UI falls back to the task truncated to 80 characters. Pass the task, optional persistent child-session id, and only the context the child needs; do not copy the full parent transcript.\\n")
 	sb.WriteString("- Each run_agent result contains 'child session id: <id>'. Preserve this id. To resume a child agent later, call run_agent with the same agent name, the preserved id, and a new task. The original agent_task.md and child session history are preserved; the new task is sent as a resume message. Do not invent or guess ids; use only the id returned by a previous run_agent call.\\n")
-	sb.WriteString("- agent_done is internal to one-shot children and is added automatically; do not request it from the parent.\\n")
+	sb.WriteString("- agent_done is internal to executor children and is added automatically; do not request it from the parent.\\n")
 	return strings.TrimSpace(sb.String())
 }
 

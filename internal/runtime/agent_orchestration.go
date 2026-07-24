@@ -1,5 +1,5 @@
-// agent_orchestration.go — ephemeral one-shot child-agent execution.
-// Runs Markdown one-shot agents independently and returns ordered results.
+// agent_orchestration.go — ephemeral executor child-agent execution.
+// Runs Markdown executor agents independently and returns ordered results.
 // Layer: runtime orchestration. Dependencies: agents, provider, session, tools.
 package runtime
 
@@ -97,7 +97,7 @@ func (f *activityForwarder) signal() {
 }
 
 // runAgent resolves and executes one or more child tasks.
-// WHAT: Orchestrates one-shot definitions with ordered parallel results.
+// WHAT: Orchestrates executor definitions with ordered parallel results.
 // HOW: Validates definitions, starts bounded workers, and persists each child session for resume.
 func (a *Agent) runAgent(ctx context.Context, args tools.RunAgentArgs) string {
 	tasks := args.Tasks
@@ -105,8 +105,12 @@ func (a *Agent) runAgent(ctx context.Context, args tools.RunAgentArgs) string {
 		tasks = []tools.RunAgentTask{{Agent: args.Agent, Task: args.Task, Context: args.Context, ID: args.ID}}
 	}
 	for _, task := range tasks {
-		if !a.modeAllowsAgent(strings.TrimSpace(task.Agent)) {
-			return fmt.Sprintf("error: mode %q does not allow one-shot agent %q", a.CurrentMode.Name, strings.TrimSpace(task.Agent))
+		if !a.interactiveAllowsExecutor(strings.TrimSpace(task.Agent)) {
+			agentName := ""
+			if a.CurrentAgent != nil {
+				agentName = a.CurrentAgent.Name
+			}
+			return fmt.Sprintf("error: agent %q does not allow executor %q", agentName, strings.TrimSpace(task.Agent))
 		}
 	}
 	results := make([]string, len(tasks))
@@ -184,10 +188,10 @@ func (a *Agent) runOneChild(parentCtx context.Context, task tools.RunAgentTask, 
 		}
 	}()
 
-	definition, ok := a.oneShotDefinition(task.Agent)
+	definition, ok := a.executorDefinition(task.Agent)
 	if !ok {
-		a.emitAgentActivity(AgentActivity{Agent: task.Agent, Kind: "failed", Status: "error", Text: "one-shot agent not found"})
-		return "", fmt.Errorf("one-shot agent not found: %s", task.Agent)
+		a.emitAgentActivity(AgentActivity{Agent: task.Agent, Kind: "failed", Status: "error", Text: "executor agent not found"})
+		return "", fmt.Errorf("executor agent not found: %s", task.Agent)
 	}
 	if strings.TrimSpace(task.Task) == "" {
 		return "", fmt.Errorf("child %q task is empty", displayID)
@@ -339,10 +343,10 @@ func shortChildID() string {
 	return hex.EncodeToString(b)
 }
 
-// oneShotDefinition resolves only one-shot definitions and never falls back to modes.
-func (a *Agent) oneShotDefinition(name string) (agents.Definition, bool) {
+// executorDefinition resolves only TypeExecutor definitions.
+func (a *Agent) executorDefinition(name string) (agents.Definition, bool) {
 	for _, definition := range a.Definitions {
-		if definition.Name == strings.TrimSpace(name) && definition.Kind == agents.KindOneShot {
+		if definition.Name == strings.TrimSpace(name) && definition.Type == agents.TypeExecutor {
 			return definition, true
 		}
 	}

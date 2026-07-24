@@ -99,7 +99,7 @@ type AgentActivityHandler interface {
 //	ModelID — current provider/model_name; WorkDir — current work folder; OS — detected platform.
 type Agent struct {
 	Config      *config.Config
-	Modes       *config.ModesConfig
+	AgentStates *config.AgentsConfig
 	Definitions []agents.Definition
 	Session     *session.Session
 	Builder     *prompt.Builder
@@ -109,10 +109,11 @@ type Agent struct {
 	Handler     Handler
 	Compactor   *compaction.Manager
 
-	ModelID     string
-	CurrentMode *config.Mode
-	WorkDir     string
-	OS          platform.OS
+	ModelID         string
+	CurrentAgent    *agents.Definition
+	WorkDir         string
+	OS              platform.OS
+	InteractiveDefs []agents.Definition
 
 	// Completion is set only by the internal agent_done tool in one-shot children.
 	Completion string
@@ -135,47 +136,177 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 	}
 	modelID := cfg.Roles.Default
 
-	// Try migration first: extract modes from config.json if they exist there.
-	_ = config.MigrateFromConfig()
+	// Build base registry for definition loading and migration.
+	// Register well-known tool names so definition validation can resolve them.
+	tempRegistry := tools.NewRegistry()
+	for _, name := range wellKnownToolNames {
+		tempRegistry.Register(&stubTool{name: name})
+	}
 
-	// Load modes only for the main runtime. Child agents use an explicit or inherited model,
-	// not the parent's mode or its tool/prompt policy.
-	modes, err := config.LoadModes(modelID)
+	agentsHome, err := platform.AppHome()
 	if err != nil {
-		return nil, fmt.Errorf("cannot load modes: %w", err)
+		return nil, fmt.Errorf("cannot resolve agents directory: %w", err)
 	}
-	if len(modes.Modes) == 0 {
-		modes = config.DefaultMode(modelID)
-		_ = modes.Save()
+	agentsDir := filepath.Join(agentsHome, "agents")
+
+	// Migrate legacy kind: one-shot → type: executor.
+	if err := agents.MigrateLegacyDefinitions(agentsDir); err != nil {
+		return nil, fmt.Errorf("cannot migrate legacy definitions: %w", err)
 	}
 
-	var currentMode *config.Mode
-	if modes.LastMode != "" {
-		for i := range modes.Modes {
-			if modes.Modes[i].Name == modes.LastMode {
-				currentMode = &modes.Modes[i]
-				break
+	// If agents.json does not exist but modes.json does, migrate modes to interactive definitions.
+	agentsConfigPath := filepath.Join(agentsHome, "config", "agents.json")
+	agentsConfigExists := fileExists(agentsConfigPath)
+	modesFilePath := filepath.Join(agentsHome, "config", "modes.json")
+	modesExists := fileExists(modesFilePath)
+
+	if !agentsConfigExists && modesExists {
+		legacyModes, loadErr := config.LoadModes(modelID)
+		if loadErr == nil && legacyModes != nil && len(legacyModes.Modes) > 0 {
+			if err := agents.MigrateLegacyModes(agentsDir, legacyModes, registeredToolNames(tempRegistry)); err != nil {
+				return nil, fmt.Errorf("cannot migrate legacy modes: %w", err)
 			}
 		}
 	}
-	if currentMode != nil {
-		modelID = currentMode.Model
-	} else if len(modes.Modes) > 0 {
-		currentMode = &modes.Modes[0]
-		modelID = currentMode.Model
+
+	// Load final definitions from disk.
+	definitions, err := agents.Load(agentsDir, tempRegistry)
+	if err != nil {
+		return nil, fmt.Errorf("cannot load agents: %w", err)
 	}
-	return newAgent(cfg, sess, os, promptsFS, builtinSkillsFS, workDir, handler, transportName, modelID, modes, currentMode)
+
+	// Separate interactive definitions.
+	var interactiveDefs []agents.Definition
+	for _, d := range definitions {
+		if d.Type == agents.TypeInteractive {
+			interactiveDefs = append(interactiveDefs, d)
+		}
+	}
+
+	// Must have at least one interactive definition.
+	if len(interactiveDefs) == 0 {
+		return nil, fmt.Errorf("no interactive agent definitions found; create at least one Markdown definition with type: interactive in %s", agentsDir)
+	}
+
+	// Load or initialize interactive agent state.
+	agentStates, err := config.LoadAgents(agentsHome)
+	if err != nil {
+		agentStates = &config.AgentsConfig{}
+	}
+
+	// Build lookup indexes.
+	defIndex := make(map[string]agents.Definition, len(definitions))
+	for _, d := range definitions {
+		defIndex[d.Name] = d
+	}
+	interactiveIndex := make(map[string]bool, len(interactiveDefs))
+	for _, d := range interactiveDefs {
+		interactiveIndex[d.Name] = true
+	}
+
+	// Reject invalid state entries.
+	for _, state := range agentStates.Agents {
+		if !interactiveIndex[state.Name] {
+			return nil, fmt.Errorf("agent state %q is not an interactive agent definition", state.Name)
+		}
+		if state.Model == "" {
+			return nil, fmt.Errorf("agent state %q has an empty model", state.Name)
+		}
+		if err := config.ValidateModelFormat(state.Model); err != nil {
+			return nil, fmt.Errorf("agent state %q has invalid model %q: %w", state.Name, state.Model, err)
+		}
+	}
+	// Reject duplicate state names.
+	seenState := make(map[string]bool, len(agentStates.Agents))
+	for _, state := range agentStates.Agents {
+		if seenState[state.Name] {
+			return nil, fmt.Errorf("duplicate agent state name %q", state.Name)
+		}
+		seenState[state.Name] = true
+	}
+
+	// Add missing state entries for newly loaded interactive definitions.
+	stateNeedsSave := false
+	for _, d := range interactiveDefs {
+		if !seenState[d.Name] {
+			defModel := d.Model
+			if defModel == "" {
+				defModel = modelID
+			}
+			agentStates.Agents = append(agentStates.Agents, config.InteractiveAgentState{
+				Name:  d.Name,
+				Model: defModel,
+			})
+			seenState[d.Name] = true
+			stateNeedsSave = true
+		}
+	}
+
+	// When no state existed before (all entries newly created), use definition models
+	// and select the first interactive definition.
+	if agentStates.LastAgent == "" && len(agentStates.Agents) > 0 {
+		for i, state := range agentStates.Agents {
+			if d, ok := defIndex[state.Name]; ok && d.Model != "" {
+				agentStates.Agents[i].Model = d.Model
+			}
+		}
+		agentStates.LastAgent = interactiveDefs[0].Name
+		stateNeedsSave = true
+	}
+
+	// Reject invalid LastAgent.
+	if agentStates.LastAgent != "" {
+		if !interactiveIndex[agentStates.LastAgent] {
+			return nil, fmt.Errorf("last_agent %q is not an interactive agent definition", agentStates.LastAgent)
+		}
+	}
+	// When no LastAgent but states exist, use the first state.
+	if agentStates.LastAgent == "" && len(agentStates.Agents) > 0 {
+		agentStates.LastAgent = agentStates.Agents[0].Name
+		stateNeedsSave = true
+	}
+
+	// Resolve the current agent and its persisted model.
+	var currentAgent *agents.Definition
+	for _, d := range interactiveDefs {
+		if d.Name == agentStates.LastAgent {
+			currentAgent = &d
+			break
+		}
+	}
+	if currentAgent == nil {
+		currentAgent = &interactiveDefs[0]
+		agentStates.LastAgent = currentAgent.Name
+		stateNeedsSave = true
+	}
+
+	// Find the persisted model for the current agent.
+	for _, state := range agentStates.Agents {
+		if state.Name == currentAgent.Name {
+			modelID = state.Model
+			break
+		}
+	}
+
+	// Save state if it was modified.
+	if stateNeedsSave {
+		if err := agentStates.SaveTo(agentsConfigPath); err != nil {
+			return nil, fmt.Errorf("cannot persist initial agent state: %w", err)
+		}
+	}
+
+	return newAgent(cfg, sess, os, promptsFS, builtinSkillsFS, workDir, handler, transportName, modelID, agentStates, currentAgent)
 }
 
 // newChildAgent creates a one-shot agent with only its selected model and explicit tools.
-// WHAT: Constructs a child runtime without mode configuration.
-// HOW: Reuses common runtime wiring while leaving mode state nil.
+// WHAT: Constructs a child runtime without agent state or interactive configuration.
+// HOW: Reuses common runtime wiring while leaving agent state nil.
 func newChildAgent(cfg *config.Config, sess *session.Session, os platform.OS, promptsFS, builtinSkillsFS fs.FS, workDir string, handler Handler, transportName, modelID string) (*Agent, error) {
 	return newAgent(cfg, sess, os, promptsFS, builtinSkillsFS, workDir, handler, transportName, modelID, nil, nil)
 }
 
 // newAgent wires common runtime dependencies for main and child agents.
-func newAgent(cfg *config.Config, sess *session.Session, os platform.OS, promptsFS, builtinSkillsFS fs.FS, workDir string, handler Handler, transportName, modelID string, modes *config.ModesConfig, currentMode *config.Mode) (*Agent, error) {
+func newAgent(cfg *config.Config, sess *session.Session, os platform.OS, promptsFS, builtinSkillsFS fs.FS, workDir string, handler Handler, transportName, modelID string, agentStates *config.AgentsConfig, currentAgent *agents.Definition) (*Agent, error) {
 
 	client, err := provider.NewClient(cfg, modelID)
 	if err != nil {
@@ -207,17 +338,17 @@ func newAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 	}
 
 	agent := &Agent{
-		Config:      cfg,
-		Modes:       modes,
-		Session:     sess,
-		Builder:     builder,
-		Provider:    client,
-		Handler:     handler,
-		Compactor:   compaction.NewManager(cfg, client, summarizationClient),
-		ModelID:     modelID,
-		CurrentMode: currentMode,
-		WorkDir:     workDir,
-		OS:          os,
+		Config:       cfg,
+		AgentStates:  agentStates,
+		Session:      sess,
+		Builder:      builder,
+		Provider:     client,
+		Handler:      handler,
+		Compactor:    compaction.NewManager(cfg, client, summarizationClient),
+		ModelID:      modelID,
+		CurrentAgent: currentAgent,
+		WorkDir:      workDir,
+		OS:           os,
 	}
 
 	oneShotCaller := llmcall.New(cfg, func(cfg *config.Config, modelID string) (llmcall.StreamClient, error) {
@@ -285,14 +416,25 @@ func newAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 	if err != nil {
 		return nil, fmt.Errorf("cannot load agents: %w", err)
 	}
-	// run_agent is available only when a Markdown definition explicitly needs it or a one-shot agent exists.
+	// run_agent is available only when at least one executor definition exists.
 	if definitionsNeedRunAgent(definitions) {
 		registry.Register(tools.NewRunAgentTool(agent.runAgent))
 	}
 	agent.Definitions = definitions
+
+	// Separate interactive definitions for cycling.
+	for _, d := range definitions {
+		if d.Type == agents.TypeInteractive {
+			agent.InteractiveDefs = append(agent.InteractiveDefs, d)
+		}
+	}
+
 	agent.BaseTools = registry.Clone()
-	if currentMode != nil {
-		if err := agent.refreshModeCapabilities(); err != nil {
+
+	// Set agent instructions and refresh capabilities for the main agent.
+	if currentAgent != nil {
+		agent.Builder.AgentInstructions = currentAgent.Instructions
+		if err := agent.refreshAgentCapabilities(); err != nil {
 			return nil, err
 		}
 	}
@@ -341,9 +483,10 @@ func (a *Agent) RunTurn(ctx context.Context, userInput string) error {
 		// Strip reasoning parts from payload (keep newest N, global count).
 		messages = a.Compactor.StripReasoningFromPayload(messages)
 
-		// Inject volatile mode directive into the latest user message only (copy, never mutate session).
-		if a.CurrentMode != nil && strings.TrimSpace(a.CurrentMode.Directive) != "" {
-			messages = injectDirective(messages, a.CurrentMode.Directive)
+		// Inject volatile interactive-agent directive into the latest user message only.
+		// This is a copy-on-write operation; the session is never mutated.
+		if a.CurrentAgent != nil && strings.TrimSpace(a.CurrentAgent.Directive) != "" {
+			messages = injectDirective(messages, a.CurrentAgent.Directive)
 		}
 
 		if a.Config.DebugPrompt {
@@ -568,8 +711,11 @@ func shouldPersistAssistantMessage(msg session.Message) bool {
 	return content != "" || msg.Reasoning != "" || msg.ReasoningEncrypted != "" || msg.ToolCalls != nil
 }
 
-// injectDirective appends the mode directive to the most recent user message in a copy of the
+// injectDirective appends the agent directive to the most recent user message in a copy of the
 // slice. Tool messages must stay unchanged so tool results are sent back exactly as produced.
+//
+// WHAT: Copy-on-write injection of [AGENT DIRECTIVE] into the latest user message.
+// WHY:   Directives are ephemeral and must not mutate the persisted session.
 func injectDirective(messages []session.Message, directive string) []session.Message {
 	if len(messages) == 0 {
 		return messages
@@ -581,7 +727,7 @@ func injectDirective(messages []session.Message, directive string) []session.Mes
 			continue
 		}
 		content, _ := out[i].Content.(string)
-		out[i].Content = content + "\n\n[MODE DIRECTIVE]\n" + directive
+		out[i].Content = content + "\n\n[AGENT DIRECTIVE]\n" + directive
 		return out
 	}
 	return out
@@ -651,27 +797,38 @@ func (a *Agent) applyModel(modelID string) error {
 	return nil
 }
 
-// SetModel changes the current model, recreates the provider client, and persists the selection globally.
+// SetModel changes the current model, recreates the provider client, and persists the selection.
+//
+// WHAT: Applies a model change to the running agent and persists per interactive agent state.
+// HOW: Applies the model first, then updates the current interactive state entry and saves agents.json.
+// RETURNS: error if no interactive agent is selected, model validation fails, or persistence fails.
 func (a *Agent) SetModel(modelID string) error {
-	if a.CurrentMode != nil {
-		if err := a.reloadModesForPersistence(a.CurrentMode.Name); err != nil {
-			return err
-		}
+	if a.CurrentAgent == nil {
+		return fmt.Errorf("no interactive agent selected; cannot persist model")
 	}
 	if err := a.applyModel(modelID); err != nil {
 		return err
 	}
-	if a.CurrentMode != nil {
-		a.CurrentMode.Model = modelID
-		if err := a.Modes.Save(); err != nil {
-			return fmt.Errorf("cannot persist mode model selection: %w", err)
+	// Reload agent states from disk before writing to prevent cross-instance data loss.
+	agentsHome, err := platform.AppHome()
+	if err != nil {
+		return fmt.Errorf("cannot resolve agents directory: %w", err)
+	}
+	states, err := config.LoadAgentsFrom(filepath.Join(agentsHome, "config", "agents.json"))
+	if err != nil {
+		return fmt.Errorf("cannot reload agent state before persistence: %w", err)
+	}
+	for i, state := range states.Agents {
+		if state.Name == a.CurrentAgent.Name {
+			states.Agents[i].Model = modelID
+			break
 		}
-		return nil
 	}
-	a.Config.LastModel = modelID
-	if err := a.Config.Save(); err != nil {
-		return fmt.Errorf("cannot persist legacy model selection: %w", err)
+	states.LastAgent = a.CurrentAgent.Name
+	if err := states.Save(); err != nil {
+		return fmt.Errorf("cannot persist agent model selection: %w", err)
 	}
+	a.AgentStates = states
 	return nil
 }
 
@@ -707,42 +864,83 @@ func (a *Agent) ListProviderModels(providerName string) ([]string, error) {
 	return client.ListModels()
 }
 
-// SetMode switches the active work mode by name.
-func (a *Agent) SetMode(name string) error {
-	if err := a.reloadModesForPersistence(name); err != nil {
+// SetAgent switches the active interactive agent by name.
+//
+// WHAT: Selects an interactive definition by exact name, applies its persisted model,
+// updates capabilities, and persists the selection.
+// HOW: Validates the name is interactive, applies the definition's persisted model,
+// updates CurrentAgent, refreshes capabilities, and atomically saves state.
+func (a *Agent) SetAgent(name string) error {
+	// Find the definition by exact name.
+	var def *agents.Definition
+	for _, d := range a.InteractiveDefs {
+		if d.Name == name {
+			def = &d
+			break
+		}
+	}
+	if def == nil {
+		return fmt.Errorf("interactive agent %q not found", name)
+	}
+	if def.Type != agents.TypeInteractive {
+		return fmt.Errorf("agent %q is not interactive", name)
+	}
+
+	// Find the persisted model for this agent.
+	modelID := def.Model
+	for _, state := range a.AgentStates.Agents {
+		if state.Name == def.Name {
+			modelID = state.Model
+			break
+		}
+	}
+
+	if err := a.applyModel(modelID); err != nil {
+		return fmt.Errorf("cannot apply provider client for agent %q: %w", name, err)
+	}
+	a.CurrentAgent = def
+	a.Builder.AgentInstructions = def.Instructions
+	if err := a.refreshAgentCapabilities(); err != nil {
 		return err
 	}
-	mode := a.CurrentMode
-	if err := a.applyModel(mode.Model); err != nil {
-		return fmt.Errorf("cannot apply provider client for mode %q: %w", name, err)
-	}
-	if err := a.refreshModeCapabilities(); err != nil {
-		return err
-	}
-	a.Modes.LastMode = name
-	if err := a.Modes.Save(); err != nil {
-		return fmt.Errorf("cannot persist mode switch: %w", err)
+
+	// Persist the selection.
+	a.AgentStates.LastAgent = name
+	if err := a.AgentStates.Save(); err != nil {
+		return fmt.Errorf("cannot persist agent switch: %w", err)
 	}
 	return nil
 }
 
-// reloadModesForPersistence refreshes the mode list before a write.
-// WHAT: Replaces stale in-memory modes with the current modes.json contents.
-// HOW: Loads the file, resolves the requested mode, and updates CurrentMode.
-// WHY: Prevents an older running instance from deleting modes added by another instance.
-func (a *Agent) reloadModesForPersistence(modeName string) error {
-	modes, err := config.LoadModes(a.Config.Roles.Default)
-	if err != nil {
-		return fmt.Errorf("cannot reload modes before persistence: %w", err)
+// NextAgent cycles to the next interactive agent definition cyclically.
+//
+// WHAT: Advances through InteractiveDefinitions with wrap-around and applies the next agent.
+// HOW: Finds the current agent index in InteractiveDefs, picks the next, and calls SetAgent.
+func (a *Agent) NextAgent() (*agents.Definition, error) {
+	if len(a.InteractiveDefs) == 0 {
+		return nil, fmt.Errorf("no interactive agents configured")
 	}
-	for i := range modes.Modes {
-		if modes.Modes[i].Name == modeName {
-			a.Modes = modes
-			a.CurrentMode = &a.Modes.Modes[i]
-			return nil
+	if a.CurrentAgent == nil {
+		if err := a.SetAgent(a.InteractiveDefs[0].Name); err != nil {
+			return nil, err
+		}
+		return a.CurrentAgent, nil
+	}
+	for i, d := range a.InteractiveDefs {
+		if d.Name == a.CurrentAgent.Name {
+			nextIdx := (i + 1) % len(a.InteractiveDefs)
+			next := a.InteractiveDefs[nextIdx]
+			if err := a.SetAgent(next.Name); err != nil {
+				return nil, err
+			}
+			return a.CurrentAgent, nil
 		}
 	}
-	return fmt.Errorf("mode not found in current modes.json: %s", modeName)
+	// Current agent not found in list — fall back to first.
+	if err := a.SetAgent(a.InteractiveDefs[0].Name); err != nil {
+		return nil, err
+	}
+	return a.CurrentAgent, nil
 }
 
 // NextFavoriteModel cycles to the next model in FavoriteModels and applies it.
@@ -773,35 +971,6 @@ func (a *Agent) NextFavoriteModel() error {
 		nextIdx = (currentIdx + 1) % len(a.Config.FavoriteModels)
 	}
 	return a.SetModel(a.Config.FavoriteModels[nextIdx])
-}
-
-// NextMode returns the next mode in the config list cyclically.
-func (a *Agent) NextMode() (*config.Mode, error) {
-	if len(a.Modes.Modes) == 0 {
-		return nil, fmt.Errorf("no modes configured")
-	}
-	if a.CurrentMode == nil {
-		mode := &a.Modes.Modes[0]
-		if err := a.SetMode(mode.Name); err != nil {
-			return nil, err
-		}
-		return a.CurrentMode, nil
-	}
-	for i := range a.Modes.Modes {
-		if a.Modes.Modes[i].Name == a.CurrentMode.Name {
-			nextIdx := (i + 1) % len(a.Modes.Modes)
-			next := &a.Modes.Modes[nextIdx]
-			if err := a.SetMode(next.Name); err != nil {
-				return nil, err
-			}
-			return a.CurrentMode, nil
-		}
-	}
-	mode := &a.Modes.Modes[0]
-	if err := a.SetMode(mode.Name); err != nil {
-		return nil, err
-	}
-	return a.CurrentMode, nil
 }
 
 // CloseSession marks the session as cleanly closed.
@@ -882,3 +1051,37 @@ func containsSudo(command string) bool {
 	}
 	return false
 }
+
+// fileExists reports whether a path exists as a regular file.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+// registeredToolNames returns the sorted names of all tools in a registry.
+// Used during legacy mode migration to provide the base tool list for computing
+// allowed tools per mode.
+func registeredToolNames(registry *tools.Registry) []string {
+	var names []string
+	for _, tool := range registry.All() {
+		names = append(names, tool.Name())
+	}
+	return names
+}
+
+// wellKnownToolNames lists all native tool names recognized by the runtime.
+// Used to build a validation-only registry during NewAgent definition loading.
+var wellKnownToolNames = []string{
+	"shell", "load_skill", "analyze_image", "ask_a_friend",
+	"replace_block", "task_write", "task_read", "read_file",
+	"write_file", "run_agent", "agent_done",
+}
+
+// stubTool satisfies tools.Tool for definition validation only.
+type stubTool struct{ name string }
+
+func (s *stubTool) Name() string                                        { return s.name }
+func (s *stubTool) Description() string                                 { return s.name }
+func (s *stubTool) Parameters() json.RawMessage                         { return json.RawMessage(`{"type":"object"}`) }
+func (s *stubTool) Execute(_ context.Context, _ json.RawMessage) string { return "" }
+func (s *stubTool) FormatArgs(_ json.RawMessage) string                 { return "" }
