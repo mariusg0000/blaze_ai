@@ -185,6 +185,38 @@ func NewAgent(cfg *config.Config, sess *session.Session, os platform.OS, prompts
 
 	// Must have at least one interactive definition.
 	if len(interactiveDefs) == 0 {
+		// Existing agent state prevents automatic bootstrap.
+		if agentsConfigExists {
+			return nil, fmt.Errorf("no interactive agent definitions found; create at least one Markdown definition with type: interactive in %s", agentsDir)
+		}
+
+		// Collect executor names from loaded definitions for the default agent.
+		var executorNames []string
+		for _, d := range definitions {
+			if d.Type == agents.TypeExecutor {
+				executorNames = append(executorNames, d.Name)
+			}
+		}
+
+		// Bootstrap a starter default interactive definition on fresh app homes.
+		if _, err := agents.EnsureDefaultInteractive(agentsDir, modelID, registeredToolNames(tempRegistry), executorNames); err != nil {
+			return nil, fmt.Errorf("cannot bootstrap default agent: %w", err)
+		}
+
+		// Reload definitions after bootstrap.
+		definitions, err = agents.Load(agentsDir, tempRegistry)
+		if err != nil {
+			return nil, fmt.Errorf("cannot load agents: %w", err)
+		}
+		interactiveDefs = nil
+		for _, d := range definitions {
+			if d.Type == agents.TypeInteractive {
+				interactiveDefs = append(interactiveDefs, d)
+			}
+		}
+	}
+
+	if len(interactiveDefs) == 0 {
 		return nil, fmt.Errorf("no interactive agent definitions found; create at least one Markdown definition with type: interactive in %s", agentsDir)
 	}
 

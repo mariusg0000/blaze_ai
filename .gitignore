@@ -41,3 +41,6 @@ temp/
 
 # Local runtime data
 app_home/
+
+# Investigation artifacts
+.agents/

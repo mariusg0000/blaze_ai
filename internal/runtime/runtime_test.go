@@ -1166,14 +1166,14 @@ func TestRunTurnInjectsInteractiveDirectiveEphemerally(t *testing.T) {
 	}
 }
 
-// TestNewAgentRequiresInteractiveDefinition verifies that NewAgent returns an error
-// when no interactive agent definitions are found.
-func TestNewAgentRequiresInteractiveDefinition(t *testing.T) {
+// TestNewAgentBootstrapsDefaultInteractiveAgent verifies that NewAgent automatically
+// creates a default.md interactive definition on a fresh app home with no definitions
+// and no agents.json state.
+func TestNewAgentBootstrapsDefaultInteractiveAgent(t *testing.T) {
+	home := isolatedHome(t)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer server.Close()
-
-	// Set HOME so cfg.Save() writes to a temp dir.
-	t.Setenv("HOME", t.TempDir())
 
 	cfg := &config.Config{
 		Providers: []config.Provider{
@@ -1191,12 +1191,101 @@ func TestNewAgentRequiresInteractiveDefinition(t *testing.T) {
 	os.MkdirAll(promptsDir, 0755)
 	writePromptFixtures(t, promptsDir)
 
+	agent, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), fstest.MapFS{}, dir, &mockHandler{}, "console")
+	if err != nil {
+		t.Fatalf("NewAgent() error: %v", err)
+	}
+
+	// Verify default.md was created.
+	agentsDir := filepath.Join(home, "blazeai", "agents")
+	target := filepath.Join(agentsDir, "default.md")
+	if _, statErr := os.Stat(target); statErr != nil {
+		t.Fatalf("default.md not created: %v", statErr)
+	}
+
+	// Parse the generated definition through the standard parser.
+	def, err := agents.ParseFile(target)
+	if err != nil {
+		t.Fatalf("agents.ParseFile() error: %v", err)
+	}
+	if def.Name != "default" {
+		t.Errorf("definition Name = %q, want 'default'", def.Name)
+	}
+	if def.Type != agents.TypeInteractive {
+		t.Errorf("definition Type = %q, want 'interactive'", def.Type)
+	}
+	if def.Model != "test/test-model" {
+		t.Errorf("definition Model = %q, want 'test/test-model'", def.Model)
+	}
+	if def.Instructions == "" {
+		t.Error("definition body is empty")
+	}
+
+	// Verify agent is wired correctly.
+	if agent.CurrentAgent == nil {
+		t.Fatal("CurrentAgent is nil")
+	}
+	if agent.CurrentAgent.Name != "default" {
+		t.Errorf("CurrentAgent.Name = %q, want 'default'", agent.CurrentAgent.Name)
+	}
+	if agent.ModelID != "test/test-model" {
+		t.Errorf("ModelID = %q, want 'test/test-model'", agent.ModelID)
+	}
+
+	// Verify agents.json has LastAgent: default.
+	agentsConfigPath := filepath.Join(home, "blazeai", "config", "agents.json")
+	if _, statErr := os.Stat(agentsConfigPath); statErr != nil {
+		t.Fatalf("agents.json not created: %v", statErr)
+	}
+	agentsCfg, err := config.LoadAgentsFrom(agentsConfigPath)
+	if err != nil {
+		t.Fatalf("LoadAgentsFrom() error: %v", err)
+	}
+	if agentsCfg.LastAgent != "default" {
+		t.Errorf("LastAgent = %q, want 'default'", agentsCfg.LastAgent)
+	}
+}
+
+// TestNewAgentDoesNotBootstrapWhenAgentStateExists verifies that NewAgent does not
+// create a default.md when agents.json already exists, even with no interactive definitions.
+func TestNewAgentDoesNotBootstrapWhenAgentStateExists(t *testing.T) {
+	home := isolatedHome(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Providers: []config.Provider{
+			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
+		},
+		Roles:          config.Roles{Default: "test/test-model"},
+		FavoriteModels: []string{"test/test-model"},
+		Compaction:     config.DefaultCompaction(),
+		StripReasoning: config.DefaultStripReasoning(),
+	}
+
+	// Create agents.json but no definition files.
+	writeAgentsConfig(t, home, `{"agents":[],"last_agent":""}`)
+
+	dir := t.TempDir()
+	sess, _ := session.CreateInDir(dir)
+	promptsDir := filepath.Join(dir, "prompts")
+	os.MkdirAll(promptsDir, 0755)
+	writePromptFixtures(t, promptsDir)
+
 	_, err := NewAgent(cfg, sess, platform.Linux, os.DirFS(promptsDir), fstest.MapFS{}, dir, &mockHandler{}, "console")
 	if err == nil {
-		t.Fatal("NewAgent() expected error for no interactive definitions, got nil")
+		t.Fatal("NewAgent() expected error for no interactive definitions with existing state, got nil")
 	}
 	if !strings.Contains(err.Error(), "no interactive agent") {
 		t.Fatalf("NewAgent() error = %v, want 'no interactive agent'", err)
+	}
+
+	// Verify default.md was NOT created.
+	agentsDir := filepath.Join(home, "blazeai", "agents")
+	target := filepath.Join(agentsDir, "default.md")
+	if _, statErr := os.Stat(target); statErr == nil {
+		t.Fatal("default.md should not exist when agents.json state exists")
 	}
 }
 
