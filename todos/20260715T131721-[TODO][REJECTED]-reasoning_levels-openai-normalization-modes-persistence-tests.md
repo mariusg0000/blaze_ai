@@ -144,6 +144,10 @@ IsReasoningCapable(modelID string) bool
 - Multi-provider reasoning normalization beyond OpenAI.
 - `ReasoningMaxHeight` cleanup.
 
+### Rejection reason
+
+Rejected on 2026-07-27. The implementation was intentionally abandoned because correct reasoning-level behavior differs by provider and model. OpenCode resolves this with model metadata, provider-specific compatibility rules, release-date and model-family classification, generated variants, and configuration overrides. BlazeAI has no authoritative model metadata or compatibility registry. Implementing only a generic OpenAI mapping would make the feature appear universal while allowing incompatible model requests, and reproducing the full compatibility system would be disproportionate complexity for the current product scope. Existing provider errors remain the explicit behavior instead of adding a partial or misleading abstraction.
+
 ## Validation expectations
 
 - User config contains only abstract reasoning levels.

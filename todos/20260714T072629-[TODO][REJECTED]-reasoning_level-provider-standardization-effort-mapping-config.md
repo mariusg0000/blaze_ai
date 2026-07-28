@@ -171,3 +171,7 @@ Codex uses the OpenAI Responses API format with a nested `reasoning` object.
 - `Ultra` → clamp to `Max` before sending
 - `Custom(String)` passthrough for forward compatibility
 - Validate against `supported_reasoning_efforts` per model; error if invalid
+
+### Rejection reason
+
+Rejected on 2026-07-27. The proposed multi-provider normalization requires authoritative provider/model compatibility data that BlazeAI does not currently have. OpenCode handles this through model metadata, provider-specific and model-family rules, release-date gates, generated variants, and configuration overrides. Implementing the full table would add substantial complexity, while implementing only generic mappings would risk presenting unsupported levels as valid. The reasoning-level feature is therefore abandoned rather than implemented partially or with fallbacks.
