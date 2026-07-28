@@ -1,12 +1,13 @@
 # Context Compaction
 
-## Source Files
+## Sources
 
 | File | Role |
 |------|------|
 | `internal/compaction/compaction.go` | Manager — ShouldCompact, findCutPoint, Compact, summarize, buildTranscript, save/load/trim summaries, buildSyntheticMessage, StripReasoningFromPayload, RebuildForResume |
 | `internal/compaction/compaction_test.go` | Unit tests (cut point, reasoning strip, summarization integration) |
 | `internal/runtime/runtime.go` | Calls Compact after each LLM turn, sanitizes before each call, creates summarization client |
+| `internal/provider/provider.go` (`NewClient`) | Test and production provider construction requires selected model metadata |
 
 ## Overview
 
@@ -16,6 +17,13 @@ It is triggered by the provider-reported `usage.prompt_tokens` reaching the
 optionally summarized.
 
 Session JSON is the source of truth — no separate `summarizedIDs` or state file.
+
+### Provider Fixture Contract
+
+The compaction integration fixture in `internal/compaction/compaction_test.go` defines
+`Config.Models["test/test-model"]` with an explicit OpenAI Chat protocol variant and
+constructs the client through `provider.NewClient`. This supplies the same selected
+protocol metadata required by production clients; it changes no compaction behavior.
 
 ## Configuration
 

@@ -39,6 +39,25 @@ var knownProviders = []config.Provider{
 	{Name: "lmstudio", Endpoint: "http://localhost:1234/v1"},
 }
 
+func firstRunModelDefinition(protocol, modelName string) (config.ModelDefinition, error) {
+	switch protocol {
+	case config.ProtocolOpenAIChat:
+		return config.ModelDefinition{
+			Protocol:     config.ProtocolOpenAIChat,
+			Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false},
+			OpenAIChat:   &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
+		}, nil
+	case config.ProtocolOpenAIResponses:
+		return config.ModelDefinition{
+			Protocol:     config.ProtocolOpenAIResponses,
+			Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false},
+			Responses:    &config.ResponsesVariant{Lite: provider.IsResponsesLiteModel(modelName)},
+		}, nil
+	default:
+		return config.ModelDefinition{}, fmt.Errorf("unsupported first-run protocol %q", protocol)
+	}
+}
+
 // firstRun executes the interactive first-run setup.
 // Creates a config with at least one provider and a default model role.
 //
@@ -115,6 +134,16 @@ func firstRun(out io.Writer, reader *bufio.Reader) (*config.Config, error) {
 	cfg.Providers = []config.Provider{p}
 	cfg.FavoriteModels = []string{modelID}
 	cfg.Roles.Default = modelID
+	var modelDefinition config.ModelDefinition
+	if p.AuthType == config.OAuthAuthType {
+		modelDefinition, err = firstRunModelDefinition(config.ProtocolOpenAIResponses, models[0])
+	} else {
+		modelDefinition, err = firstRunModelDefinition(config.ProtocolOpenAIChat, modelID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("cannot define first-run model: %w", err)
+	}
+	cfg.Models[modelID] = modelDefinition
 
 	// Step 6: optional roles
 	if err := assignOptionalRoles(out, reader, models, p.Name, cfg); err != nil {
@@ -265,6 +294,7 @@ func assignOptionalRoles(out io.Writer, reader *bufio.Reader, models []string, p
 			continue
 		}
 		modelID := providerName + "/" + models[num-1]
+		cfg.Models[modelID] = cfg.Models[cfg.Roles.Default]
 		switch role {
 		case "vision":
 			cfg.Roles.Vision = modelID

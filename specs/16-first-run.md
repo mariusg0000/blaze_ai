@@ -1,13 +1,15 @@
 # First-Run Setup
 
-## Source Files
+## Sources
 
-| File | Role |
-|------|------|
-| `firstrun.go` | Interactive setup: provider selection, API-key/OAuth authentication, model retrieval, role assignment |
-| `firstrun_test.go` | Unit tests for all interactive steps |
-| `main.go` | Detection, setup trigger, startup sequence |
-| `internal/skills/config-manager.md` | Builtin skill for LLM-assisted reconfiguration |
+| File | Anchor | Role |
+|------|--------|------|
+| `firstrun.go` | `firstRun`, `firstRunModelDefinition` | Interactive setup and catalog construction |
+| `firstrun_test.go` | `TestFirstRunModelDefinition`, `TestFirstRunFullFlow` | Catalog definition and saved-config contracts |
+| `main.go` | `main` | Detection, setup trigger, startup sequence |
+| `internal/skills/config-manager.md` | whole file | Builtin skill for LLM-assisted reconfiguration |
+| `internal/config/config.go` | `ModelDefinition`, `Config.Models` | Catalog schema persisted by first-run |
+| `internal/provider/openai_responses.go` | `IsResponsesLiteModel` | Exported Responses-lite classification predicate |
 
 ## Overview
 
@@ -70,9 +72,12 @@ firstRun(out, reader)
   ├─ Step 5: Build config
   │    ├─ config.Default() → pre-filled compaction thresholds
   │    ├─ Set single provider
-  │    ├─ Set FavoriteModels = [modelID]
-  │    ├─ Set Roles.Default = modelID
-  │    └─ Set LastModel = modelID
+   │    ├─ Set FavoriteModels = [modelID]
+   │    ├─ Set Roles.Default = modelID
+   │    ├─ Build explicit Config.Models[modelID] metadata
+   │    │    ├─ API-key model → openai-chat + Chat variant/capabilities
+   │    │    └─ OAuth model → openai-responses + Responses variant/capabilities
+   │    └─ Set LastModel = modelID
   │
   ├─ Step 6: assignOptionalRoles(out, reader, models, providerName, cfg)
   │    ├─ For each role (vision, summarization, advisor):
@@ -125,6 +130,12 @@ default role for the OAuth provider.
 API models are sorted alphabetically for consistent display. The OAuth result
 keeps its account-provided order and assigns its first model as the default.
 The result is formatted as `provider_name/model_id`.
+
+First-run writes the selected model's catalog definition explicitly. OAuth
+Responses `lite` is selected through `provider.IsResponsesLiteModel(modelName)`;
+protocol choice is supplied by the setup path and is not inferred later from a
+model-name prefix. Optional role selections copy the default model definition
+for the newly referenced catalog key.
 
 ## Role Assignment
 

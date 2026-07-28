@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -16,6 +17,23 @@ func validConfig() *Config {
 			{Name: "openrouter", Endpoint: "https://openrouter.ai/api/v1", APIKey: "sk-test123"},
 		},
 		FavoriteModels: []string{"openrouter/deepseek-v4-flash"},
+		Models: map[string]ModelDefinition{
+			"openrouter/deepseek-v4-flash": {
+				Protocol:     ProtocolOpenAIChat,
+				Capabilities: ModelCapabilities{Tools: true},
+				OpenAIChat:   &OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
+			},
+			"openrouter/gpt-4o": {
+				Protocol:     ProtocolOpenAIChat,
+				Capabilities: ModelCapabilities{Tools: true},
+				OpenAIChat:   &OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
+			},
+			"openrouter/gpt-4.1": {
+				Protocol:     ProtocolOpenAIChat,
+				Capabilities: ModelCapabilities{Tools: true},
+				OpenAIChat:   &OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
+			},
+		},
 		Roles: Roles{
 			Default: "openrouter/deepseek-v4-flash",
 			Vision:  "openrouter/gpt-4o",
@@ -176,6 +194,173 @@ func TestValidateFavoriteModelBadProvider(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil {
 		t.Fatal("Validate() expected error for favorite model with missing provider, got nil")
+	}
+}
+
+// TestValidateOAuthModelDefinition verifies that an OAuth Responses model entry is valid.
+func TestValidateOAuthModelDefinition(t *testing.T) {
+	cfg := validConfig()
+	cfg.Providers = append(cfg.Providers, Provider{
+		Name:     "chatgpt",
+		Endpoint: "https://chatgpt.com/backend-api/codex/responses",
+		AuthType: OAuthAuthType,
+		OAuth:    &OAuthCredential{RefreshToken: "refresh-token"},
+	})
+	cfg.Models["chatgpt/gpt-5.6-mini"] = ModelDefinition{
+		Protocol:     ProtocolOpenAIResponses,
+		Capabilities: ModelCapabilities{Tools: true},
+		Responses:    &ResponsesVariant{Lite: true},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() OAuth catalog entry error: %v", err)
+	}
+}
+
+// TestValidateOpenAIChatModelDefinition verifies that an OpenAI Chat model entry is valid.
+func TestValidateOpenAIChatModelDefinition(t *testing.T) {
+	cfg := validConfig()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() OpenAI Chat catalog entry error: %v", err)
+	}
+}
+
+// TestValidateModelCatalogValidEntries verifies valid standard and OAuth entries.
+func TestValidateModelCatalogValidEntries(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider Provider
+		modelID  string
+		model    ModelDefinition
+	}{
+		{
+			name:     "OpenAI Chat",
+			provider: Provider{Name: "standard", Endpoint: "https://api.example.com/v1", APIKey: "sk-test"},
+			modelID:  "standard/chat-model",
+			model: ModelDefinition{
+				Protocol:     ProtocolOpenAIChat,
+				Capabilities: ModelCapabilities{Tools: true},
+				OpenAIChat:   &OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
+			},
+		},
+		{
+			name:     "OAuth Responses",
+			provider: Provider{Name: "oauth", Endpoint: "https://oauth.example.com", AuthType: OAuthAuthType, OAuth: &OAuthCredential{RefreshToken: "refresh-token"}},
+			modelID:  "oauth/responses-model",
+			model: ModelDefinition{
+				Protocol:     ProtocolOpenAIResponses,
+				Capabilities: ModelCapabilities{Tools: true},
+				Responses:    &ResponsesVariant{Lite: true},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Providers = append(cfg.Providers, test.provider)
+			cfg.Models[test.modelID] = test.model
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("Validate() error for valid catalog entry: %v", err)
+			}
+		})
+	}
+}
+
+// TestValidateMissingCatalogReferences verifies all configured model references require catalog entries.
+func TestValidateMissingCatalogReferences(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{name: "favorite", mutate: func(cfg *Config) {
+			cfg.FavoriteModels = append(cfg.FavoriteModels, "openrouter/missing-favorite")
+		}},
+		{name: "default role", mutate: func(cfg *Config) { cfg.Roles.Default = "openrouter/missing-default" }},
+		{name: "vision role", mutate: func(cfg *Config) { cfg.Roles.Vision = "openrouter/missing-vision" }},
+		{name: "summarization role", mutate: func(cfg *Config) {
+			cfg.Roles.Summarization = "openrouter/missing-summarization"
+		}},
+		{name: "advisor role", mutate: func(cfg *Config) { cfg.Roles.Advisor = "openrouter/missing-advisor" }},
+		{name: "last model", mutate: func(cfg *Config) { cfg.LastModel = "openrouter/missing-last" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validConfig()
+			test.mutate(cfg)
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatalf("Validate() expected missing catalog error for %s", test.name)
+			}
+			if !strings.Contains(err.Error(), "model catalog entry is missing") {
+				t.Fatalf("Validate() error = %v, want missing catalog entry error", err)
+			}
+		})
+	}
+}
+
+// TestValidateModelCatalogDefinitions verifies protocol and variant constraints.
+func TestValidateModelCatalogDefinitions(t *testing.T) {
+	tests := map[string]struct {
+		mutate func(*Config)
+		want   string
+	}{
+		"unknown protocol": {
+			mutate: func(cfg *Config) {
+				definition := cfg.Models["openrouter/deepseek-v4-flash"]
+				definition.Protocol = "unknown"
+				cfg.Models["openrouter/deepseek-v4-flash"] = definition
+			},
+			want: "unknown protocol",
+		},
+		"malformed key": {
+			mutate: func(cfg *Config) {
+				cfg.Models["malformed"] = ModelDefinition{Protocol: ProtocolOpenAIChat, OpenAIChat: &OpenAIChatVariant{}}
+			},
+			want: ErrInvalidModelFormat.Error(),
+		},
+		"unknown provider": {
+			mutate: func(cfg *Config) {
+				cfg.Models["ghost/model"] = ModelDefinition{Protocol: ProtocolOpenAIChat, OpenAIChat: &OpenAIChatVariant{}}
+			},
+			want: ErrProviderNotFound.Error(),
+		},
+		"protocol auth mismatch": {
+			mutate: func(cfg *Config) {
+				cfg.Models["openrouter/oauth-model"] = ModelDefinition{
+					Protocol:  ProtocolOpenAIResponses,
+					Responses: &ResponsesVariant{},
+				}
+			},
+			want: "openai-responses requires oauth provider",
+		},
+		"missing required variant": {
+			mutate: func(cfg *Config) {
+				definition := cfg.Models["openrouter/deepseek-v4-flash"]
+				definition.OpenAIChat = nil
+				cfg.Models["openrouter/deepseek-v4-flash"] = definition
+			},
+			want: "openai-chat requires openai_chat variant",
+		},
+		"prohibited other protocol variant": {
+			mutate: func(cfg *Config) {
+				definition := cfg.Models["openrouter/deepseek-v4-flash"]
+				definition.Responses = &ResponsesVariant{}
+				cfg.Models["openrouter/deepseek-v4-flash"] = definition
+			},
+			want: "openai-chat prohibits responses variant",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			cfg := validConfig()
+			test.mutate(cfg)
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatalf("Validate() expected catalog definition error for %s", name)
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Validate() error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
@@ -410,16 +595,24 @@ func TestDefaultHelperSetup(t *testing.T) {
 // configs without helperSetup field load successfully with zero-value.
 func TestLoadFromWithoutHelperSetup(t *testing.T) {
 	raw := struct {
-		Providers      []Provider     `json:"providers"`
-		FavoriteModels []string       `json:"favorite_models"`
-		Roles          Roles          `json:"roles"`
-		Compaction     Compaction     `json:"compaction"`
-		StripReasoning StripReasoning `json:"stripReasoning"`
+		Providers      []Provider                 `json:"providers"`
+		FavoriteModels []string                   `json:"favorite_models"`
+		Models         map[string]ModelDefinition `json:"models"`
+		Roles          Roles                      `json:"roles"`
+		Compaction     Compaction                 `json:"compaction"`
+		StripReasoning StripReasoning             `json:"stripReasoning"`
 	}{
 		Providers: []Provider{
 			{Name: "test", Endpoint: "https://example.com/v1", APIKey: "sk-test"},
 		},
 		FavoriteModels: []string{"test/model"},
+		Models: map[string]ModelDefinition{
+			"test/model": {
+				Protocol:     ProtocolOpenAIChat,
+				Capabilities: ModelCapabilities{Tools: true},
+				OpenAIChat:   &OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
+			},
+		},
 		Roles: Roles{
 			Default: "test/model",
 		},

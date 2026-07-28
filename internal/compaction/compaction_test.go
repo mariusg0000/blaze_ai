@@ -48,6 +48,13 @@ func setupManager(t *testing.T, handler http.HandlerFunc) (*Manager, *httptest.S
 	cfg := &config.Config{
 		Providers: []config.Provider{{Name: "test", Endpoint: server.URL, APIKey: "sk-test"}},
 		Roles:     config.Roles{Default: "test/test-model"},
+		Models: map[string]config.ModelDefinition{
+			"test/test-model": {
+				Protocol:     config.ProtocolOpenAIChat,
+				Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false},
+				OpenAIChat:   &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
+			},
+		},
 		Compaction: config.Compaction{
 			MaxContextTokens:       100,
 			MinContextTokens:       50,
@@ -58,7 +65,10 @@ func setupManager(t *testing.T, handler http.HandlerFunc) (*Manager, *httptest.S
 		},
 		StripReasoning: config.StripReasoning{Enable: true, PreserveLast: 5},
 	}
-	client := provider.NewClientRaw(server.URL, "sk-test")
+	client, err := provider.NewClient(cfg, "test/test-model")
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
 	return NewManager(cfg, client, client), server
 }
 

@@ -29,7 +29,11 @@ func mockAgent(t *testing.T) *runtime.Agent {
 	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
 	cfg := &config.Config{
-		Providers:      []config.Provider{{Name: "test", Endpoint: "http://localhost", APIKey: "sk-test"}},
+		Providers: []config.Provider{{Name: "test", Endpoint: "http://localhost", APIKey: "sk-test"}},
+		Models: map[string]config.ModelDefinition{
+			"test/test-model":  {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
+			"test/other-model": {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
+		},
 		Roles:          config.Roles{Default: "test/test-model"},
 		FavoriteModels: []string{"test/test-model", "test/other-model"},
 	}

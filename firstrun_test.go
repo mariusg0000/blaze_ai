@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -96,6 +97,55 @@ func TestSelectProviderInvalid(t *testing.T) {
 	}
 }
 
+func TestFirstRunModelDefinition(t *testing.T) {
+	tests := []struct {
+		name     string
+		protocol string
+		model    string
+		want     config.ModelDefinition
+		wantErr  bool
+	}{
+		{
+			name:     "standard",
+			protocol: config.ProtocolOpenAIChat,
+			model:    "gpt-4",
+			want: config.ModelDefinition{
+				Protocol:     config.ProtocolOpenAIChat,
+				Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false},
+				OpenAIChat:   &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
+			},
+		},
+		{
+			name:     "OAuth Responses",
+			protocol: config.ProtocolOpenAIResponses,
+			model:    "gpt-5.6-mini",
+			want: config.ModelDefinition{
+				Protocol:     config.ProtocolOpenAIResponses,
+				Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false},
+				Responses:    &config.ResponsesVariant{Lite: providerpkg.IsResponsesLiteModel("gpt-5.6-mini")},
+			},
+		},
+		{name: "unknown protocol", protocol: "unknown", model: "model", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			definition, err := firstRunModelDefinition(test.protocol, test.model)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("firstRunModelDefinition() expected error for unknown protocol, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("firstRunModelDefinition() error: %v", err)
+			}
+			if !reflect.DeepEqual(definition, test.want) {
+				t.Errorf("firstRunModelDefinition() = %+v, want %+v", definition, test.want)
+			}
+		})
+	}
+}
+
 // TestFirstRunFullFlow verifies the complete setup with a mock model endpoint.
 func TestFirstRunFullFlow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -127,6 +177,14 @@ func TestFirstRunFullFlow(t *testing.T) {
 	}
 	if len(cfg.Providers) != 1 || cfg.Providers[0].APIKey != "test-key" {
 		t.Errorf("provider not configured correctly: %+v", cfg.Providers)
+	}
+	wantDefinition := config.ModelDefinition{
+		Protocol:     config.ProtocolOpenAIChat,
+		Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false},
+		OpenAIChat:   &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
+	}
+	if definition := cfg.Models[cfg.Roles.Default]; !reflect.DeepEqual(definition, wantDefinition) {
+		t.Errorf("default model definition = %+v, want %+v", definition, wantDefinition)
 	}
 
 	// Verify config was saved to disk.
@@ -219,6 +277,11 @@ func TestFirstRunOptionalRoles(t *testing.T) {
 	}
 	if cfg.Roles.Advisor != "testprov/gpt-3.5-turbo" {
 		t.Errorf("advisor role = %q, want 'testprov/gpt-3.5-turbo'", cfg.Roles.Advisor)
+	}
+	for _, modelID := range cfg.FavoriteModels {
+		if definition := cfg.Models[modelID]; definition.Protocol != config.ProtocolOpenAIChat {
+			t.Errorf("model %q protocol = %q, want %q", modelID, definition.Protocol, config.ProtocolOpenAIChat)
+		}
 	}
 }
 

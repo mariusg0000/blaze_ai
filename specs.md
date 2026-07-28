@@ -16,7 +16,7 @@ BlazeAI is a Go 1.25 terminal AI agent with console and opt-in Telegram transpor
 - `main.go` is the composition root: it detects the OS, bootstraps app home, loads or creates configuration, prepares embedded assets, selects Telegram when requested, and otherwise opens the console session.
 - `internal/runtime/` owns turn execution, prompt construction, streaming, tool dispatch, session updates, compaction, modes, and child-agent orchestration. Providers supply the LLM stream; transports consume runtime callbacks.
 - `internal/prompt/` rebuilds prompt input for each LLM call from embedded templates and disk-backed project/user sources. Optional project map and agent content are injected only where the prompt template provides their placeholders.
-- `internal/config/`, `internal/platform/`, and `internal/session/` own startup prerequisites, host/project paths, validated configuration, and persistent session files. Required failures are surfaced rather than silently replaced.
+- `internal/config/`, `internal/platform/`, and `internal/session/` own startup prerequisites, host/project paths, validated configuration, and persistent session files. `Config.Models` is the explicit model/protocol/capability catalog required by roles, favourites, and last-model state; required failures are surfaced rather than silently replaced.
 - `internal/tools/` exposes the runtime tool registry. Shell execution remains host-native; direct `read_file` and `write_file` tools resolve relative paths through the work directory, as does `replace_block`.
 - `internal/compaction/` limits context and preserves continuation state through chronological summaries, pruning, and reasoning handling. Telegram is a long-polling single-chat bridge with text/image intake and streamed activity adaptation.
 - `prompts/` and builtin `skills/` are embedded at build time; user/project sources remain disk-backed. `decisions/` records accepted changes and rationale but does not override implemented behavior when code differs.
@@ -36,13 +36,13 @@ Current source code, tests, schemas, and configuration define implemented behavi
 - `internal/console/` - terminal REPL, commands, input, rendering, and streaming display.
 - `internal/telegram/` - Telegram long polling, commands, single-chat state, images, and streaming adaptation.
 - `internal/prompt/` - per-call prompt assembly and variable injection.
-- `internal/config/` - configuration, provider/role/mode validation, persistence, and first-run detection.
+- `internal/config/` - configuration, explicit model-catalog/provider/role/mode validation, persistence, and first-run detection.
 - `internal/session/` - project-scoped file session persistence and resume lifecycle.
 - `internal/compaction/` - context pruning, summarization, and reasoning cleanup.
 - `internal/tools/` - native tool implementations and filtered registries.
 - `internal/skills/` - skill discovery, parsing, validation, scoping, and active skills.
 - `internal/platform/` - OS detection, shell selection, app-home bootstrap, and project paths.
-- `internal/provider/` - OpenAI-compatible HTTP streaming and tool-call decoding.
+- `internal/provider/` - catalog-selected protocol validation/lowering, OpenAI Chat and OAuth Responses HTTP streaming, and tool-call decoding.
 - `internal/llmcall/` - secondary role-routed LLM calls.
 - `internal/usage/` - provider-independent usage extraction and normalization.
 - `internal/helpers/` - advisory host helper detection.
@@ -55,6 +55,7 @@ Current source code, tests, schemas, and configuration define implemented behavi
 ## Task Routing
 
 - Runtime turns, tool calls, modes, or child agents → `internal/runtime/` and the matching runtime/orchestration detailed spec.
+- Model protocol metadata, request lowering, or missing catalog errors → `internal/config/`, `internal/provider/`, and `specs/02-architecture.md` or `specs/05-tools.md`.
 - Prompt injection, project maps, or skill descriptions → `internal/prompt/`, `prompts/`, `internal/skills/`, and `specs/04-prompts.md` or `specs/09-skill-system.md`.
 - Console interaction → `internal/console/` and `specs/13-console-ui.md`.
 - Telegram behavior → `internal/telegram/` and `specs/14-telegram-bridge.md`.

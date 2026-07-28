@@ -1,139 +1,225 @@
-status: rejected
+status: completed
 
-# Normalized OpenAI reasoning level with Ctrl+]
+# OpenCode-style model catalog and protocol adapters
 
 ## User outcome
 
-Re-introduce a provider-neutral reasoning level for the existing OpenAI-compatible request paths. The canonical level is persisted by full model ID, applied when a model becomes active, emitted in each OpenAI request shape, displayed in the console, and cycled with Ctrl+]. Existing opaque reasoning-content storage, compaction, usage accounting, and Responses-lite continuation context remain unchanged.
+Implement the provider/model normalization architecture used by OpenCode: saved BlazeAI configuration must define a model catalog with explicit per-model metadata; runtime must create one provider-neutral request; the selected model's protocol adapter must lower that request to validated protocol-native JSON. This foundation must support model-specific request variants, capabilities, and provider-native options such as reasoning levels without model-name guessing or silently sending invalid fields to GLM5.2 or another provider.
 
 ## Plan summary
 
-BlazeAI currently accepts only a model ID and always leaves reasoning effort to the provider default. This task adds one strict seven-value setting (`none`, `min`, `low`, `med`, `high`, `xhigh`, `max`) owned by a small dependency-free package. The runtime resolves the setting for the active full model ID, persists changes in `config.json`, and copies the resolved value to the provider client.
+BlazeAI currently treats every non-OAuth model as the same OpenAI Chat Completions API and serializes session data directly into one request body. OpenCode instead has a common `LLMRequest`, protocol adapters for API families, and model metadata that selects a route/protocol and compatibility variants. Its schemas are primarily **per protocol**, not independently written full schemas for every model; model entries carry the differences that affect lowering and compatibility.
 
-The provider converts the canonical value to the OpenAI wire value only when building requests (`min` to `minimal`, `med` to `medium`; `none` omits effort). The console invokes the runtime cycle with Ctrl+] and refreshes its status display. This keeps provider-specific JSON out of user-facing configuration, avoids model capability guessing, and lets unsupported upstream values fail as explicit provider errors rather than silently changing behavior.
+BlazeAI will follow that shape in Go. A model definition, keyed by the existing full `provider/model` ID, will explicitly select a protocol and state model capabilities plus protocol-native request options. A provider-neutral request will carry messages, tools, generation, reasoning level, and namespaced native options. An adapter selected from the model definition will emit the native request type for its protocol. The adapter validates the selected model profile and only includes fields permitted by it. The initial implementation supplies the existing OpenAI Chat and ChatGPT OAuth Responses protocols, preserving their existing wire behavior through adapters; native Anthropic and Gemini adapters remain future additions.
+
+This makes GLM5.2 configuration explicit: it can use the OpenAI Chat adapter with a model variant that disables fields its endpoint rejects. It does not depend on prefixes such as `glm-`, fallbacks, or a hidden provider capability table.
 
 ## Current state
 
-- The former reasoning-level package, provider effort state, Ctrl+] action, and status segment were removed; no current reasoning-level control exists.
-- `session.Message.reasoning_content`, reasoning response accumulation, `StripReasoningFromPayload`, and Responses-lite `reasoning.context: "all_turns"` remain implemented and are out of scope.
-- The normal Chat Completions request is assembled inline in `Client.StreamWithPhase`; Responses builders already return `(chatGPTResponsesRequest, error)` and have a nested `chatGPTReasoning.Effort` field that is currently omitted.
-- `agents.json` persists a selected model per interactive agent. `modes.json` is migration-only. `config.json` is the appropriate new global per-model lookup map because the setting is keyed by model, must apply when any agent selects that model, and must not change the active `agents.json` schema.
-- `inputrc.Unescape("\\C-]")` already decodes to byte `0x1d`; no action is bound. The console status bar currently renders phase, agent, model, work directory, and context.
-- OpenCode's provider/model compatibility is metadata-driven: it imports model capability, API package, release-date, and interleaving metadata; generates static provider/model-specific variants; permits config overrides; and merges the selected variant into request options. BlazeAI has no equivalent model metadata source, so OpenCode's implementation is comparative evidence rather than a directly reusable dependency.
+- Standard clients in `internal/provider/provider.go` directly marshal a private `chatRequest` containing model, `[]session.Message`, OpenAI tools, `stream`, and unconditional `stream_options.include_usage`, then POST to `/chat/completions`.
+- ChatGPT OAuth in `internal/provider/openai_responses.go` already converts messages and tools into a separate Responses API JSON structure and endpoint, but the conversion is not represented as a common protocol adapter.
+- `config.Provider` has endpoint/auth credentials only; favorite models and role models are plain full ID strings. There is no saved model metadata, protocol selection, capability declaration, or per-model request variant.
+- Session message marshaling currently exposes OpenAI-compatible fields including `reasoning_content`, encrypted reasoning, tool calls, and tool results. Tools are already converted to OpenAI function definitions by runtime.
+- OpenCode separates: (a) common request/event schema, (b) protocol-level request body schema/lowerer and streaming parser, and (c) model catalog metadata/compatibility. OpenAI-compatible vendors reuse an OpenAI Chat protocol; model metadata supplies variants and compatibility.
 
 ## Supporting evidence
 
-- `.agents/explorer/000005-reasoning-facts.md`
-- `.agents/explorer/000006-model-capability-facts.md`
-- `.agents/explorer/000007-current-reasoning-plan.md`
-- `.agents/explorer/000011-opencode-reasoning-mechanism.md`
+- `.agents/explorer/000001-opencode-provider-adaptation.md`
+- `.agents/explorer/000002-blazeai-provider-implementation.md`
 
-## Resolved decisions and rationale
+## Resolved design
 
-1. Scope is the two implemented OpenAI-compatible paths only: standard Chat Completions and ChatGPT OAuth Responses. The repository has no provider-specific Anthropic, Google, xAI, DeepSeek, Mistral, or Bedrock implementations; adding them is outside the smallest direct tranche.
-2. Canonical user values are exactly lowercase `none`, `min`, `low`, `med`, `high`, `xhigh`, and `max`. Empty, uppercase, `ultra`, and arbitrary values are explicit errors. `none` is the explicit default for an absent per-model entry and preserves current request omission.
-3. Add `Config.ReasoningLevels map[string]string` with JSON key `reasoning_levels,omitempty`, keyed by the complete `provider/model` ID. Stored values are strictly validated. This does not alter `agents.json`, `modes.json`, model selection precedence, or model-ID validation.
-4. Add dependency-free `internal/reasoning`; it owns parsing, cyclic progression, and OpenAI effort mapping only. Do not create model-prefix capability tables, supported-level APIs, custom values, clamping, or fallbacks: source has no authoritative capability inventory.
-5. `runtime.Agent` owns the resolved in-memory `reasoning.Level`. Creation and every `applyModel` path resolve the selected model's map entry and set both Agent and newly created Provider client. `SetReasoningLevel` saves config before changing Agent/Provider state; a save failure leaves active state unchanged.
-6. Standard requests serialize flat `reasoning_effort`; Responses serializes nested `reasoning.effort`. `none` omits effort. Both use the same mapping: `min -> minimal`, `med -> medium`, all other non-none canonical values map directly. Lite Responses retains `context: "all_turns"`; no summary field is added.
-7. Register `blazeai-reasoning-next` for Ctrl+] (`inputrc.Unescape("\\C-]")`). On success it refreshes the existing status bar. The splash adds `Ctrl+]: cycle reasoning level`, and status adds `Reasoning: <canonical-level>`. Do not add `/reasoning`, Ctrl+T, reasoning rendering, or an `OnReasoning` callback.
+### 1. Saved model catalog
+
+Add `Config.Models map[string]ModelDefinition` with JSON key `models`. Keys are complete existing model IDs (`provider/model`), so this catalog does not change model selection syntax, roles, favourites, `agents.json`, or session data.
+
+```go
+type ModelDefinition struct {
+    Protocol     string                 `json:"protocol"`
+    Capabilities ModelCapabilities      `json:"capabilities"`
+    OpenAIChat   *OpenAIChatVariant     `json:"openai_chat,omitempty"`
+    Responses    *ResponsesVariant      `json:"responses,omitempty"`
+}
+
+type ModelCapabilities struct {
+    Tools     bool `json:"tools"`
+    Reasoning bool `json:"reasoning"`
+}
+
+type OpenAIChatVariant struct {
+    IncludeStreamUsage      bool `json:"include_stream_usage"`
+    IncludeReasoningContent bool `json:"include_reasoning_content"`
+}
+
+type ResponsesVariant struct {
+    Lite bool `json:"lite"`
+}
+```
+
+The catalog is the saved equivalent of OpenCode's model metadata, at a deliberately smaller scale. `Capabilities` is declarative input for request validation; it does not probe a provider or infer facts from a model name.
+
+### 2. Protocol selection and validation
+
+Define exactly two protocol identifiers in this tranche: `ProtocolOpenAIChat` with value `"openai-chat"` and `ProtocolOpenAIResponses` with value `"openai-responses"`.
+
+- `openai-chat`: standard `/chat/completions` transport. Requires non-OAuth provider, a non-nil `OpenAIChatVariant`, and nil `ResponsesVariant`.
+- `openai-responses`: existing ChatGPT OAuth `/responses` transport. Requires OAuth provider, a non-nil `ResponsesVariant`, and nil `OpenAIChatVariant`.
+
+Every configured favourite, role model, and `last_model` must have a catalog entry. Missing entries, unknown protocol names, provider/auth mismatch, incompatible variant, or invalid model key are explicit validation errors. Active interactive-agent models live in separate `agents.json`, outside `Config.Validate`; client creation validates their selected full model ID against the catalog before any provider request. There is no fallback to the old implicit OpenAI Chat behavior.
+
+### 3. Common internal request
+
+Create provider-private common types, independent of JSON wire keys:
+
+```go
+type Request struct {
+    Model           ModelReference
+    Messages        []session.Message
+    Tools           []tools.OpenAITool
+    Stream          bool
+    ProviderOptions map[string]any
+}
+
+type ModelReference struct {
+    ID           string
+    Name         string
+    Definition   config.ModelDefinition
+}
+```
+
+`Request` is produced once by `Client.StreamWithPhase`; adapters receive it and must not inspect global config. `ProviderOptions` is reserved for explicit namespaced protocol-native settings added later (for example `openai.reasoning_effort`); no unvalidated free-form config is accepted in this tranche. It deliberately contains no reasoning-level field yet, because this tranche does not define or persist a canonical reasoning type.
+
+### 4. Adapter contract
+
+```go
+type Protocol interface {
+    ID() string
+    Validate(Request) error
+    Lower(Request) (any, error)
+}
+```
+
+`Lower` returns a concrete native Go request struct that is JSON-marshaled by the shared HTTP code. Protocols do not choose endpoint, credentials, or retry behavior. The existing parser functions stay in their matching transport implementation for this tranche; a later native protocol adds both a lowerer and parser.
+
+### 5. OpenAI Chat adapter behavior
+
+`OpenAIChatProtocol` lowers to a native body containing only model, messages, tools, `stream`, and optional stream options. It validates that the model's `OpenAIChatVariant` exists. It always emits model and stream; it emits tools only if supplied; it emits `stream_options` only if `IncludeStreamUsage` is true. Before serializing copied assistant history, it removes reasoning and encrypted reasoning fields when `IncludeReasoningContent` is false. Tools require `Capabilities.Tools`; supplied tools to a model declaring false are an error, not omission.
+
+For GLM5.2, the saved entry can explicitly set both OpenAI Chat variant booleans false. This yields valid base Chat JSON without `stream_options` or reasoning-history fields.
+
+### 6. Responses adapter behavior
+
+`OpenAIResponsesProtocol` wraps the existing request/input conversion and selects its current normal or lite builder from `ResponsesVariant.Lite`. It validates OAuth/provider match and rejects supplied tools when `Capabilities.Tools` is false. It preserves all current Responses headers, encrypted reasoning continuation handling, tool conversion, `store:false`, and the lite `reasoning.context:"all_turns"` behavior.
+
+Export the existing provider-private lite predicate as `provider.IsResponsesLiteModel(model string) bool`. First-run calls this exact predicate when it saves a `ResponsesVariant`; this is the single existing model-family decision and must not be duplicated.
+
+### 7. Reasoning normalization, deferred implementation
+
+This tranche does **not** reintroduce UI/persistence/cycling of reasoning levels. The first follow-up will add a strict canonical level to the established common request and map it in each protocol: OpenAI Chat `reasoning_effort`, Responses `reasoning.effort`, Anthropic thinking budget, and Gemini thinking config. An adapter must error if a selected level is unsupported by that model's declared `Capabilities.Reasoning`; it must not clamp or fall back.
 
 ## Rejected or deferred alternatives
 
-- Multi-provider normalization, provider capability detection, default/supported-level lookup, and model-prefix matching are deferred; they require unavailable authoritative model metadata.
-- `/reasoning` is deferred; Ctrl+] is the sole requested control surface.
-- Persisting in `modes.json` is rejected because it is migration-only. Persisting in `agents.json` is rejected because this setting is model-wide and would alter the active agent-state schema.
-- Reintroducing output display, `ShowReasoning`, `ReasoningMaxHeight`, `OnReasoning`, compaction changes, temperature/top-p coupling, budgets, or a fallback/clamp is out of scope.
+- Separate complete JSON Schema documents per model are rejected. They duplicate protocol schemas and are not OpenCode's primary pattern. Concrete Go request structs are protocol schemas; model variants contain only model-specific differences.
+- Automatic catalog download, model-prefix rules, endpoint probing, and capability guessing are rejected. The user must save authoritative values in configuration.
+- Native Anthropic, Gemini, Bedrock, or other adapters are deferred. Each needs its own message/tool request representation and response parser.
+- Free-form provider JSON patches are deferred: they bypass validation and recreate the invalid-field problem.
+- Reasoning-level UI/configuration, tool-schema dialect projection, response parser refactoring, session format changes, and compaction changes are deferred.
 
 ## Exact write paths
 
-- `internal/reasoning/levels.go`: create
-- `internal/reasoning/levels_test.go`: create
 - `internal/config/config.go`: modify
 - `internal/config/config_test.go`: modify
+- `firstrun.go`: modify
+- `firstrun_test.go`: modify
+- `internal/provider/openai_responses.go`: modify
+- `internal/provider/protocol.go`: create
+- `internal/provider/openai_chat_protocol.go`: create
+- `internal/provider/openai_chat_protocol_test.go`: create
+- `internal/provider/openai_responses_protocol.go`: create
+- `internal/provider/openai_responses_protocol_test.go`: create
 - `internal/provider/provider.go`: modify
 - `internal/provider/provider_test.go`: modify
 - `internal/provider/openai_responses.go`: modify
 - `internal/provider/openai_responses_test.go`: modify
-- `internal/runtime/runtime.go`: modify
 - `internal/runtime/runtime_test.go`: modify
-- `internal/console/console.go`: modify
 - `internal/console/console_test.go`: modify
+- `internal/telegram/commands_test.go`: modify
 
 No other paths may change.
 
 ## Sequential delegation units
 
-### Unit 1 — Canonical reasoning primitives
+### Unit 1 — Explicit saved model metadata
 
-**Goal:** provide the strict canonical value contract shared by configuration, runtime, and provider code.
+**Goal:** require each selected full model ID to declare its protocol, capabilities, and protocol-specific variant.
 
-**Write paths:** `internal/reasoning/levels.go`, `internal/reasoning/levels_test.go`
+**Write paths:** `internal/config/config.go`, `internal/config/config_test.go`, `firstrun.go`, `firstrun_test.go`
 
-**Recipe:** create exported `type Level string`; exported constants `None`, `Min`, `Low`, `Med`, `High`, `XHigh`, `Max`; and exactly these functions:
-- `Normalize(raw string) (Level, error)`: accept only the seven exact strings.
-- `Next(level Level) (Level, error)`: validate then cycle `none -> min -> low -> med -> high -> xhigh -> max -> none`.
-- `Effort(level Level) (string, error)`: return `""` for none, `"minimal"` for min, `"medium"` for med, and the direct canonical string for all other valid levels.
+**Implementation recipe:**
+1. Add exported `ModelDefinition`, `ModelCapabilities`, `OpenAIChatVariant`, `ResponsesVariant`, and the exact exported protocol constants `ProtocolOpenAIChat` and `ProtocolOpenAIResponses` exactly as declared in this task.
+2. Add `Models map[string]ModelDefinition json:"models"` to `Config`; initialize it as an empty map in `Default`.
+3. Add validation for each model key: it must pass existing full model-ID parsing, refer to a configured provider, use one of the two declared protocols, match the provider's auth type, have exactly its required variant, and have no variant for the other protocol.
+4. Extend existing model-reference validation so every configured favourite, role value, and non-empty last model is present in `Models`. The client-resolution unit validates separately loaded active interactive-agent IDs before any provider request; do not make `Config` load `agents.json`.
+5. In `internal/provider/openai_responses.go`, rename/export the existing `isResponsesLiteModel` predicate as `IsResponsesLiteModel(model string) bool` without changing its condition. Update its in-package call sites to the exported name.
+6. In `firstrun.go`, add private `firstRunModelDefinition(protocol, modelName string) (config.ModelDefinition, error)`. For `ProtocolOpenAIChat`, return exactly the configured standard definition. For `ProtocolOpenAIResponses`, return exactly the OAuth definition and obtain `ResponsesVariant.Lite` solely from `provider.IsResponsesLiteModel(modelName)`. Any other protocol returns an error. This helper makes no network or config calls.
+7. Update first-run standard and OAuth model setup to call `firstRunModelDefinition` and store its returned definition. Do not duplicate the definition literal or model-prefix decision at either call site.
+6. Do not migrate old config, infer catalog entries, change ID syntax, or add defaults for absent metadata.
 
-Keep the ordered values private and add no provider/model/config dependencies. Tests assert all valid values, rejected empty/uppercase/`ultra`/custom values, every cycle edge including wrap-around, and every exact mapping.
+**Tests and assertions:** valid standard and OAuth catalog entries validate. Missing entry for a favourite, role, or last model fails. The client-routing unit tests separately assert that an interactive-agent model without a catalog entry fails before HTTP transport. Unknown protocol, malformed key, unknown provider, auth/protocol mismatch, missing required variant, and prohibited extra variant each fail with relevant errors. Tests call `firstRunModelDefinition` directly and assert its exact standard and OAuth definitions, including the latter's Lite value from `provider.IsResponsesLiteModel`; an unknown protocol errors. Existing provider tests continue to prove the exported lite predicate has its prior behavior.
 
-**Verification:** `go test ./internal/reasoning`
+**Verification:** `go test ./internal/config`; `go test .`
 
-### Unit 2 — Per-model durable configuration
+### Unit 2 — Common request and OpenAI Chat protocol
 
-**Goal:** persist and validate a canonical level for each full model ID.
+**Goal:** replace direct standard request serialization with an OpenCode-style common request lowered by a selected protocol.
 
-**Write paths:** `internal/config/config.go`, `internal/config/config_test.go`
+**Write paths:** `internal/provider/protocol.go`, `internal/provider/openai_chat_protocol.go`, `internal/provider/openai_chat_protocol_test.go`
 
-**Dependencies:** Unit 1; current Config validation and save behavior.
+**Implementation recipe:**
+1. Declare private `Request`, `ModelReference`, and `Protocol` exactly as described in the resolved design. `Request` keeps copied session messages, OpenAI tools, streaming intent, and reserved provider options; no JSON tags are placed on it.
+2. Implement private `openAIChatProtocol` in `openai_chat_protocol.go`, including a concrete native request struct with current OpenAI Chat JSON names and the existing `streamOptions` type.
+3. `Validate` requires `Protocol == openai-chat`, a non-nil `OpenAIChatVariant`, and errors if tools are supplied while `Capabilities.Tools` is false.
+4. `Lower` copies messages, clears `ReasoningContent`, `ReasoningEncryptedContent`, and their presence state only when `IncludeReasoningContent` is false, and produces native JSON fields per the resolved behavior. It errors for an empty model name or failed validation.
+5. Do not add an HTTP call, SSE parser, model detection, a public registry, or generic schema library.
 
-**Recipe:** add `ReasoningLevels map[string]string json:"reasoning_levels,omitempty"` to `Config`. During `Validate`, normalize every map value and return an error identifying the offending model key. Add `ReasoningLevelForModel(modelID string) (reasoning.Level, error)` to return stored normalized level or `reasoning.None` when absent. Add `SetReasoningLevelForModel(modelID string, level reasoning.Level) error` to validate, initialize the map, and store the canonical string without saving. Do not alter unrelated defaults, `StripReasoning`, or model-ID validation.
-
-Tests assert absent entry returns none; setter stores under the full model ID and JSON round-trips; invalid stored value fails validation and identifies its key.
-
-**Verification:** `go test ./internal/config`
-
-### Unit 3 — OpenAI request effort propagation
-
-**Goal:** send the resolved canonical setting in both implemented OpenAI request wire shapes.
-
-**Write paths:** `internal/provider/provider.go`, `internal/provider/provider_test.go`, `internal/provider/openai_responses.go`, `internal/provider/openai_responses_test.go`
-
-**Dependencies:** Unit 1; current standard inline request construction and Responses builders.
-
-**Recipe:** add `ReasoningLevel reasoning.Level` to `Client`, initialized by `NewClient` to `reasoning.None`. Add `ReasoningEffort string json:"reasoning_effort,omitempty"` to `chatRequest`; calculate `reasoning.Effort(c.ReasoningLevel)` before standard request marshal and return its error. Pass the same calculated effort into `buildChatGPTRequest` and `buildChatGPTLiteRequest` through an added `reasoning.Level` parameter; populate `chatGPTReasoning.Effort` from it. Preserve lite `Context: "all_turns"` and leave `Summary` empty. Invalid client level returns an error; no replacement level is chosen.
-
-Tests assert standard high serializes flat `reasoning_effort:"high"`, none omits it; Responses med serializes nested `reasoning.effort:"medium"`; lite high includes both effort and `all_turns`; lite none omits effort while retaining context; invalid level returns an error.
+**Tests and assertions:** an enabled variant serializes model, messages, tools, stream, stream usage, and reasoning fields. A GLM-style disabled variant serializes model/messages/tools/stream but not stream options or either reasoning field. Tools against `Capabilities.Tools:false`, empty model, and a malformed protocol/variant fail.
 
 **Verification:** `go test ./internal/provider`
 
-### Unit 4 — Runtime selection, model application, and persistence
+### Unit 3 — Responses protocol wrapper
 
-**Goal:** make the resolved level track every active model and persist a user cycle safely.
+**Goal:** represent the existing OAuth Responses path as a protocol adapter without changing its wire contract.
 
-**Write paths:** `internal/runtime/runtime.go`, `internal/runtime/runtime_test.go`
+**Write paths:** `internal/provider/openai_responses_protocol.go`, `internal/provider/openai_responses_protocol_test.go`, `internal/provider/openai_responses.go`, `internal/provider/openai_responses_test.go`
 
-**Dependencies:** Units 1–3; `Config` lookup/setter and provider client field.
+**Implementation recipe:**
+1. Implement private `openAIResponsesProtocol` satisfying `Protocol`.
+2. Its `Validate` requires protocol `openai-responses`, non-nil `ResponsesVariant`, and tools only when capability allows them.
+3. Its `Lower` delegates to the existing normal or lite Responses builder according to `ResponsesVariant.Lite`; change those builders only as needed to accept common `Request` input instead of independent model/messages/tools arguments.
+4. Preserve every current native request field, headers, OAuth refresh behavior, encrypted reasoning continuation input, response event parsing, tool handling, and lite all-turns context.
+5. Do not modify response parser semantics or add reasoning effort.
 
-**Recipe:** add `ReasoningLevel reasoning.Level` to `Agent`. In `newAgent` and `applyModel`, resolve `Config.ReasoningLevelForModel(fullModelID)` before committing replacement state; set both Agent and Provider levels. Add `SetReasoningLevel(raw string) error`: normalize raw input, update the current model's config entry, call existing `Config.Save`, and only then set Agent/Provider fields. Add `NextReasoningLevel() (reasoning.Level, error)`: calculate next via `reasoning.Next`, delegate to setter, return the new level. Preserve level on any error. Do not change `SetModel`, `SetModelLocal`, interactive-agent selection, their existing persistence responsibilities, model precedence, or session/compaction behavior.
+**Tests and assertions:** normal and lite variants serialize their existing request shapes, including Responses tools/input handling and lite `reasoning.context:"all_turns"`. Invalid variant and tools-disabled requests fail before builder output. Existing Responses streaming tests continue to pass unchanged in behavior.
 
-Tests assert new agents without entries use none in both Agent and Provider; setting high persists the complete current model key; invalid input and failed config save preserve state; all cycle transitions persist; model and interactive-agent changes load independent persisted values while missing entries use none; `SetModelLocal` resolves level without a new persistence side effect.
+**Verification:** `go test ./internal/provider`
 
-**Verification:** `go test ./internal/runtime`
+### Unit 4 — Client routing through selected protocol
 
-### Unit 5 — Console control and status surface
+**Goal:** select the adapter from saved model metadata and route each existing transport through its matching protocol.
 
-**Goal:** expose the runtime cycle through Ctrl+] and visibly reflect the active value.
+**Write paths:** `internal/provider/provider.go`, `internal/provider/provider_test.go`, `internal/runtime/runtime_test.go`, `internal/console/console_test.go`, `internal/telegram/commands_test.go`
 
-**Write paths:** `internal/console/console.go`, `internal/console/console_test.go`
+**Implementation recipe:**
+1. Extend `Client` with a private selected `ModelReference` and `Protocol`.
+2. In `NewClient`, resolve the full configured model ID to its `ModelDefinition`, validate it through config, construct the matching private protocol, and retain the model suffix as the native model name. Return a relevant error for absent/invalid catalog metadata or unsupported protocol.
+3. In `StreamWithPhase`, construct one `Request` from client metadata, incoming messages, incoming tools, and `Stream:true`; call the selected protocol's `Validate` and `Lower` before any HTTP work.
+4. Standard OpenAI Chat transport JSON-marshals the lowered native body and preserves current endpoint, headers, retry, raw capture, phase, and SSE parser behavior. OAuth transport sends the lowered Responses native body through its existing HTTP flow.
+5. Remove the direct inline standard `chatRequest` construction. Do not add fallback routing or alter model selection/persistence.
+6. Update only the affected test fixtures identified in `.agents/explorer/000005-model-catalog-fixture-inventory.md`: provider, runtime, console, and Telegram API-key fixtures must declare the exact OpenAI Chat model definitions for every full model ID that reaches `NewClient`, with `Tools:true`, `Reasoning:false`, and both OpenAI Chat variant flags true. Add the required definition for a model used only by `SetModel` even when it is not a favourite. Do not modify llmcall fake-factory tests or the OAuth provider-only test path because they do not call `NewClient` with a model ID.
 
-**Dependencies:** Unit 4; existing readline action/error/status patterns.
+**Tests and assertions:** configured OpenAI Chat and Responses model definitions select their matching adapters. A GLM-style OpenAI Chat entry sends filtered JSON through an intercepted standard request and still parses the existing SSE result. Missing catalog metadata, protocol mismatch, and tools-disabled model fail before an HTTP request. Existing standard and OAuth happy-path tests retain their response behavior. Updated runtime, console, and Telegram fixtures preserve their existing behavioral assertions while supplying the explicit metadata required by their configured model IDs.
 
-**Recipe:** in `runTTY`, register action `blazeai-reasoning-next`; it calls `Agent.NextReasoningLevel`, reports errors using the existing shortcut error path, and calls `updateStatusBar` only after success. Bind it in the emacs map using `inputrc.Unescape("\\C-]")`. Add the exact splash label `Ctrl+]: cycle reasoning level`. In `buildStatusBar`, add `Reasoning: <canonical-level>` while preserving phase, agent, model, work-directory, width, and CTX output behavior. Do not add a slash command or any reasoning-content display.
-
-Tests assert splash contains the exact label; status output includes `Reasoning: none` and a non-default canonical value while retaining existing model and CTX text.
-
-**Verification:** `go test ./internal/console`
+**Verification:** `go test ./internal/provider`
 
 ## Final integration verification
 
@@ -142,21 +228,57 @@ After all units: `go test ./...`
 ## Acceptance criteria
 
 - Only declared paths change.
-- The seven lowercase canonical levels are strict, cycle with wrap-around, and map exactly to OpenAI effort strings.
-- A full model ID has an independently persisted level in `config.json`; missing entry is explicit none and invalid stored entry errors.
-- Agent creation, `SetModel`, `SetModelLocal`, and agent switching apply the selected model's resolved level to both Agent and Provider without changing established model persistence or precedence.
-- Standard and Responses OpenAI paths emit correct effort fields; none omits effort; lite preserves `all_turns`; invalid level errors rather than falling back.
-- Ctrl+] persists and refreshes the visible level; no slash command, output callback/display, capability table, or multi-provider behavior is added.
-- All six package commands pass: reasoning, config, provider, runtime, console, and all packages.
+- Saved `models` metadata explicitly defines every selected model's protocol, capabilities, and valid protocol variant; no old implicit request contract remains.
+- A private provider-neutral request is created once and lowered by the selected protocol before JSON encoding.
+- OpenAI Chat and OAuth Responses are separate adapters selected from model metadata, while endpoint/auth/transport remain client responsibilities.
+- A GLM5.2 OpenAI Chat variant can omit stream usage and historical reasoning fields with no model-name inference or fallback.
+- Tools sent to a model declaring tools disabled produce an explicit error before HTTP transport.
+- Existing successful OpenAI Chat and OAuth Responses behaviors are preserved by equivalent explicit catalog variants.
+- All verification commands pass.
 
 ## Unresolved questions
 
-None. OpenCode confirms that a broad compatibility system needs an authoritative model metadata source plus provider/model classification and override semantics. BlazeAI has none, so the proposed narrow OpenAI-only task deliberately sends a strict user-selected level and lets the upstream provider return an explicit rejection rather than inventing unsupported compatibility data.
+None. Native protocol additions and a precise reasoning-level model option are intentionally follow-up work once this common-request/catalog/adapter foundation is accepted.
 
 ## Stop conditions
 
-Stop for clarification if implementation requires changing `agents.json`, `modes.json` migration behavior, model selection precedence, adding provider-specific paths beyond the two OpenAI paths, inventing capability metadata, adding a fallback/clamp, reintroducing reasoning output, or modifying any undeclared path.
+Stop for clarification if implementation requires inferring metadata from model names, adding a fallback for an absent catalog entry, changing `agents.json` or session persistence, adding a native provider protocol beyond OpenAI Chat/Responses, adding free-form JSON patching, changing response-parser semantics, or modifying an undeclared path.
 
-## Rejection reason
+## Completion
 
-Rejected on 2026-07-27. OpenCode analysis showed that reliable reasoning-level compatibility depends on authoritative model metadata, provider/model-specific variants, release-date and family rules, and configuration overrides. BlazeAI does not have that metadata foundation. A partial OpenAI-only implementation would risk claiming compatibility where none exists, while reproducing OpenCode's system would be disproportionate complexity. The reasoning-level feature is abandoned with no implementation.
+**Accepted outcome:** BlazeAI now uses explicit saved model definitions to select an OpenAI Chat or OpenAI Responses protocol adapter. `Client.StreamWithPhase` creates one neutral request, validates/lowers it before transport, and sends the lowered native body. A GLM-style OpenAI Chat model variant can explicitly omit stream usage and historical reasoning fields. Missing metadata and capability/protocol mismatches fail before HTTP work; no fallback or model-name protocol selection was added.
+
+**Changed paths:**
+
+- `internal/config/config.go`
+- `internal/config/config_test.go`
+- `firstrun.go`
+- `firstrun_test.go`
+- `internal/provider/protocol.go`
+- `internal/provider/openai_chat_protocol.go`
+- `internal/provider/openai_chat_protocol_test.go`
+- `internal/provider/openai_responses_protocol.go`
+- `internal/provider/openai_responses_protocol_test.go`
+- `internal/provider/provider.go`
+- `internal/provider/provider_test.go`
+- `internal/provider/openai_responses.go`
+- `internal/provider/openai_responses_test.go`
+- `internal/runtime/runtime_test.go`
+- `internal/console/console_test.go`
+- `internal/telegram/commands_test.go`
+
+**Verification:**
+
+- `go test ./internal/config` — PASS
+- `go test .` — PASS
+- `go test ./internal/provider` — PASS
+- `go test ./internal/runtime` — PASS
+- `go test ./internal/console` — PASS
+- `go test ./internal/telegram` — PASS
+- Focused conformance audit `.agents/explorer/000006-protocol-routing-conformance.md` — PASS for all eight required facts.
+
+**Remaining issues:** Native Anthropic/Gemini adapters, tool-schema dialect projections, and configurable canonical reasoning levels are intentionally deferred. No accepted implementation blocker remains.
+
+## Post-completion verification correction
+
+Running `go test ./...` after the focused checks exposed `internal/compaction` tests that constructed a raw provider client with no selected protocol. The test fixture must instead create its summarization client through `provider.NewClient` using the same explicit OpenAI Chat model definition required by the new catalog contract. This is a fixture-only correction; it does not change production behavior or relax protocol selection.

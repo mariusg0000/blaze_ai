@@ -33,15 +33,19 @@ func TestBuildChatGPTRequestConvertsHistoryAndTools(t *testing.T) {
 			Arguments: `{"command":"pwd"}`,
 		},
 	}
-	request, err := buildChatGPTRequest("gpt-5.4", []session.Message{
-		{Role: "system", Content: "system prompt"},
-		{Role: "user", Content: "run pwd"},
-		{Role: "assistant", ToolCalls: []tools.OpenAIToolCall{call}},
-		{Role: "tool", ToolCallID: "call_1", Content: "output"},
-	}, []tools.OpenAITool{{
-		Type:     "function",
-		Function: tools.FunctionDef{Name: "shell", Description: "Run a command", Parameters: json.RawMessage(`{"type":"object"}`)},
-	}})
+	request, err := buildChatGPTRequest(Request{
+		Model: ModelReference{Name: "gpt-5.4"},
+		Messages: []session.Message{
+			{Role: "system", Content: "system prompt"},
+			{Role: "user", Content: "run pwd"},
+			{Role: "assistant", ToolCalls: []tools.OpenAIToolCall{call}},
+			{Role: "tool", ToolCallID: "call_1", Content: "output"},
+		},
+		Tools: []tools.OpenAITool{{
+			Type:     "function",
+			Function: tools.FunctionDef{Name: "shell", Description: "Run a command", Parameters: json.RawMessage(`{"type":"object"}`)},
+		}},
+	})
 	if err != nil {
 		t.Fatalf("buildChatGPTRequest() error: %v", err)
 	}
@@ -63,7 +67,13 @@ func TestBuildChatGPTRequestConvertsHistoryAndTools(t *testing.T) {
 func TestStreamChatGPTParsesTextToolCallAndUsage(t *testing.T) {
 	var requested *http.Request
 	client := &Client{
-		Model:          "gpt-5.4",
+		Model: "gpt-5.4",
+		modelRef: ModelReference{ID: "chatgpt/gpt-5.4", Name: "gpt-5.4", Definition: config.ModelDefinition{
+			Protocol:     config.ProtocolOpenAIResponses,
+			Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false},
+			Responses:    &config.ResponsesVariant{Lite: false},
+		}},
+		protocol:       openAIResponsesProtocol{},
 		PromptCacheKey: "blazeai-session-key",
 		AuthType:       config.OAuthAuthType,
 		OAuth: &config.OAuthCredential{
@@ -164,7 +174,13 @@ func TestStreamChatGPTParsesTextToolCallAndUsage(t *testing.T) {
 func TestStreamChatGPTAddsResponsesLiteHeaderForGPT56(t *testing.T) {
 	var requested *http.Request
 	client := &Client{
-		Model:    "gpt-5.6-luna",
+		Model: "gpt-5.6-luna",
+		modelRef: ModelReference{ID: "chatgpt/gpt-5.6-luna", Name: "gpt-5.6-luna", Definition: config.ModelDefinition{
+			Protocol:     config.ProtocolOpenAIResponses,
+			Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false},
+			Responses:    &config.ResponsesVariant{Lite: true},
+		}},
+		protocol: openAIResponsesProtocol{},
 		AuthType: config.OAuthAuthType,
 		OAuth: &config.OAuthCredential{
 			AccessToken:  "access-token",
@@ -215,19 +231,23 @@ func TestStreamChatGPTAddsResponsesLiteHeaderForGPT56(t *testing.T) {
 }
 
 func TestBuildChatGPTLiteRequestAddsAllTurnsReasoningAndStripsImageDetail(t *testing.T) {
-	request, err := buildChatGPTRequest("gpt-5.6-luna", []session.Message{{
-		Role: "user",
-		Content: []interface{}{
-			map[string]interface{}{"type": "text", "text": "describe"},
-			map[string]interface{}{"type": "image_url", "image_url": map[string]interface{}{"url": "data:image/png;base64,abc", "detail": "high"}},
-		},
-	}}, []tools.OpenAITool{{
-		Type:     "function",
-		Function: tools.FunctionDef{Name: "shell", Description: "Run a command", Parameters: json.RawMessage(`{"type":"object"}`)},
-	}, {
-		Type:     "function",
-		Function: tools.FunctionDef{Name: "load_skill", Description: "Load a skill", Parameters: json.RawMessage(`{"type":"object"}`)},
-	}})
+	request, err := buildChatGPTLiteRequest(Request{
+		Model: ModelReference{Name: "gpt-5.6-luna"},
+		Messages: []session.Message{{
+			Role: "user",
+			Content: []interface{}{
+				map[string]interface{}{"type": "text", "text": "describe"},
+				map[string]interface{}{"type": "image_url", "image_url": map[string]interface{}{"url": "data:image/png;base64,abc", "detail": "high"}},
+			},
+		}},
+		Tools: []tools.OpenAITool{{
+			Type:     "function",
+			Function: tools.FunctionDef{Name: "shell", Description: "Run a command", Parameters: json.RawMessage(`{"type":"object"}`)},
+		}, {
+			Type:     "function",
+			Function: tools.FunctionDef{Name: "load_skill", Description: "Load a skill", Parameters: json.RawMessage(`{"type":"object"}`)},
+		}},
+	})
 	if err != nil {
 		t.Fatalf("buildChatGPTRequest() error: %v", err)
 	}
@@ -253,9 +273,10 @@ func TestBuildChatGPTLiteRequestAddsAllTurnsReasoningAndStripsImageDetail(t *tes
 }
 
 func TestBuildChatGPTRequestNoSuffixOmitsReasoning(t *testing.T) {
-	request, err := buildChatGPTRequest("gpt-5.4", []session.Message{
-		{Role: "user", Content: "hello"},
-	}, nil)
+	request, err := buildChatGPTRequest(Request{
+		Model:    ModelReference{Name: "gpt-5.4"},
+		Messages: []session.Message{{Role: "user", Content: "hello"}},
+	})
 	if err != nil {
 		t.Fatalf("buildChatGPTRequest() error: %v", err)
 	}
@@ -268,9 +289,10 @@ func TestBuildChatGPTRequestNoSuffixOmitsReasoning(t *testing.T) {
 }
 
 func TestBuildChatGPTLiteRequestNoSuffixUsesAllTurnsContext(t *testing.T) {
-	request, err := buildChatGPTRequest("gpt-5.6-luna", []session.Message{
-		{Role: "user", Content: "hello"},
-	}, nil)
+	request, err := buildChatGPTLiteRequest(Request{
+		Model:    ModelReference{Name: "gpt-5.6-luna"},
+		Messages: []session.Message{{Role: "user", Content: "hello"}},
+	})
 	if err != nil {
 		t.Fatalf("buildChatGPTRequest() error: %v", err)
 	}

@@ -16,6 +16,7 @@ import (
 
 	"blazeai/internal/config"
 	"blazeai/internal/session"
+	"blazeai/internal/tools"
 	usagepkg "blazeai/internal/usage"
 )
 
@@ -27,6 +28,13 @@ func mockProvider(t *testing.T, server *httptest.Server) *config.Config {
 				Name:     "test",
 				Endpoint: server.URL,
 				APIKey:   "sk-test",
+			},
+		},
+		Models: map[string]config.ModelDefinition{
+			"test/test-model": {
+				Protocol:     config.ProtocolOpenAIChat,
+				Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false},
+				OpenAIChat:   &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
 			},
 		},
 		Roles: config.Roles{Default: "test/test-model"},
@@ -55,6 +63,131 @@ func TestNewClient(t *testing.T) {
 	}
 	if transport.ResponseHeaderTimeout != providerResponseHeaderTimeout {
 		t.Fatalf("ResponseHeaderTimeout = %s, want %s", transport.ResponseHeaderTimeout, providerResponseHeaderTimeout)
+	}
+}
+
+func TestNewClientSelectsCatalogProtocol(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+
+	standard := mockProvider(t, server)
+	standardClient, err := NewClient(standard, "test/test-model")
+	if err != nil {
+		t.Fatalf("standard NewClient() error: %v", err)
+	}
+	if _, ok := standardClient.protocol.(openAIChatProtocol); !ok {
+		t.Fatalf("standard protocol = %T, want openAIChatProtocol", standardClient.protocol)
+	}
+
+	oauth := &config.Config{
+		Providers: []config.Provider{{
+			Name:     "chatgpt",
+			Endpoint: server.URL,
+			AuthType: config.OAuthAuthType,
+			OAuth:    &config.OAuthCredential{RefreshToken: "refresh-token"},
+		}},
+		Models: map[string]config.ModelDefinition{
+			"chatgpt/gpt-5.4": {
+				Protocol:     config.ProtocolOpenAIResponses,
+				Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false},
+				Responses:    &config.ResponsesVariant{Lite: false},
+			},
+		},
+		Roles: config.Roles{Default: "chatgpt/gpt-5.4"},
+	}
+	oauthClient, err := NewClient(oauth, "chatgpt/gpt-5.4")
+	if err != nil {
+		t.Fatalf("OAuth NewClient() error: %v", err)
+	}
+	if _, ok := oauthClient.protocol.(openAIResponsesProtocol); !ok {
+		t.Fatalf("OAuth protocol = %T, want openAIResponsesProtocol", oauthClient.protocol)
+	}
+}
+
+func TestNewClientModelMetadataErrorsBeforeHTTP(t *testing.T) {
+	cases := []struct {
+		name   string
+		models map[string]config.ModelDefinition
+		tools  []tools.OpenAITool
+	}{
+		{name: "missing catalog", models: nil},
+		{name: "invalid protocol", models: map[string]config.ModelDefinition{
+			"test/test-model": {Protocol: "unknown", OpenAIChat: &config.OpenAIChatVariant{}},
+		}},
+		{name: "tools disabled", models: map[string]config.ModelDefinition{
+			"test/test-model": {
+				Protocol:     config.ProtocolOpenAIChat,
+				Capabilities: config.ModelCapabilities{Tools: false},
+				OpenAIChat:   &config.OpenAIChatVariant{},
+			},
+		}, tools: []tools.OpenAITool{{Type: "function"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprintln(w, "data: [DONE]")
+			}))
+			defer server.Close()
+			cfg := mockProvider(t, server)
+			cfg.Models = tc.models
+			client, err := NewClient(cfg, "test/test-model")
+			if tc.name == "missing catalog" || tc.name == "invalid protocol" {
+				if err == nil {
+					t.Fatal("NewClient() expected metadata error, got nil")
+				}
+				if calls != 0 {
+					t.Fatalf("HTTP handler called %d times", calls)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NewClient() error: %v", err)
+			}
+			_, err = client.Stream(context.Background(), []session.Message{{Role: "user", Content: "hi"}}, tc.tools, nil, nil)
+			if err == nil {
+				t.Fatal("Stream() expected tools capability error, got nil")
+			}
+			if calls != 0 {
+				t.Fatalf("HTTP handler called %d times", calls)
+			}
+		})
+	}
+}
+
+func TestStreamGLMStyleChatProfileFiltersUnsupportedFields(t *testing.T) {
+	var requestBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		requestBody = string(data)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"ok"}}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "data: [DONE]")
+		fmt.Fprintln(w)
+	}))
+	defer server.Close()
+	cfg := mockProvider(t, server)
+	cfg.Models["test/test-model"] = config.ModelDefinition{
+		Protocol:     config.ProtocolOpenAIChat,
+		Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false},
+		OpenAIChat:   &config.OpenAIChatVariant{},
+	}
+	client, err := NewClient(cfg, "test/test-model")
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+	resp, err := client.Stream(context.Background(), []session.Message{{Role: "assistant", Content: "old", Reasoning: "hidden", ReasoningEncrypted: "encrypted", ReasoningPresent: true}}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Stream() error: %v", err)
+	}
+	if resp.Content != "ok" {
+		t.Fatalf("Content = %q, want ok", resp.Content)
+	}
+	if strings.Contains(requestBody, "stream_options") || strings.Contains(requestBody, "reasoning_content") || strings.Contains(requestBody, "reasoning_encrypted_content") {
+		t.Fatalf("GLM-style request contains disabled fields: %s", requestBody)
 	}
 }
 
@@ -292,6 +425,11 @@ func TestStreamResponseHeaderTimeout(t *testing.T) {
 		Endpoint: server.URL,
 		APIKey:   "sk-test",
 		Model:    "test-model",
+		modelRef: ModelReference{ID: "test/test-model", Name: "test-model", Definition: config.ModelDefinition{
+			Protocol:   config.ProtocolOpenAIChat,
+			OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
+		}},
+		protocol: openAIChatProtocol{},
 		HTTP: &http.Client{Transport: &http.Transport{
 			DialContext:           (&net.Dialer{Timeout: time.Second}).DialContext,
 			ResponseHeaderTimeout: 50 * time.Millisecond,
@@ -332,6 +470,11 @@ func TestStreamIdleTimeout(t *testing.T) {
 		Endpoint: server.URL,
 		APIKey:   "sk-test",
 		Model:    "test-model",
+		modelRef: ModelReference{ID: "test/test-model", Name: "test-model", Definition: config.ModelDefinition{
+			Protocol:   config.ProtocolOpenAIChat,
+			OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
+		}},
+		protocol: openAIChatProtocol{},
 		HTTP:     newHTTPClient(),
 	}
 

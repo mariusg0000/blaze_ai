@@ -1,12 +1,14 @@
 # Runtime Core
 
-## Source Files
+## Sources
 
 | File | Role |
 |------|------|
 | `internal/runtime/runtime.go` | Handler interface, Agent struct, NewAgent, RunTurn, SetModel, SetModelLocal, SetWorkDir, CloseSession, ResetConversation, SetMode, NextMode |
 | `internal/runtime/agent_orchestration.go` | One-shot child-agent execution, persistent sessions, dual timeout |
 | `internal/runtime/mode_capabilities.go` | Mode tool deny-list and sub-agent allow-list enforcement |
+| `internal/provider/provider.go` (`NewClient`, `StreamWithPhase`) | Catalog-backed client creation and protocol-lowered streaming |
+| `internal/config/config.go` (`Config.Models`, `ModelDefinition`) | Model protocol/capability metadata consumed by provider clients |
 
 ## Overview
 
@@ -68,8 +70,10 @@ RunTurn(ctx, userInput)
        ├─ Write prompt.json debug file when config.debugPrompt is true
        ├─ injectDirective(messages, mode.Directive)  → volatile mode injection
        │
-       ├─ Provider.Stream(ctx, messages, tools, onContent, onReasoning)
-       │    └─ onReasoning captures reasoning/thinking chunks for session persistence
+        ├─ Provider.Stream(ctx, messages, tools, onContent, onReasoning)
+        │    ├─ provider builds and validates a metadata-bound Request
+        │    ├─ selected Chat or Responses adapter lowers the request
+        │    └─ onReasoning captures reasoning/thinking chunks for session persistence
        │
        ├─ OnUsage(promptTokens, cachedTokens, uncachedTokens)  → report token usage
        ├─ Build assistant message + persist
@@ -246,7 +250,8 @@ needed.
 ### validateModelInConfig
 
 Validates `provider/model_name` format and ensures the provider exists in config.
-Does not call the provider endpoint — only config-level validation.
+`applyModel` then calls `provider.NewClient`, which requires the model catalog
+entry and rejects unsupported protocol metadata before any provider request.
 
 ## Startup Wiring (NewAgent)
 
@@ -256,8 +261,8 @@ NewAgent(cfg, sess, os, promptsFS, workDir, handler, transportName)
   ├─ config.LoadModes(modelID)      → load modes with fallback
   ├─ Auto-create default mode if empty
   ├─ Resolve active mode: lastMode > firstMode
-  ├─ provider.NewClient(cfg, modelID)  → primary LLM client
-  ├─ provider.NewClient(cfg, summarizationModel)  → secondary (if different model)
+   ├─ provider.NewClient(cfg, modelID)  → primary LLM client; catalog metadata required
+   ├─ provider.NewClient(cfg, summarizationModel)  → secondary; each model resolves its own metadata
   ├─ prompt.Builder{...}            → prompt assembler
   ├─ compaction.NewManager(...)     → compaction orchestrator
    ├─ skills.DiscoverAll(workDir, builtinFS) → skills map + compat diags; prompt builder surfaces diags, load_skill still resolves builtin skill-manager

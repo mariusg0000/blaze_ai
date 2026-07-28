@@ -1,6 +1,6 @@
 # Tools
 
-## Source Files
+## Sources
 
 | File | Contents |
 |------|----------|
@@ -13,6 +13,10 @@
 | `internal/tools/write_file.go` | write_file implementation |
 | `internal/tools/helper_exec.go` | Helper binary execution utilities |
 | `internal/tools/tools_test.go` | FormatArgs tests, schema validation |
+| `internal/provider/protocol.go` (`Request`, `Protocol`) | Provider-neutral request boundary receiving tool definitions |
+| `internal/provider/openai_chat_protocol.go` (`openAIChatProtocol.Lower`) | Chat lowering of OpenAI tool definitions and capability checks |
+| `internal/provider/openai_responses_protocol.go` (`openAIResponsesProtocol.Lower`) | Responses protocol selection and capability checks |
+| `internal/provider/openai_responses.go` (`buildResponseTools`) | Responses wire-format tool conversion |
 
 Individual tool files have their own specs (06–08). This file covers the shared
 tool system: interface, registry, OpenAI format, conventions, and simple tools.
@@ -71,8 +75,11 @@ registry.Register(NewWriteFileTool(workDirGetter))
 
 ## OpenAI Tool Calling Format
 
-Tools are sent to the LLM as OpenAI-compatible `functions` in the chat completion
-request. The runtime converts all registered tools via `AllToOpenAI()`:
+The runtime converts all registered tools via `AllToOpenAI()` into the shared
+OpenAI-compatible definition. The catalog-selected provider protocol then lowers
+that definition: OpenAI Chat sends it in the Chat `tools` field, while OAuth
+Responses converts it through `buildResponseTools` into the Responses tool shape.
+The runtime tool-call lifecycle is unchanged by this wire-format boundary.
 
 ```go
 type OpenAITool struct {

@@ -106,6 +106,8 @@ type Client struct {
 	ThreadID         string
 	WindowID         string
 	InstallationID   string
+	modelRef         ModelReference
+	protocol         Protocol
 	oauthMu          sync.Mutex
 }
 
@@ -130,7 +132,23 @@ func NewClient(cfg *config.Config, modelID string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	definition, ok := cfg.Models[modelID]
+	if !ok {
+		return nil, fmt.Errorf("model catalog entry is missing for %s", modelID)
+	}
+	modelRef := ModelReference{ID: modelID, Name: modelName, Definition: definition}
+	var protocol Protocol
+	switch definition.Protocol {
+	case config.ProtocolOpenAIChat:
+		protocol = openAIChatProtocol{}
+	case config.ProtocolOpenAIResponses:
+		protocol = openAIResponsesProtocol{}
+	default:
+		return nil, fmt.Errorf("unsupported model protocol %q for %s", definition.Protocol, modelID)
+	}
 	client.Model = modelName
+	client.modelRef = modelRef
+	client.protocol = protocol
 	return client, nil
 }
 
@@ -345,17 +363,6 @@ func (c *Client) listChatGPTModels() ([]string, error) {
 	return models, nil
 }
 
-// chatRequest is the request body sent to the chat completions endpoint.
-//
-// WHAT:  OpenAI-compatible chat completion request with streaming and tools.
-type chatRequest struct {
-	Model         string             `json:"model"`
-	Messages      []session.Message  `json:"messages"`
-	Tools         []tools.OpenAITool `json:"tools,omitempty"`
-	Stream        bool               `json:"stream"`
-	StreamOptions *streamOptions     `json:"stream_options,omitempty"`
-}
-
 // streamOptions controls what additional data is included in the streaming response.
 //
 // WHAT:  Configures the streaming response to include token usage.
@@ -444,10 +451,36 @@ func (c *Client) StreamWithPhase(ctx context.Context, messages []session.Message
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if c.protocol == nil {
+		return nil, fmt.Errorf("internal provider protocol is not selected")
+	}
+	commonRequest := Request{
+		Model:           c.modelRef,
+		Messages:        messages,
+		Tools:           toolDefs,
+		Stream:          true,
+		ProviderOptions: nil,
+	}
+	if err := c.protocol.Validate(commonRequest); err != nil {
+		return nil, err
+	}
+	lowered, err := c.protocol.Lower(commonRequest)
+	if err != nil {
+		return nil, err
+	}
 	if c.AuthType == config.OAuthAuthType {
+		requestBody, ok := lowered.(chatGPTResponsesRequest)
+		if !ok {
+			return nil, fmt.Errorf("internal provider protocol routing error: expected ChatGPT Responses request, got %T", lowered)
+		}
+		lite := c.modelRef.Definition.Responses.Lite
 		return c.streamWithRetry(ctx, func() (*Response, error) {
-			return c.streamChatGPT(ctx, messages, toolDefs, onContent, onReasoning, onPhase)
+			return c.streamChatGPT(ctx, requestBody, lite, onContent, onReasoning, onPhase)
 		})
+	}
+	requestBody, ok := lowered.(openAIChatRequest)
+	if !ok {
+		return nil, fmt.Errorf("internal provider protocol routing error: expected OpenAI Chat request, got %T", lowered)
 	}
 	var capture *session.RawCapture
 	if c.RawCaptureFolder != "" {
@@ -459,14 +492,7 @@ func (c *Client) StreamWithPhase(ctx context.Context, messages []session.Message
 	if onPhase != nil {
 		onPhase(PhaseConnecting)
 	}
-	reqBody := chatRequest{
-		Model:         c.Model,
-		Messages:      messages,
-		Tools:         toolDefs,
-		Stream:        true,
-		StreamOptions: &streamOptions{IncludeUsage: true},
-	}
-	bodyData, err := json.Marshal(reqBody)
+	bodyData, err := json.Marshal(requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("cannot marshal request: %w", err)
 	}

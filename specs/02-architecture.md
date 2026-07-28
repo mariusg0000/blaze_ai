@@ -1,6 +1,6 @@
 # Architecture
 
-## Source Files
+## Sources
 
 | Package | File(s) | Role |
 |---------|---------|------|
@@ -12,7 +12,11 @@
 | `internal/telegram/` | `telegram.go`, `handler.go`, `commands.go`, `config.go`, `state.go`, `image_messages.go` | Telegram bridge transport (polling, message handling) |
 | `internal/tools/` | `tools.go`, `shell.go`, `skill_tools.go`, `replace_block.go`, `ask_friend.go`, `task_tools.go`, `agent_tools.go`, `read_file.go`, `write_file.go`, `analyze_image.go`, `image_input.go`, `helper_exec.go` | Native tool interface and implementations |
 | `internal/agents/` | `agents.go` | Markdown agent definition discovery, parsing, validation |
-| `internal/provider/` | `provider.go` | OpenAI-compatible HTTP streaming client |
+| `internal/provider/provider.go` | `NewClient`, `StreamWithPhase` | Catalog resolution, protocol dispatch, HTTP streaming |
+| `internal/provider/protocol.go` | `Protocol`, `Request`, `ModelReference` | Provider-neutral request contract |
+| `internal/provider/openai_chat_protocol.go` | `openAIChatProtocol` | OpenAI Chat validation and lowering |
+| `internal/provider/openai_responses_protocol.go` | `openAIResponsesProtocol` | Responses validation and normal/lite lowering |
+| `internal/provider/openai_responses.go` | `buildChatGPTRequest`, `buildChatGPTLiteRequest` | OAuth Responses wire builders and parser |
 | `internal/llmcall/` | `llmcall.go` | One-shot secondary LLM consultation (role-based) |
 | `internal/usage/` | `usage.go` | Provider-agnostic token usage extraction and normalization |
 | `internal/config/` | `config.go`, `modes.go` | Configuration load/save/validate, work mode management |
@@ -123,15 +127,11 @@ Three files:
 - Sudo always denied (no password channel over chat)
 
 ### Layer 4 — LLM Client (`internal/provider/`)
-- OpenAI-compatible HTTP streaming client
-- Streaming support via SSE parsing
-- Tool call extraction from response
-- Usage token reporting via `internal/usage`
-- Reasoning/thinking token extraction
-- No model-specific logic — works with any OpenAI-compatible endpoint
-- Supports both Chat Completions and Responses API formats
-- Prompt cache key and Responses identity for session-level caching
-- OAuth credential refresh support
+- `NewClient` requires the selected `provider/model_name` to have a validated `Config.Models` entry and selects its declared protocol; missing or unsupported metadata stops client creation.
+- `StreamWithPhase` creates the provider-neutral `Request`, validates it, lowers it through the selected `Protocol`, and only then enters the existing HTTP transport/parser path.
+- `openAIChatProtocol` lowers Chat requests, conditionally includes stream usage, and removes reasoning history fields when its catalog variant disables them.
+- `openAIResponsesProtocol` selects the normal or lite existing Responses builders; OAuth credential refresh, SSE parsing, tool-call extraction, usage reporting, cache identity, and Responses identity remain in the transport layer.
+- The current catalog exposes two protocol families: OpenAI Chat for non-OAuth providers and OAuth-backed OpenAI Responses. There is no model-name prefix protocol routing or automatic catalog inference.
 
 ### Layer 5 — Prompt Assembly (`internal/prompt/`)
 - `Builder` struct with `PromptsFS` (immutable embedded prompt templates) and `BuiltinSkillsFS` (immutable embedded builtin skills)
@@ -144,7 +144,7 @@ Three files:
 ### Layer 6 — Supporting Packages
 
 #### Config (`internal/config/`)
-- `config.json` — providers, favorite_models, roles, compaction, stripReasoning, last_model, helperSetup, debugPrompt
+- `config.json` — providers, explicit models catalog, favorite_models, roles, compaction, stripReasoning, last_model, helperSetup, debugPrompt
 - `modes.json` (separate file) — work modes with name/model/directive/denied_tools/agents, last_mode
 - Atomic saves with corruption fallback on modes
 - Migration from legacy config-embedded modes
@@ -229,8 +229,10 @@ Agent.RunTurn(ctx, userInput)
          ├─ 5. Write prompt.json only when config.debugPrompt is true
          ├─ 6. injectDirective(messages, mode.Directive)  → volatile mode injection
          │
-         ├─ 7. Provider.Stream(ctx, messages, tools, onContent, onReasoning)
-         │       └─ SSE stream → Handler.OnContent() / Handler.OnSystem()
+          ├─ 7. Provider.Stream(ctx, messages, tools, onContent, onReasoning)
+          │       ├─ build provider-neutral Request from selected model metadata
+          │       ├─ validate + lower through the selected protocol adapter
+          │       └─ existing Chat or OAuth Responses SSE stream → Handler callbacks
          │
          ├─ 8. Extract assistant message (content + tool_calls + reasoning)
          ├─ 9. Append assistant message to session
@@ -270,8 +272,8 @@ main()
   │    ├─ Migrate modes from config.json if present
   │    ├─ Load modes (modes.json) or create default
   │    ├─ Resolve active mode: lastMode > firstMode
-  │    ├─ Create provider client
-  │    ├─ Create summarization provider client (if separate role)
+   │    ├─ Create provider client; selected catalog metadata is required
+   │    ├─ Create summarization provider client with its own metadata (if separate role)
   │    ├─ Create prompt.Builder
   │    ├─ Create compaction.Manager
   │    ├─ Build tool registry (12 base tools + conditional run_agent)
@@ -318,3 +320,4 @@ No separate memory subsystem. Skill bodies may contain instructions and referenc
 - `SetModelLocal()` — transport-local switch without global persistence
 - `SetMode()` — switch work mode with model resolution and mode capabilities refresh
 - All three go through `applyModel()` which syncs the compactor and provider client
+- `provider.NewClient()` re-resolves the model catalog entry and protocol on every applied model; missing or unsupported metadata is an explicit error.

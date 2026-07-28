@@ -37,7 +37,7 @@ type chatGPTResponsesRequest struct {
 	ClientMetadata    map[string]string      `json:"client_metadata,omitempty"`
 }
 
-func isResponsesLiteModel(model string) bool {
+func IsResponsesLiteModel(model string) bool {
 	return strings.HasPrefix(model, "gpt-5.6-")
 }
 
@@ -106,10 +106,10 @@ type chatGPTResponseError struct {
 // WHY:   ChatGPT OAuth is not compatible with the public chat-completions route.
 // HOW:   Converts the current session to Responses input, sends bearer/account headers,
 // and maps Responses SSE events back to BlazeAI's internal response structure.
-// PARAMS: ctx — cancellation; messages — prompt/history; toolDefs — native tools;
-// onContent/onReasoning/onPhase — streaming callbacks.
+// PARAMS: ctx — cancellation; requestBody — lowered native request; lite — saved
+// Responses variant; onContent/onReasoning/onPhase — streaming callbacks.
 // RETURNS: *Response — accumulated output; error on transport, auth, or parsing failure.
-func (c *Client) streamChatGPT(ctx context.Context, messages []session.Message, toolDefs []tools.OpenAITool, onContent func(string), onReasoning func(string), onPhase func(StreamPhase)) (*Response, error) {
+func (c *Client) streamChatGPT(ctx context.Context, requestBody chatGPTResponsesRequest, lite bool, onContent func(string), onReasoning func(string), onPhase func(StreamPhase)) (*Response, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -127,10 +127,6 @@ func (c *Client) streamChatGPT(ctx context.Context, messages []session.Message, 
 	if err != nil {
 		return nil, err
 	}
-	requestBody, err := buildChatGPTRequest(c.Model, messages, toolDefs)
-	if err != nil {
-		return nil, fmt.Errorf("cannot build ChatGPT request: %w", err)
-	}
 	requestBody.PromptCacheKey = c.PromptCacheKey
 	requestBody.ClientMetadata = c.responsesClientMetadata()
 	body, err := json.Marshal(requestBody)
@@ -147,7 +143,7 @@ func (c *Client) streamChatGPT(ctx context.Context, messages []session.Message, 
 	request.Header.Set("Originator", "codex_cli_rs")
 	request.Header.Set("User-Agent", chatGPTCodexUserAgent())
 	request.Header.Set("OpenAI-Beta", "responses=experimental")
-	if isResponsesLiteModel(c.Model) {
+	if lite {
 		request.Header.Set(chatGPTCodexLiteHeader, "true")
 		request.Header.Set("version", chatGPTCodexClientVersion)
 	}
@@ -189,17 +185,14 @@ func (c *Client) streamChatGPT(ctx context.Context, messages []session.Message, 
 	return parseChatGPTSSE(ctx, response.Body, onContent, onReasoning, onPhase, capture)
 }
 
-func buildChatGPTRequest(model string, messages []session.Message, toolDefs []tools.OpenAITool) (chatGPTResponsesRequest, error) {
-	if isResponsesLiteModel(model) {
-		return buildChatGPTLiteRequest(model, messages, toolDefs)
-	}
-	responseTools := buildResponseTools(toolDefs)
-	input, instructions, err := buildChatGPTInput(messages)
+func buildChatGPTRequest(req Request) (chatGPTResponsesRequest, error) {
+	responseTools := buildResponseTools(req.Tools)
+	input, instructions, err := buildChatGPTInput(req.Messages)
 	if err != nil {
 		return chatGPTResponsesRequest{}, err
 	}
-	req := chatGPTResponsesRequest{
-		Model:             model,
+	native := chatGPTResponsesRequest{
+		Model:             req.Model.Name,
 		Input:             input,
 		Instructions:      instructions,
 		Tools:             responseTools,
@@ -211,16 +204,16 @@ func buildChatGPTRequest(model string, messages []session.Message, toolDefs []to
 		Text:              chatGPTText{Verbosity: "low"},
 		PromptCacheKey:    "",
 	}
-	return req, nil
+	return native, nil
 }
 
-func buildChatGPTLiteRequest(model string, messages []session.Message, toolDefs []tools.OpenAITool) (chatGPTResponsesRequest, error) {
-	input, err := buildChatGPTLiteInput(messages, toolDefs)
+func buildChatGPTLiteRequest(req Request) (chatGPTResponsesRequest, error) {
+	input, err := buildChatGPTLiteInput(req.Messages, req.Tools)
 	if err != nil {
 		return chatGPTResponsesRequest{}, err
 	}
-	req := chatGPTResponsesRequest{
-		Model:             model,
+	native := chatGPTResponsesRequest{
+		Model:             req.Model.Name,
 		Input:             input,
 		ToolChoice:        "auto",
 		ParallelToolCalls: ptr(false),
@@ -230,7 +223,7 @@ func buildChatGPTLiteRequest(model string, messages []session.Message, toolDefs 
 		Text:              chatGPTText{Verbosity: "low"},
 		Reasoning:         chatGPTReasoning{Context: "all_turns"},
 	}
-	return req, nil
+	return native, nil
 }
 
 func buildChatGPTLiteInput(messages []session.Message, toolDefs []tools.OpenAITool) ([]json.RawMessage, error) {

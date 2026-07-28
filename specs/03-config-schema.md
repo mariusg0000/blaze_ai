@@ -1,10 +1,13 @@
 # Config Schema
 
-## Source Files
+## Sources
 
-- `internal/config/config.go` — Config struct tree, Load/Save/Validate, first-run detection, helpers
-- `internal/config/modes.go` — ModesConfig, LoadModes/SaveModes, validation, migration
-- `firstrun.go` — first-run interactive setup
+| File | Anchor | Role |
+|------|--------|------|
+| `internal/config/config.go` | `Config`, `ModelDefinition`, `Validate` | Config tree, model catalog, load/save/validation, first-run detection |
+| `internal/config/modes.go` | `ModesConfig`, `LoadModes` | Work-mode persistence, validation, migration |
+| `firstrun.go` | `firstRunModelDefinition`, `firstRun` | First-run provider/model setup and catalog construction |
+| `internal/config/config_test.go` | `TestValidateModelCatalogValidEntries` | Catalog protocol/provider/variant validation contract |
 
 ## File Locations
 
@@ -28,12 +31,19 @@ Separation rationale: `modes.json` contains frequently-edited mode data, isolate
       "api_key": "sk-..."
     }
   ],
-  "favorite_models": ["openai/gpt-4o", "openai/gpt-4o-mini"],
+  "models": {
+    "openai/gpt-4o": {
+      "protocol": "openai-chat",
+      "capabilities": {"tools": true, "reasoning": false},
+      "openai_chat": {"include_stream_usage": true, "include_reasoning_content": true}
+    }
+  },
+  "favorite_models": ["openai/gpt-4o"],
   "roles": {
     "default": "openai/gpt-4o",
     "vision": "openai/gpt-4o",
-    "summarization": "openai/gpt-4o-mini",
-    "advisor": "openai/o3"
+    "summarization": "openai/gpt-4o",
+    "advisor": "openai/gpt-4o"
   },
   "compaction": {
     "maxContextTokens": 100000,
@@ -61,6 +71,7 @@ Separation rationale: `modes.json` contains frequently-edited mode data, isolate
 ```go
 type Config struct {
     Providers      []Provider     `json:"providers"`
+    Models         map[string]ModelDefinition `json:"models"`
     FavoriteModels []string       `json:"favorite_models"`
     Roles          Roles          `json:"roles"`
     Compaction     Compaction     `json:"compaction"`
@@ -70,6 +81,12 @@ type Config struct {
     DebugPrompt    bool           `json:"debugPrompt,omitempty"`
 }
 ```
+
+### Model Catalog
+
+`Config.Models` is an explicit catalog keyed by the plain `provider/model_name` identifier. Each `ModelDefinition` records `Protocol`, `Capabilities` (`tools`, `reasoning`), and exactly one protocol variant: `OpenAIChat` (`include_stream_usage`, `include_reasoning_content`) or `Responses` (`lite`). The supported protocol constants are `openai-chat` and `openai-responses`.
+
+Validation requires every catalog key to have valid model syntax and an existing provider. `openai-chat` requires a non-OAuth provider and an `openai_chat` variant; `openai-responses` requires an OAuth provider and a `responses` variant. Each configured role, favourite, and non-empty `last_model` must also resolve to a catalog entry. Unknown protocols and contradictory variants are rejected; the provider client does not infer protocol from model names.
 
 ### Provider
 
@@ -112,6 +129,7 @@ type Roles struct {
 
 - All model values must be in `provider/model_name` format
 - All model values must reference an existing provider
+- All model values must reference an existing model catalog entry
 - `Default` is required — runtime fails if empty
 - Other roles are optional (empty string = not configured)
 
@@ -261,10 +279,10 @@ Config.Load(path)
   ├─ Read file → parse JSON
   ├─ Validate():
   │    ├─ Roles.Default non-empty
-  │    ├─ All model values: provider/model_name format
-  │    ├─ All model values: provider references valid
-  │    ├─ Providers: non-empty fields, unique names
-  │    └─ FavoriteModels: format + provider check
+   │    ├─ Model catalog: format, provider, protocol, auth, and variant consistency
+   │    ├─ All role/favorite/last_model values: format + provider + catalog reference
+   │    ├─ Providers: non-empty fields, unique names
+   │    └─ Return Config or the first specific validation error
   └─ Return Config or error
 ```
 

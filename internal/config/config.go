@@ -76,6 +76,36 @@ type OAuthCredential struct {
 
 const OAuthAuthType = "oauth"
 
+// ModelDefinition declares the protocol, capabilities, and protocol variant for one model.
+type ModelDefinition struct {
+	Protocol     string             `json:"protocol"`
+	Capabilities ModelCapabilities  `json:"capabilities"`
+	OpenAIChat   *OpenAIChatVariant `json:"openai_chat,omitempty"`
+	Responses    *ResponsesVariant  `json:"responses,omitempty"`
+}
+
+// ModelCapabilities declares the capabilities available for one model.
+type ModelCapabilities struct {
+	Tools     bool `json:"tools"`
+	Reasoning bool `json:"reasoning"`
+}
+
+// OpenAIChatVariant declares OpenAI Chat request options for one model.
+type OpenAIChatVariant struct {
+	IncludeStreamUsage      bool `json:"include_stream_usage"`
+	IncludeReasoningContent bool `json:"include_reasoning_content"`
+}
+
+// ResponsesVariant declares Responses request options for one model.
+type ResponsesVariant struct {
+	Lite bool `json:"lite"`
+}
+
+const (
+	ProtocolOpenAIChat      = "openai-chat"
+	ProtocolOpenAIResponses = "openai-responses"
+)
+
 // Roles maps model roles to provider/model_name identifiers.
 //
 // WHAT:  Assigns models to functional roles in the runtime.
@@ -147,14 +177,15 @@ type HelperSetup struct {
 //	HelperSetup — UX preferences for optional host helper installation prompts;
 //	StripReasoning — payload reasoning retention settings.
 type Config struct {
-	Providers      []Provider     `json:"providers"`
-	FavoriteModels []string       `json:"favorite_models"`
-	Roles          Roles          `json:"roles"`
-	Compaction     Compaction     `json:"compaction"`
-	StripReasoning StripReasoning `json:"stripReasoning"`
-	LastModel      string         `json:"last_model,omitempty"`
-	HelperSetup    HelperSetup    `json:"helperSetup,omitempty"`
-	DebugPrompt    bool           `json:"debugPrompt,omitempty"`
+	Providers      []Provider                 `json:"providers"`
+	Models         map[string]ModelDefinition `json:"models"`
+	FavoriteModels []string                   `json:"favorite_models"`
+	Roles          Roles                      `json:"roles"`
+	Compaction     Compaction                 `json:"compaction"`
+	StripReasoning StripReasoning             `json:"stripReasoning"`
+	LastModel      string                     `json:"last_model,omitempty"`
+	HelperSetup    HelperSetup                `json:"helperSetup,omitempty"`
+	DebugPrompt    bool                       `json:"debugPrompt,omitempty"`
 }
 
 // DefaultCompaction returns the pre-filled compaction thresholds from spec 05.
@@ -194,6 +225,7 @@ func DefaultStripReasoning() StripReasoning {
 func Default() *Config {
 	return &Config{
 		Providers:      []Provider{},
+		Models:         map[string]ModelDefinition{},
 		FavoriteModels: []string{},
 		Roles:          Roles{},
 		Compaction:     DefaultCompaction(),
@@ -372,22 +404,68 @@ func (c *Config) Validate() error {
 		return err
 	}
 	providerNames := providerNameSet(c.Providers)
+	for modelID, definition := range c.Models {
+		if err := validateModelFormat(modelID); err != nil {
+			return fmt.Errorf("model catalog entry %q: %w", modelID, err)
+		}
+		if err := validateModelProvider(modelID, providerNames); err != nil {
+			return fmt.Errorf("model catalog entry %q: %w", modelID, err)
+		}
+		providerName, _ := SplitModelID(modelID)
+		configuredProvider := c.ProviderByName(providerName)
+		switch definition.Protocol {
+		case ProtocolOpenAIChat:
+			if configuredProvider.AuthType == OAuthAuthType {
+				return fmt.Errorf("model catalog entry %q: openai-chat requires non-oauth provider %q", modelID, providerName)
+			}
+			if definition.OpenAIChat == nil {
+				return fmt.Errorf("model catalog entry %q: openai-chat requires openai_chat variant", modelID)
+			}
+			if definition.Responses != nil {
+				return fmt.Errorf("model catalog entry %q: openai-chat prohibits responses variant", modelID)
+			}
+		case ProtocolOpenAIResponses:
+			if configuredProvider.AuthType != OAuthAuthType {
+				return fmt.Errorf("model catalog entry %q: openai-responses requires oauth provider %q", modelID, providerName)
+			}
+			if definition.Responses == nil {
+				return fmt.Errorf("model catalog entry %q: openai-responses requires responses variant", modelID)
+			}
+			if definition.OpenAIChat != nil {
+				return fmt.Errorf("model catalog entry %q: openai-responses prohibits openai_chat variant", modelID)
+			}
+		default:
+			return fmt.Errorf("model catalog entry %q: unknown protocol %q", modelID, definition.Protocol)
+		}
+	}
 	if err := validateModelProvider(c.Roles.Default, providerNames); err != nil {
 		return fmt.Errorf("default role: %w", err)
+	}
+	if _, ok := c.Models[c.Roles.Default]; !ok {
+		return fmt.Errorf("default role %q: model catalog entry is missing", c.Roles.Default)
 	}
 	if c.Roles.Vision != "" {
 		if err := validateModelProvider(c.Roles.Vision, providerNames); err != nil {
 			return fmt.Errorf("vision role: %w", err)
+		}
+		if _, ok := c.Models[c.Roles.Vision]; !ok {
+			return fmt.Errorf("vision role %q: model catalog entry is missing", c.Roles.Vision)
 		}
 	}
 	if c.Roles.Summarization != "" {
 		if err := validateModelProvider(c.Roles.Summarization, providerNames); err != nil {
 			return fmt.Errorf("summarization role: %w", err)
 		}
+		if _, ok := c.Models[c.Roles.Summarization]; !ok {
+			return fmt.Errorf("summarization role %q: model catalog entry is missing", c.Roles.Summarization)
+		}
 	}
 	if c.Roles.Advisor != "" {
 		if err := validateModelProvider(c.Roles.Advisor, providerNames); err != nil {
 			return fmt.Errorf("advisor role: %w", err)
+		}
+		if _, ok := c.Models[c.Roles.Advisor]; !ok {
+			return fmt.Errorf("advisor role %q: model catalog entry is missing", c.Roles.Advisor)
 		}
 	}
 	for _, model := range c.FavoriteModels {
@@ -396,6 +474,20 @@ func (c *Config) Validate() error {
 		}
 		if err := validateModelProvider(model, providerNames); err != nil {
 			return fmt.Errorf("favorite model %q: %w", model, err)
+		}
+		if _, ok := c.Models[model]; !ok {
+			return fmt.Errorf("favorite model %q: model catalog entry is missing", model)
+		}
+	}
+	if c.LastModel != "" {
+		if err := validateModelFormat(c.LastModel); err != nil {
+			return fmt.Errorf("last model %q: %w", c.LastModel, err)
+		}
+		if err := validateModelProvider(c.LastModel, providerNames); err != nil {
+			return fmt.Errorf("last model %q: %w", c.LastModel, err)
+		}
+		if _, ok := c.Models[c.LastModel]; !ok {
+			return fmt.Errorf("last model %q: model catalog entry is missing", c.LastModel)
 		}
 	}
 	return nil
