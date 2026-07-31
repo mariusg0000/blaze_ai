@@ -5,12 +5,15 @@
 package config
 
 import (
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"blazeai/internal/platform"
 )
@@ -83,6 +86,25 @@ type ModelDefinition struct {
 	OpenAIChat   *OpenAIChatVariant `json:"openai_chat,omitempty"`
 	Responses    *ResponsesVariant  `json:"responses,omitempty"`
 }
+
+// ModelAdapterCatalog stores model adapter definitions separately from config.json.
+type ModelAdapterCatalog struct {
+	Adapters map[string]ModelDefinition `json:"adapters"`
+}
+
+type builtinModelAdapterCatalog struct {
+	Providers map[string]ModelDefinition `json:"providers"`
+	Adapters  map[string]ModelDefinition `json:"adapters"`
+}
+
+//go:embed builtin_model_adapters.json
+var builtinModelAdapterCatalogJSON []byte
+
+var (
+	builtinModelAdapterCatalogOnce sync.Once
+	builtinModelAdapters           builtinModelAdapterCatalog
+	builtinModelAdapterCatalogErr  error
+)
 
 // ModelCapabilities declares the capabilities available for one model.
 type ModelCapabilities struct {
@@ -178,7 +200,8 @@ type HelperSetup struct {
 //	StripReasoning — payload reasoning retention settings.
 type Config struct {
 	Providers      []Provider                 `json:"providers"`
-	Models         map[string]ModelDefinition `json:"models"`
+	AdapterCatalog ModelAdapterCatalog        `json:"-"`
+	LegacyModels   map[string]ModelDefinition `json:"models,omitempty"`
 	FavoriteModels []string                   `json:"favorite_models"`
 	Roles          Roles                      `json:"roles"`
 	Compaction     Compaction                 `json:"compaction"`
@@ -225,7 +248,8 @@ func DefaultStripReasoning() StripReasoning {
 func Default() *Config {
 	return &Config{
 		Providers:      []Provider{},
-		Models:         map[string]ModelDefinition{},
+		AdapterCatalog: ModelAdapterCatalog{Adapters: map[string]ModelDefinition{}},
+		LegacyModels:   nil,
 		FavoriteModels: []string{},
 		Roles:          Roles{},
 		Compaction:     DefaultCompaction(),
@@ -248,6 +272,10 @@ func configPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, "config", "config.json"), nil
+}
+
+func modelAdapterCatalogPath(configPath string) string {
+	return filepath.Join(filepath.Dir(configPath), "model_adapters.json")
 }
 
 // NeedsFirstRun returns true if config.json is missing or the default role is unassigned.
@@ -298,6 +326,16 @@ func Load() (*Config, error) {
 	return LoadFrom(path)
 }
 
+// ReloadModelAdapters reloads only the model adapter catalog from the strict on-disk config.
+func (c *Config) ReloadModelAdapters() error {
+	loaded, err := Load()
+	if err != nil {
+		return fmt.Errorf("cannot reload model adapter catalog: %w", err)
+	}
+	c.AdapterCatalog = loaded.AdapterCatalog
+	return nil
+}
+
 // LoadFrom reads and parses a config file from an explicit path.
 //
 // WHAT:  Same as Load but for an explicit file path.
@@ -308,6 +346,35 @@ func LoadFrom(path string) (*Config, error) {
 	cfg, err := loadRawFrom(path)
 	if err != nil {
 		return nil, err
+	}
+	adapterPath := modelAdapterCatalogPath(path)
+	_, statErr := os.Stat(adapterPath)
+	switch {
+	case statErr == nil:
+		if len(cfg.LegacyModels) != 0 {
+			return nil, fmt.Errorf("model adapter catalog conflicts with legacy models in %s", path)
+		}
+		cfg.AdapterCatalog, err = loadModelAdapterCatalog(adapterPath)
+		if err != nil {
+			return nil, err
+		}
+	case errors.Is(statErr, os.ErrNotExist):
+		if len(cfg.LegacyModels) == 0 {
+			return nil, fmt.Errorf("model adapter catalog missing: %s", adapterPath)
+		}
+		cfg.AdapterCatalog = ModelAdapterCatalog{Adapters: make(map[string]ModelDefinition, len(cfg.LegacyModels))}
+		for modelID, definition := range cfg.LegacyModels {
+			cfg.AdapterCatalog.Adapters[modelID] = definition
+		}
+		cfg.LegacyModels = nil
+		if err := cfg.Validate(); err != nil {
+			return nil, err
+		}
+		if err := cfg.SaveTo(path); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("cannot stat model adapter catalog: %w", statErr)
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -336,6 +403,73 @@ func loadRawFrom(path string) (*Config, error) {
 	return &cfg, nil
 }
 
+func loadModelAdapterCatalog(path string) (ModelAdapterCatalog, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ModelAdapterCatalog{}, fmt.Errorf("cannot read model adapter catalog: %w", err)
+	}
+	var catalog ModelAdapterCatalog
+	if err := json.Unmarshal(data, &catalog); err != nil {
+		return ModelAdapterCatalog{}, fmt.Errorf("cannot parse model adapter catalog: %w", err)
+	}
+	return catalog, nil
+}
+
+func loadBuiltinModelAdapterCatalog() (builtinModelAdapterCatalog, error) {
+	builtinModelAdapterCatalogOnce.Do(func() {
+		decoder := json.NewDecoder(strings.NewReader(string(builtinModelAdapterCatalogJSON)))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&builtinModelAdapters); err != nil {
+			builtinModelAdapterCatalogErr = fmt.Errorf("internal builtin model adapter catalog: cannot parse: %w", err)
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			builtinModelAdapterCatalogErr = fmt.Errorf("internal builtin model adapter catalog: contains multiple JSON values")
+			return
+		}
+		if builtinModelAdapters.Providers == nil || builtinModelAdapters.Adapters == nil {
+			builtinModelAdapterCatalogErr = fmt.Errorf("internal builtin model adapter catalog: providers and adapters are required")
+			return
+		}
+		for providerName, definition := range builtinModelAdapters.Providers {
+			if providerName == "" {
+				builtinModelAdapterCatalogErr = fmt.Errorf("internal builtin model adapter catalog: provider name is empty")
+				return
+			}
+			if err := validateModelAdapterDefinition(providerName+"/*", definition, nil); err != nil {
+				builtinModelAdapterCatalogErr = fmt.Errorf("internal builtin model adapter catalog: %w", err)
+				return
+			}
+		}
+		for pattern, definition := range builtinModelAdapters.Adapters {
+			if _, err := validateBuiltinModelAdapterPattern(pattern); err != nil {
+				builtinModelAdapterCatalogErr = fmt.Errorf("internal builtin model adapter catalog: model adapter %q: %w", pattern, err)
+				return
+			}
+			if err := validateModelAdapterDefinition(pattern, definition, nil); err != nil {
+				builtinModelAdapterCatalogErr = fmt.Errorf("internal builtin model adapter catalog: %w", err)
+				return
+			}
+		}
+	})
+	return builtinModelAdapters, builtinModelAdapterCatalogErr
+}
+
+func saveModelAdapterCatalog(path string, catalog ModelAdapterCatalog) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("cannot create config directory %s: %w", dir, err)
+	}
+	data, err := json.MarshalIndent(catalog, "", "  ")
+	if err != nil {
+		return fmt.Errorf("cannot marshal model adapter catalog: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("cannot write model adapter catalog %s: %w", path, err)
+	}
+	return nil
+}
+
 // Save writes the config to app_home/config/config.json with indentation.
 //
 // WHAT:  Persists the configuration to disk.
@@ -357,6 +491,9 @@ func (c *Config) Save() error {
 // PARAMS: path — the file path to write to.
 // RETURNS: error if marshaling or writing fails.
 func (c *Config) SaveTo(path string) error {
+	if len(c.LegacyModels) != 0 {
+		return fmt.Errorf("cannot save config with legacy models; migrate them to the model adapter catalog")
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("cannot create config directory %s: %w", dir, err)
@@ -368,7 +505,7 @@ func (c *Config) SaveTo(path string) error {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		return fmt.Errorf("cannot write config file %s: %w", path, err)
 	}
-	return nil
+	return saveModelAdapterCatalog(modelAdapterCatalogPath(path), c.AdapterCatalog)
 }
 
 // Validate checks the config for structural integrity and required fields.
@@ -382,113 +519,134 @@ func (c *Config) Validate() error {
 	if c.Roles.Default == "" {
 		return ErrDefaultRoleUnassigned
 	}
-	if err := validateModelFormat(c.Roles.Default); err != nil {
-		return fmt.Errorf("default role: %w", err)
-	}
-	if c.Roles.Vision != "" {
-		if err := validateModelFormat(c.Roles.Vision); err != nil {
-			return fmt.Errorf("vision role: %w", err)
-		}
-	}
-	if c.Roles.Summarization != "" {
-		if err := validateModelFormat(c.Roles.Summarization); err != nil {
-			return fmt.Errorf("summarization role: %w", err)
-		}
-	}
-	if c.Roles.Advisor != "" {
-		if err := validateModelFormat(c.Roles.Advisor); err != nil {
-			return fmt.Errorf("advisor role: %w", err)
-		}
-	}
 	if err := validateProviders(c.Providers); err != nil {
 		return err
 	}
+	if _, err := loadBuiltinModelAdapterCatalog(); err != nil {
+		return err
+	}
 	providerNames := providerNameSet(c.Providers)
-	for modelID, definition := range c.Models {
-		if err := validateModelFormat(modelID); err != nil {
-			return fmt.Errorf("model catalog entry %q: %w", modelID, err)
+	for pattern, definition := range c.AdapterCatalog.Adapters {
+		providerName, err := validateModelAdapterPattern(pattern, providerNames)
+		if err != nil {
+			return fmt.Errorf("model adapter %q: %w", pattern, err)
 		}
-		if err := validateModelProvider(modelID, providerNames); err != nil {
-			return fmt.Errorf("model catalog entry %q: %w", modelID, err)
-		}
-		providerName, _ := SplitModelID(modelID)
 		configuredProvider := c.ProviderByName(providerName)
-		switch definition.Protocol {
-		case ProtocolOpenAIChat:
-			if configuredProvider.AuthType == OAuthAuthType {
-				return fmt.Errorf("model catalog entry %q: openai-chat requires non-oauth provider %q", modelID, providerName)
-			}
-			if definition.OpenAIChat == nil {
-				return fmt.Errorf("model catalog entry %q: openai-chat requires openai_chat variant", modelID)
-			}
-			if definition.Responses != nil {
-				return fmt.Errorf("model catalog entry %q: openai-chat prohibits responses variant", modelID)
-			}
-		case ProtocolOpenAIResponses:
-			if configuredProvider.AuthType != OAuthAuthType {
-				return fmt.Errorf("model catalog entry %q: openai-responses requires oauth provider %q", modelID, providerName)
-			}
-			if definition.Responses == nil {
-				return fmt.Errorf("model catalog entry %q: openai-responses requires responses variant", modelID)
-			}
-			if definition.OpenAIChat != nil {
-				return fmt.Errorf("model catalog entry %q: openai-responses prohibits openai_chat variant", modelID)
-			}
-		default:
-			return fmt.Errorf("model catalog entry %q: unknown protocol %q", modelID, definition.Protocol)
+		if err := validateModelAdapterDefinition(pattern, definition, configuredProvider); err != nil {
+			return err
 		}
 	}
-	if err := validateModelProvider(c.Roles.Default, providerNames); err != nil {
-		return fmt.Errorf("default role: %w", err)
-	}
-	if _, ok := c.Models[c.Roles.Default]; !ok {
-		return fmt.Errorf("default role %q: model catalog entry is missing", c.Roles.Default)
+	if err := validateModelReference(c.Roles.Default, "default role", providerNames, c); err != nil {
+		return err
 	}
 	if c.Roles.Vision != "" {
-		if err := validateModelProvider(c.Roles.Vision, providerNames); err != nil {
-			return fmt.Errorf("vision role: %w", err)
-		}
-		if _, ok := c.Models[c.Roles.Vision]; !ok {
-			return fmt.Errorf("vision role %q: model catalog entry is missing", c.Roles.Vision)
+		if err := validateModelReference(c.Roles.Vision, "vision role", providerNames, c); err != nil {
+			return err
 		}
 	}
 	if c.Roles.Summarization != "" {
-		if err := validateModelProvider(c.Roles.Summarization, providerNames); err != nil {
-			return fmt.Errorf("summarization role: %w", err)
-		}
-		if _, ok := c.Models[c.Roles.Summarization]; !ok {
-			return fmt.Errorf("summarization role %q: model catalog entry is missing", c.Roles.Summarization)
+		if err := validateModelReference(c.Roles.Summarization, "summarization role", providerNames, c); err != nil {
+			return err
 		}
 	}
 	if c.Roles.Advisor != "" {
-		if err := validateModelProvider(c.Roles.Advisor, providerNames); err != nil {
-			return fmt.Errorf("advisor role: %w", err)
-		}
-		if _, ok := c.Models[c.Roles.Advisor]; !ok {
-			return fmt.Errorf("advisor role %q: model catalog entry is missing", c.Roles.Advisor)
+		if err := validateModelReference(c.Roles.Advisor, "advisor role", providerNames, c); err != nil {
+			return err
 		}
 	}
 	for _, model := range c.FavoriteModels {
-		if err := validateModelFormat(model); err != nil {
-			return fmt.Errorf("favorite model %q: %w", model, err)
-		}
-		if err := validateModelProvider(model, providerNames); err != nil {
-			return fmt.Errorf("favorite model %q: %w", model, err)
-		}
-		if _, ok := c.Models[model]; !ok {
-			return fmt.Errorf("favorite model %q: model catalog entry is missing", model)
+		if err := validateModelReference(model, "favorite model", providerNames, c); err != nil {
+			return err
 		}
 	}
 	if c.LastModel != "" {
-		if err := validateModelFormat(c.LastModel); err != nil {
-			return fmt.Errorf("last model %q: %w", c.LastModel, err)
+		if err := validateModelReference(c.LastModel, "last model", providerNames, c); err != nil {
+			return err
 		}
-		if err := validateModelProvider(c.LastModel, providerNames); err != nil {
-			return fmt.Errorf("last model %q: %w", c.LastModel, err)
+	}
+	return nil
+}
+
+func validateModelAdapterPattern(pattern string, providers map[string]bool) (string, error) {
+	if strings.Contains(pattern, "*") {
+		if strings.Count(pattern, "*") != 1 || !strings.HasSuffix(pattern, "*") {
+			return "", ErrInvalidModelFormat
 		}
-		if _, ok := c.Models[c.LastModel]; !ok {
-			return fmt.Errorf("last model %q: model catalog entry is missing", c.LastModel)
+		prefix := strings.TrimSuffix(pattern, "*")
+		if err := validateModelFormat(prefix); err != nil {
+			return "", err
 		}
+		providerName, modelPrefix := SplitModelID(prefix)
+		if strings.Contains(providerName, "*") || modelPrefix == "" {
+			return "", ErrInvalidModelFormat
+		}
+		if !providers[providerName] {
+			return "", fmt.Errorf("%w: %s", ErrProviderNotFound, providerName)
+		}
+		return providerName, nil
+	}
+	if err := validateModelFormat(pattern); err != nil {
+		return "", err
+	}
+	providerName, _ := SplitModelID(pattern)
+	if !providers[providerName] {
+		return "", fmt.Errorf("%w: %s", ErrProviderNotFound, providerName)
+	}
+	return providerName, nil
+}
+
+func validateModelAdapterDefinition(pattern string, definition ModelDefinition, provider *Provider) error {
+	providerName, _ := SplitModelID(strings.TrimSuffix(pattern, "*"))
+	switch definition.Protocol {
+	case ProtocolOpenAIChat:
+		if provider != nil && provider.AuthType == OAuthAuthType {
+			return fmt.Errorf("model adapter %q: openai-chat requires non-oauth provider %q", pattern, providerName)
+		}
+		if definition.OpenAIChat == nil {
+			return fmt.Errorf("model adapter %q: openai-chat requires openai_chat variant", pattern)
+		}
+		if definition.Responses != nil {
+			return fmt.Errorf("model adapter %q: openai-chat prohibits responses variant", pattern)
+		}
+	case ProtocolOpenAIResponses:
+		if provider != nil && provider.AuthType != OAuthAuthType {
+			return fmt.Errorf("model adapter %q: openai-responses requires oauth provider %q", pattern, providerName)
+		}
+		if definition.Responses == nil {
+			return fmt.Errorf("model adapter %q: openai-responses requires responses variant", pattern)
+		}
+		if definition.OpenAIChat != nil {
+			return fmt.Errorf("model adapter %q: openai-responses prohibits openai_chat variant", pattern)
+		}
+	default:
+		return fmt.Errorf("model adapter %q: unknown protocol %q", pattern, definition.Protocol)
+	}
+	return nil
+}
+
+func validateBuiltinModelAdapterPattern(pattern string) (string, error) {
+	if strings.Contains(pattern, "*") {
+		if strings.Count(pattern, "*") != 1 || !strings.HasSuffix(pattern, "*") {
+			return "", ErrInvalidModelFormat
+		}
+		pattern = strings.TrimSuffix(pattern, "*")
+	}
+	if err := validateModelFormat(pattern); err != nil {
+		return "", err
+	}
+	providerName, _ := SplitModelID(pattern)
+	return providerName, nil
+}
+
+func validateModelReference(modelID, label string, providers map[string]bool, c *Config) error {
+	if err := validateModelFormat(modelID); err != nil {
+		return fmt.Errorf("%s: %w", label, err)
+	}
+	if err := validateModelProvider(modelID, providers); err != nil {
+		return fmt.Errorf("%s: %w", label, err)
+	}
+	if _, err := c.ResolveModelAdapter(modelID); err != nil {
+		return fmt.Errorf("%s %q: %w", label, modelID, err)
 	}
 	return nil
 }
@@ -634,6 +792,59 @@ func (c *Config) ModelForRole(role string) (string, error) {
 		return "", fmt.Errorf("model role is not configured: %s", role)
 	}
 	return modelID, nil
+}
+
+// ResolveModelAdapter resolves user adapters before builtin provider contracts.
+func (c *Config) ResolveModelAdapter(modelID string) (ModelDefinition, error) {
+	if strings.Contains(modelID, "*") {
+		return ModelDefinition{}, ErrInvalidModelFormat
+	}
+	if err := ValidateModelFormat(modelID); err != nil {
+		return ModelDefinition{}, err
+	}
+	if definition, ok := matchModelAdapter(c.AdapterCatalog.Adapters, modelID); ok {
+		return definition, nil
+	}
+	builtinCatalog, err := loadBuiltinModelAdapterCatalog()
+	if err != nil {
+		return ModelDefinition{}, err
+	}
+	providerName, _ := SplitModelID(modelID)
+	configuredProvider := c.ProviderByName(providerName)
+	if configuredProvider != nil {
+		if definition, ok := matchModelAdapter(builtinCatalog.Adapters, modelID); ok {
+			if err := validateModelAdapterDefinition(modelID, definition, configuredProvider); err != nil {
+				return ModelDefinition{}, err
+			}
+			return definition, nil
+		}
+		if definition, ok := builtinCatalog.Providers[providerName]; ok {
+			if err := validateModelAdapterDefinition(modelID, definition, configuredProvider); err != nil {
+				return ModelDefinition{}, err
+			}
+			return definition, nil
+		}
+	}
+	return ModelDefinition{}, fmt.Errorf("no model adapter matches %q", modelID)
+}
+
+func matchModelAdapter(adapters map[string]ModelDefinition, modelID string) (ModelDefinition, bool) {
+	if definition, ok := adapters[modelID]; ok {
+		return definition, true
+	}
+	longestPrefix := -1
+	var resolved ModelDefinition
+	for pattern, definition := range adapters {
+		if strings.Count(pattern, "*") != 1 || !strings.HasSuffix(pattern, "*") {
+			continue
+		}
+		prefix := strings.TrimSuffix(pattern, "*")
+		if strings.HasPrefix(modelID, prefix) && len(prefix) > longestPrefix {
+			longestPrefix = len(prefix)
+			resolved = definition
+		}
+	}
+	return resolved, longestPrefix >= 0
 }
 
 // SplitModelID separates a provider/model_name identifier into its parts.

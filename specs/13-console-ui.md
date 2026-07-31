@@ -280,3 +280,20 @@ resetTurnState()
 
 Called at the start of each `runAgentTurn()`. Ensures a clean slate for each
 LLM interaction regardless of previous state.
+
+## Catalog Repair Diagnostics
+
+The REPL captures repair context without persisting it. A failed slash command
+creates pending context only for `provider.ModelCatalogEntryMissingError`; the
+next ordinary user input consumes it once, prepending the command error and an
+instruction to load `config-manager`, preserve the working model, and avoid
+inferring metadata from the model name.
+
+After a turn fails, a `provider.RequestRejectedError` creates pending context
+only for HTTP 400 or 422 failures that produced no assistant content. The
+context identifies the current model, includes the status, and wraps the raw
+provider body in `<provider-diagnostic>` tags explicitly marked as untrusted.
+401/403/429/5xx and failures after assistant content do not create this repair
+context. The next ordinary input consumes and clears it exactly once; the
+runtime's model-switch path reloads the repaired adapter catalog when retrying
+the affected `/model <target>` command, so a restart is not required.

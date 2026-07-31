@@ -30,13 +30,13 @@ func mockProvider(t *testing.T, server *httptest.Server) *config.Config {
 				APIKey:   "sk-test",
 			},
 		},
-		Models: map[string]config.ModelDefinition{
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
 			"test/test-model": {
 				Protocol:     config.ProtocolOpenAIChat,
 				Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false},
 				OpenAIChat:   &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
 			},
-		},
+		}},
 		Roles: config.Roles{Default: "test/test-model"},
 	}
 }
@@ -86,13 +86,13 @@ func TestNewClientSelectsCatalogProtocol(t *testing.T) {
 			AuthType: config.OAuthAuthType,
 			OAuth:    &config.OAuthCredential{RefreshToken: "refresh-token"},
 		}},
-		Models: map[string]config.ModelDefinition{
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
 			"chatgpt/gpt-5.4": {
 				Protocol:     config.ProtocolOpenAIResponses,
 				Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false},
 				Responses:    &config.ResponsesVariant{Lite: false},
 			},
-		},
+		}},
 		Roles: config.Roles{Default: "chatgpt/gpt-5.4"},
 	}
 	oauthClient, err := NewClient(oauth, "chatgpt/gpt-5.4")
@@ -104,17 +104,104 @@ func TestNewClientSelectsCatalogProtocol(t *testing.T) {
 	}
 }
 
+func TestNewClientSelectsBuiltinProtocol(t *testing.T) {
+	tests := []struct {
+		name       string
+		provider   config.Provider
+		modelID    string
+		wantLite   bool
+		responses  bool
+	}{
+		{
+			name:     "OpenRouter",
+			provider: config.Provider{Name: "openrouter", Endpoint: "https://openrouter.example/v1", APIKey: "test-key"},
+			modelID:  "openrouter/openai/gpt-5.4",
+		},
+		{
+			name:     "OpenCode",
+			provider: config.Provider{Name: "opencode-go", Endpoint: "https://opencode.example/v1", APIKey: "test-key"},
+			modelID:  "opencode-go/gpt-5.4",
+		},
+		{
+			name:     "Google Gemini",
+			provider: config.Provider{Name: "google-gemini", Endpoint: "https://gemini.example/v1", APIKey: "test-key"},
+			modelID:  "google-gemini/gemini-2.5-pro",
+		},
+		{
+			name:      "ChatGPT OAuth gpt-5.6",
+			provider:  config.Provider{Name: "openai-chatgpt-oauth", Endpoint: "https://chatgpt.example", AuthType: config.OAuthAuthType, OAuth: &config.OAuthCredential{RefreshToken: "refresh-token"}},
+			modelID:   "openai-chatgpt-oauth/gpt-5.6-mini",
+			wantLite:  true,
+			responses: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := &config.Config{
+				Providers:      []config.Provider{test.provider},
+				AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{}},
+				Roles:          config.Roles{Default: test.modelID},
+			}
+			client, err := NewClient(cfg, test.modelID)
+			if err != nil {
+				t.Fatalf("NewClient() error: %v", err)
+			}
+			if test.responses {
+				if _, ok := client.protocol.(openAIResponsesProtocol); !ok {
+					t.Fatalf("protocol = %T, want openAIResponsesProtocol", client.protocol)
+				}
+				if client.modelRef.Definition.Responses == nil || client.modelRef.Definition.Responses.Lite != test.wantLite {
+					t.Fatalf("Responses = %#v, want Lite %t", client.modelRef.Definition.Responses, test.wantLite)
+				}
+				return
+			}
+			if _, ok := client.protocol.(openAIChatProtocol); !ok {
+				t.Fatalf("protocol = %T, want openAIChatProtocol", client.protocol)
+			}
+		})
+	}
+}
+
+func TestNewClientResolvesWildcardCatalogAdapter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Providers: []config.Provider{{Name: "test", Endpoint: server.URL, APIKey: "sk-test"}},
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
+			"test/model-*": {
+				Protocol:     config.ProtocolOpenAIChat,
+				Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false},
+				OpenAIChat:   &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
+			},
+		}},
+		Roles: config.Roles{Default: "test/model-a"},
+	}
+
+	client, err := NewClient(cfg, "test/model-a")
+	if err != nil {
+		t.Fatalf("NewClient() error: %v", err)
+	}
+	if client.Model != "model-a" {
+		t.Errorf("Model = %q, want model-a", client.Model)
+	}
+	if _, ok := client.protocol.(openAIChatProtocol); !ok {
+		t.Fatalf("protocol = %T, want openAIChatProtocol", client.protocol)
+	}
+}
+
 func TestNewClientModelMetadataErrorsBeforeHTTP(t *testing.T) {
 	cases := []struct {
-		name   string
-		models map[string]config.ModelDefinition
-		tools  []tools.OpenAITool
+		name     string
+		adapters map[string]config.ModelDefinition
+		tools    []tools.OpenAITool
 	}{
-		{name: "missing catalog", models: nil},
-		{name: "invalid protocol", models: map[string]config.ModelDefinition{
+		{name: "missing catalog", adapters: nil},
+		{name: "invalid protocol", adapters: map[string]config.ModelDefinition{
 			"test/test-model": {Protocol: "unknown", OpenAIChat: &config.OpenAIChatVariant{}},
 		}},
-		{name: "tools disabled", models: map[string]config.ModelDefinition{
+		{name: "tools disabled", adapters: map[string]config.ModelDefinition{
 			"test/test-model": {
 				Protocol:     config.ProtocolOpenAIChat,
 				Capabilities: config.ModelCapabilities{Tools: false},
@@ -132,11 +219,23 @@ func TestNewClientModelMetadataErrorsBeforeHTTP(t *testing.T) {
 			}))
 			defer server.Close()
 			cfg := mockProvider(t, server)
-			cfg.Models = tc.models
+			cfg.AdapterCatalog.Adapters = tc.adapters
 			client, err := NewClient(cfg, "test/test-model")
 			if tc.name == "missing catalog" || tc.name == "invalid protocol" {
 				if err == nil {
 					t.Fatal("NewClient() expected metadata error, got nil")
+				}
+				if tc.name == "missing catalog" {
+					var missing *ModelCatalogEntryMissingError
+					if !errors.As(err, &missing) {
+						t.Fatalf("NewClient() error type = %T, want *ModelCatalogEntryMissingError", err)
+					}
+					if missing.ModelID != "test/test-model" {
+						t.Errorf("ModelID = %q, want test/test-model", missing.ModelID)
+					}
+					if err.Error() != "model catalog entry is missing for test/test-model" {
+						t.Errorf("error = %q, want unchanged missing-entry text", err.Error())
+					}
 				}
 				if calls != 0 {
 					t.Fatalf("HTTP handler called %d times", calls)
@@ -170,7 +269,7 @@ func TestStreamGLMStyleChatProfileFiltersUnsupportedFields(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := mockProvider(t, server)
-	cfg.Models["test/test-model"] = config.ModelDefinition{
+	cfg.AdapterCatalog.Adapters["test/test-model"] = config.ModelDefinition{
 		Protocol:     config.ProtocolOpenAIChat,
 		Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false},
 		OpenAIChat:   &config.OpenAIChatVariant{},
@@ -408,6 +507,49 @@ func TestStreamErrorStatus(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "401") {
 		t.Errorf("error = %q, want it to contain '401'", err.Error())
+	}
+}
+
+func TestStreamRejectedErrorStatuses(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		body   string
+	}{
+		{status: http.StatusBadRequest, body: `{"error":"bad request"}`},
+		{status: http.StatusUnprocessableEntity, body: `{"error":"invalid contract"}`},
+	} {
+		t.Run(fmt.Sprintf("status-%d", tc.status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, tc.body)
+			}))
+			defer server.Close()
+
+			cfg := mockProvider(t, server)
+			client, err := NewClient(cfg, "test/test-model")
+			if err != nil {
+				t.Fatalf("NewClient() error: %v", err)
+			}
+
+			_, err = client.Stream(context.Background(), []session.Message{{Role: "user", Content: "hi"}}, nil, nil, nil)
+			if err == nil {
+				t.Fatalf("Stream() expected error for %d, got nil", tc.status)
+			}
+			var rejected *RequestRejectedError
+			if !errors.As(err, &rejected) {
+				t.Fatalf("Stream() error type = %T, want *RequestRejectedError", err)
+			}
+			if rejected.StatusCode != tc.status {
+				t.Errorf("StatusCode = %d, want %d", rejected.StatusCode, tc.status)
+			}
+			if rejected.Body != tc.body {
+				t.Errorf("Body = %q, want %q", rejected.Body, tc.body)
+			}
+			want := fmt.Sprintf("API returned status %d: %s", tc.status, tc.body)
+			if err.Error() != want {
+				t.Errorf("error = %q, want %q", err.Error(), want)
+			}
+		})
 	}
 }
 

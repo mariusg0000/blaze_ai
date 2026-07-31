@@ -6,6 +6,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -227,6 +228,54 @@ func TestStreamChatGPTAddsResponsesLiteHeaderForGPT56(t *testing.T) {
 	}
 	if requested.Header.Get("version") != chatGPTCodexClientVersion {
 		t.Errorf("version = %q, want %q", requested.Header.Get("version"), chatGPTCodexClientVersion)
+	}
+}
+
+func TestStreamChatGPTRejectedErrorStatuses(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+	}{
+		{status: http.StatusBadRequest},
+		{status: http.StatusUnprocessableEntity},
+	} {
+		t.Run(fmt.Sprintf("status-%d", tc.status), func(t *testing.T) {
+			body := "\n  oauth rejection  \n"
+			client := &Client{
+				modelRef: ModelReference{ID: "chatgpt/gpt-5.4", Name: "gpt-5.4", Definition: config.ModelDefinition{
+					Protocol:  config.ProtocolOpenAIResponses,
+					Responses: &config.ResponsesVariant{Lite: false},
+				}},
+				protocol: openAIResponsesProtocol{},
+				AuthType: config.OAuthAuthType,
+				OAuth:    &config.OAuthCredential{AccessToken: "access-token", RefreshToken: "refresh-token", ExpiresAt: time.Now().Add(time.Hour).UnixMilli()},
+				HTTP: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					return &http.Response{
+						StatusCode: tc.status,
+						Body:       io.NopCloser(strings.NewReader(body)),
+						Header:     make(http.Header),
+					}, nil
+				})},
+			}
+
+			_, err := client.Stream(context.Background(), []session.Message{{Role: "user", Content: "hi"}}, nil, nil, nil)
+			if err == nil {
+				t.Fatalf("Stream() expected error for %d, got nil", tc.status)
+			}
+			var rejected *RequestRejectedError
+			if !errors.As(err, &rejected) {
+				t.Fatalf("Stream() error type = %T, want *RequestRejectedError", err)
+			}
+			if rejected.StatusCode != tc.status {
+				t.Errorf("StatusCode = %d, want %d", rejected.StatusCode, tc.status)
+			}
+			if rejected.Body != "oauth rejection" {
+				t.Errorf("Body = %q, want oauth rejection", rejected.Body)
+			}
+			want := fmt.Sprintf("ChatGPT returned status %d: oauth rejection", tc.status)
+			if err.Error() != want {
+				t.Errorf("error = %q, want %q", err.Error(), want)
+			}
+		})
 	}
 }
 

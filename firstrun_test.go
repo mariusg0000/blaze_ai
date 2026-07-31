@@ -4,6 +4,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -183,7 +184,7 @@ func TestFirstRunFullFlow(t *testing.T) {
 		Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false},
 		OpenAIChat:   &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
 	}
-	if definition := cfg.Models[cfg.Roles.Default]; !reflect.DeepEqual(definition, wantDefinition) {
+	if definition := cfg.AdapterCatalog.Adapters[cfg.Roles.Default]; !reflect.DeepEqual(definition, wantDefinition) {
 		t.Errorf("default model definition = %+v, want %+v", definition, wantDefinition)
 	}
 
@@ -192,11 +193,90 @@ func TestFirstRunFullFlow(t *testing.T) {
 	if _, err := os.Stat(configPath); err != nil {
 		t.Errorf("config.json not saved at %s: %v", configPath, err)
 	}
+	adapterCatalogPath := filepath.Join(tmpHome, "blazeai", "config", "model_adapters.json")
+	if _, err := os.Stat(adapterCatalogPath); err != nil {
+		t.Errorf("model_adapters.json not saved at %s: %v", adapterCatalogPath, err)
+	}
 
 	// Verify modes.json was NOT created.
 	modesPath := filepath.Join(tmpHome, "blazeai", "config", "modes.json")
 	if _, err := os.Stat(modesPath); !os.IsNotExist(err) {
 		t.Errorf("modes.json should not exist after first run, but found at %s", modesPath)
+	}
+}
+
+func TestFirstRunOpenRouterUsesBuiltinAdapter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			fmt.Fprint(w, `{"data":[{"id":"openai/gpt-5.4"}]}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	originalProviders := knownProviders
+	knownProviders = []config.Provider{{Name: "openrouter", Endpoint: server.URL}}
+	defer func() { knownProviders = originalProviders }()
+
+	tmpHome := t.TempDir()
+	overrideAppHome(t, tmpHome)
+
+	var out bytes.Buffer
+	cfg, err := firstRun(&out, newBufReader("1\ntest-key\n1\nn\nn\nn\n"))
+	if err != nil {
+		t.Fatalf("firstRun() error: %v", err)
+	}
+	if len(cfg.AdapterCatalog.Adapters) != 0 {
+		t.Fatalf("external adapters = %#v, want empty", cfg.AdapterCatalog.Adapters)
+	}
+
+	adapterCatalogPath := filepath.Join(tmpHome, "blazeai", "config", "model_adapters.json")
+	data, err := os.ReadFile(adapterCatalogPath)
+	if err != nil {
+		t.Fatalf("cannot read model_adapters.json: %v", err)
+	}
+	var catalog map[string]json.RawMessage
+	if err := json.Unmarshal(data, &catalog); err != nil {
+		t.Fatalf("cannot parse model_adapters.json: %v", err)
+	}
+	var adapters map[string]json.RawMessage
+	if err := json.Unmarshal(catalog["adapters"], &adapters); err != nil {
+		t.Fatalf("adapters is not an object: %v", err)
+	}
+	if len(adapters) != 0 {
+		t.Fatalf("persisted external adapters = %#v, want empty", adapters)
+	}
+}
+
+func TestFirstRunChatGPTBuiltinAdapters(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers = []config.Provider{{
+		Name:     providerpkg.ChatGPTOAuthProviderName,
+		Endpoint: "https://chatgpt.example",
+		AuthType: config.OAuthAuthType,
+		OAuth:    &config.OAuthCredential{RefreshToken: "refresh-token"},
+	}}
+
+	for _, test := range []struct {
+		modelID  string
+		wantLite bool
+	}{
+		{modelID: providerpkg.ChatGPTOAuthProviderName + "/gpt-5.6-mini", wantLite: true},
+		{modelID: providerpkg.ChatGPTOAuthProviderName + "/gpt-5.4", wantLite: false},
+	} {
+		t.Run(test.modelID, func(t *testing.T) {
+			definition, err := cfg.ResolveModelAdapter(test.modelID)
+			if err != nil {
+				t.Fatalf("ResolveModelAdapter() error: %v", err)
+			}
+			if definition.Responses == nil || definition.Responses.Lite != test.wantLite {
+				t.Fatalf("Responses = %#v, want Lite %t", definition.Responses, test.wantLite)
+			}
+		})
+	}
+	if len(cfg.AdapterCatalog.Adapters) != 0 {
+		t.Fatalf("external adapters = %#v, want empty", cfg.AdapterCatalog.Adapters)
 	}
 }
 
@@ -279,7 +359,7 @@ func TestFirstRunOptionalRoles(t *testing.T) {
 		t.Errorf("advisor role = %q, want 'testprov/gpt-3.5-turbo'", cfg.Roles.Advisor)
 	}
 	for _, modelID := range cfg.FavoriteModels {
-		if definition := cfg.Models[modelID]; definition.Protocol != config.ProtocolOpenAIChat {
+		if definition := cfg.AdapterCatalog.Adapters[modelID]; definition.Protocol != config.ProtocolOpenAIChat {
 			t.Errorf("model %q protocol = %q, want %q", modelID, definition.Protocol, config.ProtocolOpenAIChat)
 		}
 	}

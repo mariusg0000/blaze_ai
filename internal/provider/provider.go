@@ -28,6 +28,26 @@ import (
 // ErrAborted reports that the active provider stream was canceled by the user.
 var ErrAborted = errors.New("provider stream aborted")
 
+// ModelCatalogEntryMissingError reports that a requested model is absent from the catalog.
+type ModelCatalogEntryMissingError struct {
+	ModelID string
+}
+
+func (e *ModelCatalogEntryMissingError) Error() string {
+	return fmt.Sprintf("model catalog entry is missing for %s", e.ModelID)
+}
+
+// RequestRejectedError reports a non-success provider HTTP response.
+type RequestRejectedError struct {
+	StatusCode    int
+	Body          string
+	displayPrefix string
+}
+
+func (e *RequestRejectedError) Error() string {
+	return fmt.Sprintf("%s returned status %d: %s", e.displayPrefix, e.StatusCode, e.Body)
+}
+
 const (
 	providerConnectTimeout        = 10 * time.Second
 	providerTLSHandshakeTimeout   = 10 * time.Second
@@ -132,9 +152,12 @@ func NewClient(cfg *config.Config, modelID string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	definition, ok := cfg.Models[modelID]
-	if !ok {
-		return nil, fmt.Errorf("model catalog entry is missing for %s", modelID)
+	definition, err := cfg.ResolveModelAdapter(modelID)
+	if err != nil {
+		if strings.HasPrefix(err.Error(), "no model adapter matches ") {
+			return nil, &ModelCatalogEntryMissingError{ModelID: modelID}
+		}
+		return nil, fmt.Errorf("cannot resolve model adapter for %s: %w", modelID, err)
 	}
 	modelRef := ModelReference{ID: modelID, Name: modelName, Definition: definition}
 	var protocol Protocol
@@ -516,7 +539,11 @@ func (c *Client) StreamWithPhase(ctx context.Context, messages []session.Message
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			respBody, _ := io.ReadAll(resp.Body)
-			return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(respBody))
+			return nil, &RequestRejectedError{
+				StatusCode:    resp.StatusCode,
+				Body:          string(respBody),
+				displayPrefix: "API",
+			}
 		}
 		if onPhase != nil {
 			onPhase(PhaseWaitingFirstEvent)

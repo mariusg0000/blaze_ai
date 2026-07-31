@@ -58,6 +58,21 @@ func firstRunModelDefinition(protocol, modelName string) (config.ModelDefinition
 	}
 }
 
+func storeFirstRunModelAdapter(cfg *config.Config, modelID, protocol, modelName string) error {
+	if _, err := cfg.ResolveModelAdapter(modelID); err == nil {
+		return nil
+	} else if err.Error() != fmt.Sprintf("no model adapter matches %q", modelID) {
+		return err
+	}
+
+	definition, err := firstRunModelDefinition(protocol, modelName)
+	if err != nil {
+		return err
+	}
+	cfg.AdapterCatalog.Adapters[modelID] = definition
+	return nil
+}
+
 // firstRun executes the interactive first-run setup.
 // Creates a config with at least one provider and a default model role.
 //
@@ -134,19 +149,18 @@ func firstRun(out io.Writer, reader *bufio.Reader) (*config.Config, error) {
 	cfg.Providers = []config.Provider{p}
 	cfg.FavoriteModels = []string{modelID}
 	cfg.Roles.Default = modelID
-	var modelDefinition config.ModelDefinition
+	modelProtocol := config.ProtocolOpenAIChat
+	modelName := modelID
 	if p.AuthType == config.OAuthAuthType {
-		modelDefinition, err = firstRunModelDefinition(config.ProtocolOpenAIResponses, models[0])
-	} else {
-		modelDefinition, err = firstRunModelDefinition(config.ProtocolOpenAIChat, modelID)
+		modelProtocol = config.ProtocolOpenAIResponses
+		modelName = models[0]
 	}
-	if err != nil {
+	if err := storeFirstRunModelAdapter(cfg, modelID, modelProtocol, modelName); err != nil {
 		return nil, fmt.Errorf("cannot define first-run model: %w", err)
 	}
-	cfg.Models[modelID] = modelDefinition
 
 	// Step 6: optional roles
-	if err := assignOptionalRoles(out, reader, models, p.Name, cfg); err != nil {
+	if err := assignOptionalRoles(out, reader, models, p.Name, modelProtocol, cfg); err != nil {
 		return nil, err
 	}
 
@@ -266,7 +280,7 @@ func selectModel(out io.Writer, reader *bufio.Reader, models []string, providerN
 // WHAT:  Asks the user if they want to assign vision, summarization, and advisor models.
 // PARAMS: out — output; reader — input; models — available models; providerName — for ID; cfg — config to update.
 // RETURNS: error if input reading fails fatally.
-func assignOptionalRoles(out io.Writer, reader *bufio.Reader, models []string, providerName string, cfg *config.Config) error {
+func assignOptionalRoles(out io.Writer, reader *bufio.Reader, models []string, providerName, protocol string, cfg *config.Config) error {
 	for _, role := range []string{"vision", "summarization", "advisor"} {
 		fmt.Fprintln(out)
 		fmt.Fprintf(out, "Assign %s role? (y/N): ", role)
@@ -294,7 +308,9 @@ func assignOptionalRoles(out io.Writer, reader *bufio.Reader, models []string, p
 			continue
 		}
 		modelID := providerName + "/" + models[num-1]
-		cfg.Models[modelID] = cfg.Models[cfg.Roles.Default]
+		if err := storeFirstRunModelAdapter(cfg, modelID, protocol, models[num-1]); err != nil {
+			return fmt.Errorf("cannot define %s role model: %w", role, err)
+		}
 		switch role {
 		case "vision":
 			cfg.Roles.Vision = modelID

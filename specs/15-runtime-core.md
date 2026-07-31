@@ -8,7 +8,7 @@
 | `internal/runtime/agent_orchestration.go` | One-shot child-agent execution, persistent sessions, dual timeout |
 | `internal/runtime/mode_capabilities.go` | Mode tool deny-list and sub-agent allow-list enforcement |
 | `internal/provider/provider.go` (`NewClient`, `StreamWithPhase`) | Catalog-backed client creation and protocol-lowered streaming |
-| `internal/config/config.go` (`Config.Models`, `ModelDefinition`) | Model protocol/capability metadata consumed by provider clients |
+| `internal/config/config.go` (`Config.AdapterCatalog`, `ResolveModelAdapter`, `ModelDefinition`) | User/builtin model adapter resolution and metadata consumed by provider clients |
 
 ## Overview
 
@@ -72,7 +72,7 @@ RunTurn(ctx, userInput)
        │
         ├─ Provider.Stream(ctx, messages, tools, onContent, onReasoning)
         │    ├─ provider builds and validates a metadata-bound Request
-        │    ├─ selected Chat or Responses adapter lowers the request
+        │    ├─ selected Chat or Responses protocol adapter lowers the request
         │    └─ onReasoning captures reasoning/thinking chunks for session persistence
        │
        ├─ OnUsage(promptTokens, cachedTokens, uncachedTokens)  → report token usage
@@ -193,6 +193,11 @@ func (a *Agent) SetModel(modelID string) error
 2. If in a mode → updates `CurrentMode.Model` + persists `modes.json`
 3. If legacy (no modes) → updates `Config.LastModel` + persists `config.json`
 
+`applyModel` creates the client before committing `Provider` or `ModelID`. If
+client creation reports `ModelCatalogEntryMissingError`, it reloads only
+`model_adapters.json` once and retries. Reload or retry failure leaves the
+current model/provider state unchanged; other client errors do not reload.
+
 ### SetModelLocal (Transport-Local)
 
 ```go
@@ -250,8 +255,9 @@ needed.
 ### validateModelInConfig
 
 Validates `provider/model_name` format and ensures the provider exists in config.
-`applyModel` then calls `provider.NewClient`, which requires the model catalog
-entry and rejects unsupported protocol metadata before any provider request.
+`applyModel` then calls `provider.NewClient`, which resolves user adapters before
+builtin model/provider contracts and rejects missing or unsupported protocol
+metadata before any provider request.
 
 ## Startup Wiring (NewAgent)
 
@@ -261,7 +267,7 @@ NewAgent(cfg, sess, os, promptsFS, workDir, handler, transportName)
   ├─ config.LoadModes(modelID)      → load modes with fallback
   ├─ Auto-create default mode if empty
   ├─ Resolve active mode: lastMode > firstMode
-   ├─ provider.NewClient(cfg, modelID)  → primary LLM client; catalog metadata required
+   ├─ provider.NewClient(cfg, modelID)  → primary LLM client; user/builtin adapter metadata required
    ├─ provider.NewClient(cfg, summarizationModel)  → secondary; each model resolves its own metadata
   ├─ prompt.Builder{...}            → prompt assembler
   ├─ compaction.NewManager(...)     → compaction orchestrator

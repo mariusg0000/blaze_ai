@@ -4,7 +4,8 @@
 
 | File | Anchor | Role |
 |------|--------|------|
-| `internal/config/config.go` | `Config`, `ModelDefinition`, `Validate` | Config tree, model catalog, load/save/validation, first-run detection |
+| `internal/config/config.go` | `Config`, `ModelAdapterCatalog`, `ResolveModelAdapter`, `Validate`, `LoadFrom` | Config tree, separate adapter catalog, resolution, load/save/validation, migration, first-run detection |
+| `internal/config/builtin_model_adapters.json` | top-level `providers` and `adapters` | Embedded provider contracts and builtin model overrides |
 | `internal/config/modes.go` | `ModesConfig`, `LoadModes` | Work-mode persistence, validation, migration |
 | `firstrun.go` | `firstRunModelDefinition`, `firstRun` | First-run provider/model setup and catalog construction |
 | `internal/config/config_test.go` | `TestValidateModelCatalogValidEntries` | Catalog protocol/provider/variant validation contract |
@@ -13,7 +14,8 @@
 
 | File | Path | Purpose |
 |------|------|---------|
-| `config.json` | `app_home/config/config.json` | Providers, roles, models, compaction, reasoning, preferences |
+| `config.json` | `app_home/config/config.json` | Providers, roles, compaction, reasoning, preferences; no active model catalog |
+| `model_adapters.json` | `app_home/config/model_adapters.json` | User model adapter catalog under top-level `adapters` |
 | `modes.json` | `app_home/config/modes.json` | Work modes (name/model/directive), persisted active mode |
 
 Separation rationale: `modes.json` contains frequently-edited mode data, isolated from the sensitive provider/API key data in `config.json`. `modes.json` is saved atomically via temp-file write to reduce corruption risk.
@@ -26,24 +28,17 @@ Separation rationale: `modes.json` contains frequently-edited mode data, isolate
 {
   "providers": [
     {
-      "name": "openai",
-      "endpoint": "https://api.openai.com/v1",
+       "name": "openrouter",
+       "endpoint": "https://openrouter.ai/api/v1",
       "api_key": "sk-..."
     }
   ],
-  "models": {
-    "openai/gpt-4o": {
-      "protocol": "openai-chat",
-      "capabilities": {"tools": true, "reasoning": false},
-      "openai_chat": {"include_stream_usage": true, "include_reasoning_content": true}
-    }
-  },
-  "favorite_models": ["openai/gpt-4o"],
+  "favorite_models": ["openrouter/gpt-4o"],
   "roles": {
-    "default": "openai/gpt-4o",
-    "vision": "openai/gpt-4o",
-    "summarization": "openai/gpt-4o",
-    "advisor": "openai/gpt-4o"
+    "default": "openrouter/gpt-4o",
+    "vision": "openrouter/gpt-4o",
+    "summarization": "openrouter/gpt-4o",
+    "advisor": "openrouter/gpt-4o"
   },
   "compaction": {
     "maxContextTokens": 100000,
@@ -57,7 +52,7 @@ Separation rationale: `modes.json` contains frequently-edited mode data, isolate
     "enable": true,
     "preserveLast": 5
   },
-  "last_model": "openai/gpt-4o",
+  "last_model": "openrouter/gpt-4o",
   "helperSetup": {
     "dismissed": false,
     "declined": []
@@ -71,7 +66,8 @@ Separation rationale: `modes.json` contains frequently-edited mode data, isolate
 ```go
 type Config struct {
     Providers      []Provider     `json:"providers"`
-    Models         map[string]ModelDefinition `json:"models"`
+    AdapterCatalog ModelAdapterCatalog `json:"-"`
+    LegacyModels   map[string]ModelDefinition `json:"models,omitempty"` // migration-only
     FavoriteModels []string       `json:"favorite_models"`
     Roles          Roles          `json:"roles"`
     Compaction     Compaction     `json:"compaction"`
@@ -82,11 +78,13 @@ type Config struct {
 }
 ```
 
-### Model Catalog
+### Model Adapter Catalog (`model_adapters.json`)
 
-`Config.Models` is an explicit catalog keyed by the plain `provider/model_name` identifier. Each `ModelDefinition` records `Protocol`, `Capabilities` (`tools`, `reasoning`), and exactly one protocol variant: `OpenAIChat` (`include_stream_usage`, `include_reasoning_content`) or `Responses` (`lite`). The supported protocol constants are `openai-chat` and `openai-responses`.
+`Config.AdapterCatalog` is loaded from the separate file and serialized as `{ "adapters": { ... } }`. Each `ModelDefinition` records `Protocol`, `Capabilities` (`tools`, `reasoning`), and exactly one protocol variant: `OpenAIChat` (`include_stream_usage`, `include_reasoning_content`) or `Responses` (`lite`). Supported protocols are `openai-chat` and `openai-responses`; user entries may be exact IDs or terminal model-prefix wildcards.
 
-Validation requires every catalog key to have valid model syntax and an existing provider. `openai-chat` requires a non-OAuth provider and an `openai_chat` variant; `openai-responses` requires an OAuth provider and a `responses` variant. Each configured role, favourite, and non-empty `last_model` must also resolve to a catalog entry. Unknown protocols and contradictory variants are rejected; the provider client does not infer protocol from model names.
+User resolution is exact match, then longest matching literal-prefix wildcard. If no user entry matches, the embedded catalog is checked by exact/longest-prefix model override and then exact configured provider identity. Builtins are keyed by provider name, never endpoint or alias: `openrouter` uses Chat without usage/reasoning history; `opencode-go` and `opencode-zen` use Chat with both; `google-gemini` uses Chat without both; and `openai-chatgpt-oauth` uses Responses with the `gpt-5.6-*` Lite override. A missing match is an explicit error.
+
+Validation requires user adapter patterns to use `provider/model` syntax, with at most one terminal `*`, and an existing configured provider. `openai-chat` requires a non-OAuth provider and `openai_chat`; `openai-responses` requires an OAuth provider and `responses`; contradictory variants and unknown protocols are rejected. Roles, favourites, and non-empty `last_model` must resolve through the user/builtin catalog; protocol and capabilities are never inferred from model names.
 
 ### Provider
 
@@ -272,6 +270,8 @@ Created when:
 
 If `config.json` exists but is malformed (invalid JSON), `NeedsFirstRun()` returns an error — the runtime stops with a clear message rather than entering the first-run flow with partial data.
 
+First-run retrieves the provider's model list, assigns explicit adapter metadata for selected role models, and saves `config.json` plus `model_adapters.json`. When a selected model resolves through a builtin contract, no redundant user adapter is written; otherwise an exact user adapter is created. OAuth models use Responses metadata and determine the Lite variant from the model name only in this first-run construction path.
+
 ## Validation Sequence
 
 ```
@@ -279,8 +279,8 @@ Config.Load(path)
   ├─ Read file → parse JSON
   ├─ Validate():
   │    ├─ Roles.Default non-empty
-   │    ├─ Model catalog: format, provider, protocol, auth, and variant consistency
-   │    ├─ All role/favorite/last_model values: format + provider + catalog reference
+   │    ├─ Model adapter catalog: pattern, provider, protocol, auth, and variant consistency
+   │    ├─ All role/favorite/last_model values: format + provider + resolved adapter
    │    ├─ Providers: non-empty fields, unique names
    │    └─ Return Config or the first specific validation error
   └─ Return Config or error
@@ -288,8 +288,8 @@ Config.Load(path)
 
 No silent fallbacks on validation failure. The runtime stops with the specific validation error.
 
-## Migration
+## Model Adapter Migration
 
-`MigrateFromConfig()` extracts legacy mode definitions embedded in `config.json` (from an earlier version where modes lived inside the config struct) into the separate `modes.json`. Called on every `NewAgent()` startup.
+When `config.json` has a non-empty legacy `models` object and `model_adapters.json` is absent, `LoadFrom` performs one exact migration into the separate adapter catalog and persists `config.json` without `models`. If both sources are present with legacy entries, loading stops with a conflict; if neither provides adapters required by a non-builtin model, loading stops with a missing-catalog error. `SaveTo` refuses to persist legacy models.
 
-After migration, `config.json` should no longer contain inline mode data. Migration is idempotent — runs every startup but only writes modes.json if it does not yet exist.
+`ReloadModelAdapters()` reloads the strict on-disk configuration and replaces only the in-memory adapter catalog. A failed reload leaves the current catalog unchanged.

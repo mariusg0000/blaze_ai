@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -102,7 +103,7 @@ func setupAgent(t *testing.T, handler http.HandlerFunc) (*Agent, *mockHandler, *
 		Providers: []config.Provider{
 			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
 		},
-		Models: map[string]config.ModelDefinition{
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
 			"test/test-model":  {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
 			"test/other-model": {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
 			"test/model-a":     {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
@@ -110,7 +111,7 @@ func setupAgent(t *testing.T, handler http.HandlerFunc) (*Agent, *mockHandler, *
 			"test/model-c":     {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
 			"test/a":           {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
 			"test/b":           {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
-		},
+		}},
 		Roles:          config.Roles{Default: "test/test-model"},
 		Compaction:     config.DefaultCompaction(),
 		StripReasoning: config.DefaultStripReasoning(),
@@ -458,6 +459,169 @@ func TestSetModel(t *testing.T) {
 	}
 }
 
+func TestSetModelResolvesWildcardAdapter(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	agent.Config.AdapterCatalog.Adapters = map[string]config.ModelDefinition{
+		"test/model-*": {
+			Protocol:     config.ProtocolOpenAIChat,
+			Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false},
+			OpenAIChat:   &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
+		},
+	}
+	if err := agent.SetModel("test/model-a"); err != nil {
+		t.Fatalf("SetModel() error: %v", err)
+	}
+	if agent.ModelID != "test/model-a" {
+		t.Errorf("ModelID = %q, want test/model-a", agent.ModelID)
+	}
+}
+
+// TestSetModelReloadsMissingCatalogEntry verifies one-shot catalog reload before retrying.
+func TestSetModelReloadsMissingCatalogEntry(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	target := "test/repaired-model"
+	delete(agent.Config.AdapterCatalog.Adapters, target)
+	diskCfg := &config.Config{
+		Providers: agent.Config.Providers,
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
+			"test/test-model": agent.Config.AdapterCatalog.Adapters["test/test-model"],
+			target:            {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
+		}},
+		Roles:          config.Roles{Default: "test/test-model"},
+		FavoriteModels: []string{"test/test-model"},
+		Compaction:     config.DefaultCompaction(),
+		StripReasoning: config.DefaultStripReasoning(),
+	}
+	if err := diskCfg.Save(); err != nil {
+		t.Fatalf("Save() error: %v", err)
+	}
+	originalProvider := agent.Provider
+
+	if err := agent.SetModel(target); err != nil {
+		t.Fatalf("SetModel() error: %v", err)
+	}
+	if agent.ModelID != target {
+		t.Errorf("ModelID = %q, want %q", agent.ModelID, target)
+	}
+	if agent.Provider == originalProvider {
+		t.Error("Provider was not replaced after catalog reload")
+	}
+	if _, ok := agent.Config.AdapterCatalog.Adapters[target]; !ok {
+		t.Fatalf("reloaded adapter catalog does not contain %q", target)
+	}
+}
+
+// TestSetModelMissingCatalogEntryAfterReloadPreservesState verifies a failed retry does not commit state.
+func TestSetModelMissingCatalogEntryAfterReloadPreservesState(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	target := "test/still-missing-model"
+	delete(agent.Config.AdapterCatalog.Adapters, target)
+	diskCfg := &config.Config{
+		Providers: agent.Config.Providers,
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
+			"test/test-model": agent.Config.AdapterCatalog.Adapters["test/test-model"],
+		}},
+		Roles:          config.Roles{Default: "test/test-model"},
+		FavoriteModels: []string{"test/test-model"},
+		Compaction:     config.DefaultCompaction(),
+		StripReasoning: config.DefaultStripReasoning(),
+	}
+	if err := diskCfg.Save(); err != nil {
+		t.Fatalf("Save() error: %v", err)
+	}
+	originalProvider := agent.Provider
+	originalModel := agent.ModelID
+
+	if err := agent.SetModel(target); err == nil {
+		t.Fatal("SetModel() expected missing catalog error, got nil")
+	}
+	if agent.ModelID != originalModel {
+		t.Errorf("ModelID = %q after failed retry, want %q", agent.ModelID, originalModel)
+	}
+	if agent.Provider != originalProvider {
+		t.Error("Provider changed after failed retry")
+	}
+	if _, ok := agent.Config.AdapterCatalog.Adapters[target]; ok {
+		t.Errorf("adapter catalog unexpectedly contains %q after reload", target)
+	}
+}
+
+// TestSetModelReloadFailurePreservesState verifies that a failed reload does not commit state.
+func TestSetModelReloadFailurePreservesState(t *testing.T) {
+	home := isolatedHome(t)
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	configPath := filepath.Join(home, "blazeai", "config", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		t.Fatalf("cannot create config directory: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte("{invalid json"), 0600); err != nil {
+		t.Fatalf("cannot write invalid config: %v", err)
+	}
+	target := "test/missing-model"
+	originalProvider := agent.Provider
+	originalModel := agent.ModelID
+	originalAdapters := agent.Config.AdapterCatalog.Adapters
+
+	if err := agent.SetModel(target); err == nil {
+		t.Fatal("SetModel() expected reload error, got nil")
+	}
+	if agent.ModelID != originalModel {
+		t.Errorf("ModelID = %q after reload failure, want %q", agent.ModelID, originalModel)
+	}
+	if agent.Provider != originalProvider {
+		t.Error("Provider changed after reload failure")
+	}
+	if !reflect.DeepEqual(agent.Config.AdapterCatalog.Adapters, originalAdapters) {
+		t.Error("adapter catalog changed after reload failure")
+	}
+}
+
+// TestSetModelNonCatalogErrorDoesNotReload verifies other client errors do not reload the catalog.
+func TestSetModelNonCatalogErrorDoesNotReload(t *testing.T) {
+	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	target := "test/unsupported-model"
+	agent.Config.AdapterCatalog.Adapters[target] = config.ModelDefinition{Protocol: "unsupported"}
+	diskCfg := &config.Config{
+		Providers: agent.Config.Providers,
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
+			"test/test-model": agent.Config.AdapterCatalog.Adapters["test/test-model"],
+			target:            {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
+		}},
+		Roles:          config.Roles{Default: "test/test-model"},
+		FavoriteModels: []string{"test/test-model"},
+		Compaction:     config.DefaultCompaction(),
+		StripReasoning: config.DefaultStripReasoning(),
+	}
+	if err := diskCfg.Save(); err != nil {
+		t.Fatalf("Save() error: %v", err)
+	}
+	originalProvider := agent.Provider
+	originalModel := agent.ModelID
+
+	if err := agent.SetModel(target); err == nil {
+		t.Fatal("SetModel() expected unsupported protocol error, got nil")
+	}
+	if agent.ModelID != originalModel {
+		t.Errorf("ModelID = %q after non-catalog error, want %q", agent.ModelID, originalModel)
+	}
+	if agent.Provider != originalProvider {
+		t.Error("Provider changed after non-catalog error")
+	}
+	if got := agent.Config.AdapterCatalog.Adapters[target].Protocol; got != "unsupported" {
+		t.Errorf("adapter catalog[%q].Protocol = %q, want unsupported", target, got)
+	}
+}
+
 // TestSetModelLocal verifies local model switching without global persistence.
 func TestSetModelLocal(t *testing.T) {
 	agent, _, server := setupAgent(t, func(w http.ResponseWriter, r *http.Request) {})
@@ -629,10 +793,10 @@ func TestNewAgentLoadsPersistedInteractiveAgent(t *testing.T) {
 		Providers: []config.Provider{
 			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
 		},
-		Models: map[string]config.ModelDefinition{
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
 			"test/model-a": {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
 			"test/model-b": {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
-		},
+		}},
 		Roles:          config.Roles{Default: "test/model-a"},
 		FavoriteModels: []string{"test/model-a", "test/model-b"},
 		Compaction:     config.DefaultCompaction(),
@@ -675,9 +839,9 @@ func TestNewAgentInitializesAgentStateFromDefinitions(t *testing.T) {
 		Providers: []config.Provider{
 			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
 		},
-		Models: map[string]config.ModelDefinition{
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
 			"test/model-a": {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
-		},
+		}},
 		Roles:          config.Roles{Default: "test/model-a"},
 		FavoriteModels: []string{"test/model-a"},
 		Compaction:     config.DefaultCompaction(),
@@ -720,9 +884,9 @@ func TestSetAgentPersistsLastAgentAndRefreshesCapabilities(t *testing.T) {
 		Providers: []config.Provider{
 			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
 		},
-		Models: map[string]config.ModelDefinition{
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
 			"test/test-model": {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
-		},
+		}},
 		Roles:          config.Roles{Default: "test/test-model"},
 		FavoriteModels: []string{"test/test-model"},
 		Compaction:     config.DefaultCompaction(),
@@ -776,9 +940,9 @@ func TestSetAgentRejectsExecutor(t *testing.T) {
 		Providers: []config.Provider{
 			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
 		},
-		Models: map[string]config.ModelDefinition{
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
 			"test/test-model": {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
-		},
+		}},
 		Roles:          config.Roles{Default: "test/test-model"},
 		FavoriteModels: []string{"test/test-model"},
 		Compaction:     config.DefaultCompaction(),
@@ -823,9 +987,9 @@ func TestNextAgentCyclesInteractiveDefinitions(t *testing.T) {
 		Providers: []config.Provider{
 			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
 		},
-		Models: map[string]config.ModelDefinition{
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
 			"test/test-model": {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
-		},
+		}},
 		Roles:          config.Roles{Default: "test/test-model"},
 		FavoriteModels: []string{"test/test-model"},
 		Compaction:     config.DefaultCompaction(),
@@ -891,10 +1055,10 @@ func TestSetModelPersistsPerInteractiveAgent(t *testing.T) {
 		Providers: []config.Provider{
 			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
 		},
-		Models: map[string]config.ModelDefinition{
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
 			"test/model-a":     {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
 			"test/other-model": {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
-		},
+		}},
 		Roles:          config.Roles{Default: "test/model-a"},
 		FavoriteModels: []string{"test/model-a"},
 		Compaction:     config.DefaultCompaction(),
@@ -1021,11 +1185,11 @@ func TestNewAgentIgnoresLastModelWhenLastAgentExists(t *testing.T) {
 
 	cfg := &config.Config{
 		Providers: []config.Provider{{Name: "test", Endpoint: server.URL, APIKey: "sk-test"}},
-		Models: map[string]config.ModelDefinition{
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
 			"test/model-a": {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
 			"test/model-b": {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
 			"test/model-c": {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
-		},
+		}},
 		Roles:          config.Roles{Default: "test/model-a"},
 		FavoriteModels: []string{"test/model-a", "test/model-b", "test/model-c"},
 		Compaction:     config.DefaultCompaction(),
@@ -1153,9 +1317,9 @@ func TestRunTurnInjectsInteractiveDirectiveEphemerally(t *testing.T) {
 		Providers: []config.Provider{
 			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
 		},
-		Models: map[string]config.ModelDefinition{
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
 			"test/test-model": {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
-		},
+		}},
 		Roles:          config.Roles{Default: "test/test-model"},
 		FavoriteModels: []string{"test/test-model"},
 		Compaction:     config.DefaultCompaction(),
@@ -1218,9 +1382,9 @@ func TestNewAgentBootstrapsDefaultInteractiveAgent(t *testing.T) {
 		Providers: []config.Provider{
 			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
 		},
-		Models: map[string]config.ModelDefinition{
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
 			"test/test-model": {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
-		},
+		}},
 		Roles:          config.Roles{Default: "test/test-model"},
 		FavoriteModels: []string{"test/test-model"},
 		Compaction:     config.DefaultCompaction(),
@@ -1300,9 +1464,9 @@ func TestNewAgentDoesNotBootstrapWhenAgentStateExists(t *testing.T) {
 		Providers: []config.Provider{
 			{Name: "test", Endpoint: server.URL, APIKey: "sk-test"},
 		},
-		Models: map[string]config.ModelDefinition{
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
 			"test/test-model": {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
-		},
+		}},
 		Roles:          config.Roles{Default: "test/test-model"},
 		FavoriteModels: []string{"test/test-model"},
 		Compaction:     config.DefaultCompaction(),

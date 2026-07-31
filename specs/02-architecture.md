@@ -17,6 +17,7 @@
 | `internal/provider/openai_chat_protocol.go` | `openAIChatProtocol` | OpenAI Chat validation and lowering |
 | `internal/provider/openai_responses_protocol.go` | `openAIResponsesProtocol` | Responses validation and normal/lite lowering |
 | `internal/provider/openai_responses.go` | `buildChatGPTRequest`, `buildChatGPTLiteRequest` | OAuth Responses wire builders and parser |
+| `internal/config/builtin_model_adapters.json` | `providers`, `adapters` | Embedded provider contracts and model-specific overrides |
 | `internal/llmcall/` | `llmcall.go` | One-shot secondary LLM consultation (role-based) |
 | `internal/usage/` | `usage.go` | Provider-agnostic token usage extraction and normalization |
 | `internal/config/` | `config.go`, `modes.go` | Configuration load/save/validate, work mode management |
@@ -127,7 +128,8 @@ Three files:
 - Sudo always denied (no password channel over chat)
 
 ### Layer 4 — LLM Client (`internal/provider/`)
-- `NewClient` requires the selected `provider/model_name` to have a validated `Config.Models` entry and selects its declared protocol; missing or unsupported metadata stops client creation.
+- `NewClient` resolves the selected `provider/model_name` through the user adapter catalog, then builtin model/provider contracts, and selects the declared protocol; missing or unsupported metadata stops client creation.
+- Resolution precedence is user exact, user longest-prefix wildcard, builtin model exact/longest-prefix wildcard, builtin exact provider identity, then explicit no-match error. Builtins do not match endpoint aliases.
 - `StreamWithPhase` creates the provider-neutral `Request`, validates it, lowers it through the selected `Protocol`, and only then enters the existing HTTP transport/parser path.
 - `openAIChatProtocol` lowers Chat requests, conditionally includes stream usage, and removes reasoning history fields when its catalog variant disables them.
 - `openAIResponsesProtocol` selects the normal or lite existing Responses builders; OAuth credential refresh, SSE parsing, tool-call extraction, usage reporting, cache identity, and Responses identity remain in the transport layer.
@@ -144,10 +146,10 @@ Three files:
 ### Layer 6 — Supporting Packages
 
 #### Config (`internal/config/`)
-- `config.json` — providers, explicit models catalog, favorite_models, roles, compaction, stripReasoning, last_model, helperSetup, debugPrompt
+ - `config.json` — providers, favorite_models, roles, compaction, stripReasoning, last_model, helperSetup, debugPrompt
+ - `model_adapters.json` — user adapter definitions under `adapters`; builtin contracts remain embedded
 - `modes.json` (separate file) — work modes with name/model/directive/denied_tools/agents, last_mode
-- Atomic saves with corruption fallback on modes
-- Migration from legacy config-embedded modes
+ - Adapter catalog is loaded and saved separately; legacy `config.json.models` is migrated once when the separate file is absent, while a dual-source conflict stops loading
 - Known conflict: `modes.go` falls back to `DefaultMode()` when `modes.json` is missing/invalid (violates no-fallback spec)
 
 #### Session (`internal/session/`)
@@ -272,7 +274,7 @@ main()
   │    ├─ Migrate modes from config.json if present
   │    ├─ Load modes (modes.json) or create default
   │    ├─ Resolve active mode: lastMode > firstMode
-   │    ├─ Create provider client; selected catalog metadata is required
+   │    ├─ Create provider client; selected user/builtin adapter metadata is required
    │    ├─ Create summarization provider client with its own metadata (if separate role)
   │    ├─ Create prompt.Builder
   │    ├─ Create compaction.Manager
@@ -320,4 +322,5 @@ No separate memory subsystem. Skill bodies may contain instructions and referenc
 - `SetModelLocal()` — transport-local switch without global persistence
 - `SetMode()` — switch work mode with model resolution and mode capabilities refresh
 - All three go through `applyModel()` which syncs the compactor and provider client
-- `provider.NewClient()` re-resolves the model catalog entry and protocol on every applied model; missing or unsupported metadata is an explicit error.
+ - `provider.NewClient()` re-resolves the user/builtin adapter and protocol on every applied model; missing or unsupported metadata is an explicit error.
+ - `applyModel()` retries a missing adapter once after `Config.ReloadModelAdapters()`; a failed reload or second missing match preserves the current runtime model/provider state.

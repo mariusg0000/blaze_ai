@@ -35,10 +35,10 @@ func newTelegramAgent(t *testing.T) (*runtime.Agent, *config.Config, *State, str
 
 	cfg := &config.Config{
 		Providers: []config.Provider{{Name: "test", Endpoint: "https://example.com", APIKey: "sk-test"}},
-		Models: map[string]config.ModelDefinition{
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
 			"test/main":  {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
 			"test/other": {Protocol: config.ProtocolOpenAIChat, Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false}, OpenAIChat: &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true}},
-		},
+		}},
 		FavoriteModels: []string{"test/main", "test/other"},
 		Roles:          config.Roles{Default: "test/main"},
 		Compaction:     config.DefaultCompaction(),

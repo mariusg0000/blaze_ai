@@ -48,13 +48,13 @@ func setupManager(t *testing.T, handler http.HandlerFunc) (*Manager, *httptest.S
 	cfg := &config.Config{
 		Providers: []config.Provider{{Name: "test", Endpoint: server.URL, APIKey: "sk-test"}},
 		Roles:     config.Roles{Default: "test/test-model"},
-		Models: map[string]config.ModelDefinition{
+		AdapterCatalog: config.ModelAdapterCatalog{Adapters: map[string]config.ModelDefinition{
 			"test/test-model": {
 				Protocol:     config.ProtocolOpenAIChat,
 				Capabilities: config.ModelCapabilities{Tools: true, Reasoning: false},
 				OpenAIChat:   &config.OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
 			},
-		},
+		}},
 		Compaction: config.Compaction{
 			MaxContextTokens:       100,
 			MinContextTokens:       50,

@@ -1,0 +1,36 @@
+{
+  "providers": {
+    "openrouter": {
+      "protocol": "openai-chat",
+      "capabilities": { "tools": true, "reasoning": false },
+      "openai_chat": { "include_stream_usage": false, "include_reasoning_content": false }
+    },
+    "opencode-go": {
+      "protocol": "openai-chat",
+      "capabilities": { "tools": true, "reasoning": false },
+      "openai_chat": { "include_stream_usage": true, "include_reasoning_content": true }
+    },
+    "opencode-zen": {
+      "protocol": "openai-chat",
+      "capabilities": { "tools": true, "reasoning": false },
+      "openai_chat": { "include_stream_usage": true, "include_reasoning_content": true }
+    },
+    "google-gemini": {
+      "protocol": "openai-chat",
+      "capabilities": { "tools": true, "reasoning": false },
+      "openai_chat": { "include_stream_usage": false, "include_reasoning_content": false }
+    },
+    "openai-chatgpt-oauth": {
+      "protocol": "openai-responses",
+      "capabilities": { "tools": true, "reasoning": false },
+      "responses": { "lite": false }
+    }
+  },
+  "adapters": {
+    "openai-chatgpt-oauth/gpt-5.6-*": {
+      "protocol": "openai-responses",
+      "capabilities": { "tools": true, "reasoning": false },
+      "responses": { "lite": true }
+    }
+  }
+}

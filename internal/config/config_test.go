@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -17,7 +18,7 @@ func validConfig() *Config {
 			{Name: "openrouter", Endpoint: "https://openrouter.ai/api/v1", APIKey: "sk-test123"},
 		},
 		FavoriteModels: []string{"openrouter/deepseek-v4-flash"},
-		Models: map[string]ModelDefinition{
+		AdapterCatalog: ModelAdapterCatalog{Adapters: map[string]ModelDefinition{
 			"openrouter/deepseek-v4-flash": {
 				Protocol:     ProtocolOpenAIChat,
 				Capabilities: ModelCapabilities{Tools: true},
@@ -33,7 +34,7 @@ func validConfig() *Config {
 				Capabilities: ModelCapabilities{Tools: true},
 				OpenAIChat:   &OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
 			},
-		},
+		}},
 		Roles: Roles{
 			Default: "openrouter/deepseek-v4-flash",
 			Vision:  "openrouter/gpt-4o",
@@ -58,6 +59,16 @@ func writeConfigToTemp(t *testing.T, cfg any) string {
 	}
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatalf("cannot write temp config: %v", err)
+	}
+	if config, ok := cfg.(*Config); ok {
+		catalogPath := filepath.Join(filepath.Dir(path), "model_adapters.json")
+		catalogData, err := json.MarshalIndent(config.AdapterCatalog, "", "  ")
+		if err != nil {
+			t.Fatalf("cannot marshal temp model adapter catalog: %v", err)
+		}
+		if err := os.WriteFile(catalogPath, catalogData, 0600); err != nil {
+			t.Fatalf("cannot write temp model adapter catalog: %v", err)
+		}
 	}
 	return path
 }
@@ -206,7 +217,7 @@ func TestValidateOAuthModelDefinition(t *testing.T) {
 		AuthType: OAuthAuthType,
 		OAuth:    &OAuthCredential{RefreshToken: "refresh-token"},
 	})
-	cfg.Models["chatgpt/gpt-5.6-mini"] = ModelDefinition{
+	cfg.AdapterCatalog.Adapters["chatgpt/gpt-5.6-mini"] = ModelDefinition{
 		Protocol:     ProtocolOpenAIResponses,
 		Capabilities: ModelCapabilities{Tools: true},
 		Responses:    &ResponsesVariant{Lite: true},
@@ -257,7 +268,7 @@ func TestValidateModelCatalogValidEntries(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := validConfig()
 			cfg.Providers = append(cfg.Providers, test.provider)
-			cfg.Models[test.modelID] = test.model
+			cfg.AdapterCatalog.Adapters[test.modelID] = test.model
 			if err := cfg.Validate(); err != nil {
 				t.Fatalf("Validate() error for valid catalog entry: %v", err)
 			}
@@ -272,15 +283,29 @@ func TestValidateMissingCatalogReferences(t *testing.T) {
 		mutate func(*Config)
 	}{
 		{name: "favorite", mutate: func(cfg *Config) {
-			cfg.FavoriteModels = append(cfg.FavoriteModels, "openrouter/missing-favorite")
+			cfg.FavoriteModels = append(cfg.FavoriteModels, "custom/missing-favorite")
+			cfg.Providers = append(cfg.Providers, Provider{Name: "custom", Endpoint: "https://custom.example.com", APIKey: "sk-test"})
 		}},
-		{name: "default role", mutate: func(cfg *Config) { cfg.Roles.Default = "openrouter/missing-default" }},
-		{name: "vision role", mutate: func(cfg *Config) { cfg.Roles.Vision = "openrouter/missing-vision" }},
+		{name: "default role", mutate: func(cfg *Config) {
+			cfg.Roles.Default = "custom/missing-default"
+			cfg.Providers = append(cfg.Providers, Provider{Name: "custom", Endpoint: "https://custom.example.com", APIKey: "sk-test"})
+		}},
+		{name: "vision role", mutate: func(cfg *Config) {
+			cfg.Roles.Vision = "custom/missing-vision"
+			cfg.Providers = append(cfg.Providers, Provider{Name: "custom", Endpoint: "https://custom.example.com", APIKey: "sk-test"})
+		}},
 		{name: "summarization role", mutate: func(cfg *Config) {
-			cfg.Roles.Summarization = "openrouter/missing-summarization"
+			cfg.Roles.Summarization = "custom/missing-summarization"
+			cfg.Providers = append(cfg.Providers, Provider{Name: "custom", Endpoint: "https://custom.example.com", APIKey: "sk-test"})
 		}},
-		{name: "advisor role", mutate: func(cfg *Config) { cfg.Roles.Advisor = "openrouter/missing-advisor" }},
-		{name: "last model", mutate: func(cfg *Config) { cfg.LastModel = "openrouter/missing-last" }},
+		{name: "advisor role", mutate: func(cfg *Config) {
+			cfg.Roles.Advisor = "custom/missing-advisor"
+			cfg.Providers = append(cfg.Providers, Provider{Name: "custom", Endpoint: "https://custom.example.com", APIKey: "sk-test"})
+		}},
+		{name: "last model", mutate: func(cfg *Config) {
+			cfg.LastModel = "custom/missing-last"
+			cfg.Providers = append(cfg.Providers, Provider{Name: "custom", Endpoint: "https://custom.example.com", APIKey: "sk-test"})
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -290,8 +315,8 @@ func TestValidateMissingCatalogReferences(t *testing.T) {
 			if err == nil {
 				t.Fatalf("Validate() expected missing catalog error for %s", test.name)
 			}
-			if !strings.Contains(err.Error(), "model catalog entry is missing") {
-				t.Fatalf("Validate() error = %v, want missing catalog entry error", err)
+			if !strings.Contains(err.Error(), "no model adapter matches") {
+				t.Fatalf("Validate() error = %v, want no adapter match error", err)
 			}
 		})
 	}
@@ -305,27 +330,27 @@ func TestValidateModelCatalogDefinitions(t *testing.T) {
 	}{
 		"unknown protocol": {
 			mutate: func(cfg *Config) {
-				definition := cfg.Models["openrouter/deepseek-v4-flash"]
+				definition := cfg.AdapterCatalog.Adapters["openrouter/deepseek-v4-flash"]
 				definition.Protocol = "unknown"
-				cfg.Models["openrouter/deepseek-v4-flash"] = definition
+				cfg.AdapterCatalog.Adapters["openrouter/deepseek-v4-flash"] = definition
 			},
 			want: "unknown protocol",
 		},
 		"malformed key": {
 			mutate: func(cfg *Config) {
-				cfg.Models["malformed"] = ModelDefinition{Protocol: ProtocolOpenAIChat, OpenAIChat: &OpenAIChatVariant{}}
+				cfg.AdapterCatalog.Adapters["malformed"] = ModelDefinition{Protocol: ProtocolOpenAIChat, OpenAIChat: &OpenAIChatVariant{}}
 			},
 			want: ErrInvalidModelFormat.Error(),
 		},
 		"unknown provider": {
 			mutate: func(cfg *Config) {
-				cfg.Models["ghost/model"] = ModelDefinition{Protocol: ProtocolOpenAIChat, OpenAIChat: &OpenAIChatVariant{}}
+				cfg.AdapterCatalog.Adapters["ghost/model"] = ModelDefinition{Protocol: ProtocolOpenAIChat, OpenAIChat: &OpenAIChatVariant{}}
 			},
 			want: ErrProviderNotFound.Error(),
 		},
 		"protocol auth mismatch": {
 			mutate: func(cfg *Config) {
-				cfg.Models["openrouter/oauth-model"] = ModelDefinition{
+				cfg.AdapterCatalog.Adapters["openrouter/oauth-model"] = ModelDefinition{
 					Protocol:  ProtocolOpenAIResponses,
 					Responses: &ResponsesVariant{},
 				}
@@ -334,17 +359,17 @@ func TestValidateModelCatalogDefinitions(t *testing.T) {
 		},
 		"missing required variant": {
 			mutate: func(cfg *Config) {
-				definition := cfg.Models["openrouter/deepseek-v4-flash"]
+				definition := cfg.AdapterCatalog.Adapters["openrouter/deepseek-v4-flash"]
 				definition.OpenAIChat = nil
-				cfg.Models["openrouter/deepseek-v4-flash"] = definition
+				cfg.AdapterCatalog.Adapters["openrouter/deepseek-v4-flash"] = definition
 			},
 			want: "openai-chat requires openai_chat variant",
 		},
 		"prohibited other protocol variant": {
 			mutate: func(cfg *Config) {
-				definition := cfg.Models["openrouter/deepseek-v4-flash"]
+				definition := cfg.AdapterCatalog.Adapters["openrouter/deepseek-v4-flash"]
 				definition.Responses = &ResponsesVariant{}
-				cfg.Models["openrouter/deepseek-v4-flash"] = definition
+				cfg.AdapterCatalog.Adapters["openrouter/deepseek-v4-flash"] = definition
 			},
 			want: "openai-chat prohibits responses variant",
 		},
@@ -385,6 +410,424 @@ func TestSaveToAndLoadFrom(t *testing.T) {
 	if loaded.Compaction.MaxContextTokens != cfg.Compaction.MaxContextTokens {
 		t.Errorf("round-trip maxContextTokens = %d, want %d",
 			loaded.Compaction.MaxContextTokens, cfg.Compaction.MaxContextTokens)
+	}
+	configData, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("cannot read config.json: %v", err)
+	}
+	var configJSON map[string]json.RawMessage
+	if err := json.Unmarshal(configData, &configJSON); err != nil {
+		t.Fatalf("cannot parse config.json: %v", err)
+	}
+	if _, ok := configJSON["models"]; ok {
+		t.Fatal("config.json contains legacy models key")
+	}
+	adapterPath := filepath.Join(filepath.Dir(path), "model_adapters.json")
+	adapterData, err := os.ReadFile(adapterPath)
+	if err != nil {
+		t.Fatalf("cannot read model_adapters.json: %v", err)
+	}
+	var adapterJSON map[string]json.RawMessage
+	if err := json.Unmarshal(adapterData, &adapterJSON); err != nil {
+		t.Fatalf("cannot parse model_adapters.json: %v", err)
+	}
+	if len(adapterJSON) != 1 {
+		t.Fatalf("model_adapters.json keys = %v, want exactly adapters", adapterJSON)
+	}
+	if _, ok := adapterJSON["adapters"]; !ok {
+		t.Fatal("model_adapters.json has no adapters key")
+	}
+	resolved, err := loaded.ResolveModelAdapter("openrouter/gpt-4o")
+	if err != nil {
+		t.Fatalf("ResolveModelAdapter() after round trip failed: %v", err)
+	}
+	if !reflect.DeepEqual(resolved, cfg.AdapterCatalog.Adapters["openrouter/gpt-4o"]) {
+		t.Errorf("resolved adapter = %#v, want %#v", resolved, cfg.AdapterCatalog.Adapters["openrouter/gpt-4o"])
+	}
+}
+
+func TestResolveModelAdapterExact(t *testing.T) {
+	cfg := validConfig()
+	want := cfg.AdapterCatalog.Adapters["openrouter/gpt-4o"]
+	got, err := cfg.ResolveModelAdapter("openrouter/gpt-4o")
+	if err != nil {
+		t.Fatalf("ResolveModelAdapter() error: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ResolveModelAdapter() = %#v, want %#v", got, want)
+	}
+}
+
+func TestResolveModelAdapterWildcard(t *testing.T) {
+	cfg := validConfig()
+	want := ModelDefinition{Protocol: ProtocolOpenAIChat, OpenAIChat: &OpenAIChatVariant{IncludeStreamUsage: true}}
+	cfg.AdapterCatalog.Adapters = map[string]ModelDefinition{"openai/gpt-5.6-*": want}
+	for _, modelID := range []string{"openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "openai/gpt-5.6-luna"} {
+		got, err := cfg.ResolveModelAdapter(modelID)
+		if err != nil {
+			t.Fatalf("ResolveModelAdapter(%q) error: %v", modelID, err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("ResolveModelAdapter(%q) = %#v, want %#v", modelID, got, want)
+		}
+	}
+}
+
+func TestResolveModelAdapterExactOverridesWildcard(t *testing.T) {
+	cfg := validConfig()
+	wildcard := ModelDefinition{Protocol: ProtocolOpenAIChat, OpenAIChat: &OpenAIChatVariant{IncludeStreamUsage: true}}
+	exact := ModelDefinition{Protocol: ProtocolOpenAIChat, OpenAIChat: &OpenAIChatVariant{IncludeReasoningContent: true}}
+	cfg.AdapterCatalog.Adapters = map[string]ModelDefinition{
+		"openai/gpt-5.6-*":    wildcard,
+		"openai/gpt-5.6-luna": exact,
+	}
+	got, err := cfg.ResolveModelAdapter("openai/gpt-5.6-luna")
+	if err != nil {
+		t.Fatalf("ResolveModelAdapter() error: %v", err)
+	}
+	if !reflect.DeepEqual(got, exact) {
+		t.Errorf("ResolveModelAdapter() = %#v, want exact %#v", got, exact)
+	}
+}
+
+func TestResolveModelAdapterRejectsInvalidRequestedIDs(t *testing.T) {
+	cfg := validConfig()
+	for _, test := range []struct {
+		name    string
+		modelID string
+	}{
+		{name: "wildcard suffix", modelID: "openai/gpt-5.6-*"},
+		{name: "embedded star", modelID: "openai/g*pt-5.6"},
+		{name: "multiple stars", modelID: "openai/gpt-5.6-**"},
+		{name: "malformed separator count", modelID: "openai"},
+		{name: "empty ID", modelID: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := cfg.ResolveModelAdapter(test.modelID); err == nil {
+				t.Fatalf("ResolveModelAdapter(%q) expected error, got nil", test.modelID)
+			}
+		})
+	}
+}
+
+func TestResolveModelAdapterBuiltinProviders(t *testing.T) {
+	chatWithoutUsage := ModelDefinition{
+		Protocol:     ProtocolOpenAIChat,
+		Capabilities: ModelCapabilities{Tools: true, Reasoning: false},
+		OpenAIChat:   &OpenAIChatVariant{IncludeStreamUsage: false, IncludeReasoningContent: false},
+	}
+	chatWithUsage := ModelDefinition{
+		Protocol:     ProtocolOpenAIChat,
+		Capabilities: ModelCapabilities{Tools: true, Reasoning: false},
+		OpenAIChat:   &OpenAIChatVariant{IncludeStreamUsage: true, IncludeReasoningContent: true},
+	}
+	responses := ModelDefinition{
+		Protocol:     ProtocolOpenAIResponses,
+		Capabilities: ModelCapabilities{Tools: true, Reasoning: false},
+		Responses:    &ResponsesVariant{Lite: false},
+	}
+	for _, test := range []struct {
+		name     string
+		provider Provider
+		modelID  string
+		want     ModelDefinition
+	}{
+		{name: "openrouter", provider: Provider{Name: "openrouter", Endpoint: "https://example.com", APIKey: "key"}, modelID: "openrouter/model", want: chatWithoutUsage},
+		{name: "opencode-go", provider: Provider{Name: "opencode-go", Endpoint: "https://example.com", APIKey: "key"}, modelID: "opencode-go/model", want: chatWithUsage},
+		{name: "opencode-zen", provider: Provider{Name: "opencode-zen", Endpoint: "https://example.com", APIKey: "key"}, modelID: "opencode-zen/model", want: chatWithUsage},
+		{name: "google-gemini", provider: Provider{Name: "google-gemini", Endpoint: "https://example.com", APIKey: "key"}, modelID: "google-gemini/model", want: chatWithoutUsage},
+		{name: "openai-chatgpt-oauth", provider: Provider{Name: "openai-chatgpt-oauth", Endpoint: "https://example.com", AuthType: OAuthAuthType, OAuth: &OAuthCredential{RefreshToken: "refresh"}}, modelID: "openai-chatgpt-oauth/model", want: responses},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := &Config{Providers: []Provider{test.provider}}
+			got, err := cfg.ResolveModelAdapter(test.modelID)
+			if err != nil {
+				t.Fatalf("ResolveModelAdapter() error: %v", err)
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Errorf("ResolveModelAdapter() = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestResolveModelAdapterBuiltinOAuthModelOverride(t *testing.T) {
+	cfg := &Config{Providers: []Provider{{
+		Name:     "openai-chatgpt-oauth",
+		Endpoint: "https://example.com",
+		AuthType: OAuthAuthType,
+		OAuth:    &OAuthCredential{RefreshToken: "refresh"},
+	}}}
+	lite, err := cfg.ResolveModelAdapter("openai-chatgpt-oauth/gpt-5.6-luna")
+	if err != nil {
+		t.Fatalf("ResolveModelAdapter() lite model error: %v", err)
+	}
+	if lite.Responses == nil || !lite.Responses.Lite {
+		t.Errorf("gpt-5.6-luna Responses = %#v, want Lite true", lite.Responses)
+	}
+	standard, err := cfg.ResolveModelAdapter("openai-chatgpt-oauth/gpt-5.7-luna")
+	if err != nil {
+		t.Fatalf("ResolveModelAdapter() provider model error: %v", err)
+	}
+	if standard.Responses == nil || standard.Responses.Lite {
+		t.Errorf("gpt-5.7-luna Responses = %#v, want Lite false", standard.Responses)
+	}
+}
+
+func TestResolveModelAdapterExternalOverridesBuiltins(t *testing.T) {
+	exact := ModelDefinition{Protocol: ProtocolOpenAIChat, OpenAIChat: &OpenAIChatVariant{IncludeStreamUsage: true}}
+	wildcard := ModelDefinition{Protocol: ProtocolOpenAIChat, OpenAIChat: &OpenAIChatVariant{IncludeReasoningContent: true}}
+	cfg := &Config{
+		Providers: []Provider{{Name: "openrouter", Endpoint: "https://example.com", APIKey: "key"}},
+		AdapterCatalog: ModelAdapterCatalog{Adapters: map[string]ModelDefinition{
+			"openrouter/exact": exact,
+			"openrouter/wild-*": wildcard,
+		}},
+	}
+	for modelID, want := range map[string]ModelDefinition{
+		"openrouter/exact":      exact,
+		"openrouter/wild-model": wildcard,
+	} {
+		got, err := cfg.ResolveModelAdapter(modelID)
+		if err != nil {
+			t.Fatalf("ResolveModelAdapter(%q) error: %v", modelID, err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("ResolveModelAdapter(%q) = %#v, want %#v", modelID, got, want)
+		}
+	}
+}
+
+func TestResolveModelAdapterDoesNotMatchBuiltinByEndpoint(t *testing.T) {
+	cfg := &Config{Providers: []Provider{{Name: "renamed", Endpoint: "https://openrouter.ai/api/v1", APIKey: "key"}}}
+	_, err := cfg.ResolveModelAdapter("renamed/model")
+	if err == nil || !strings.Contains(err.Error(), "no model adapter matches") {
+		t.Fatalf("ResolveModelAdapter() error = %v, want no adapter match", err)
+	}
+}
+
+func TestResolveModelAdapterBuiltinAuthMismatch(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		provider Provider
+		modelID  string
+		want     string
+	}{
+		{name: "chat on oauth", provider: Provider{Name: "openrouter", Endpoint: "https://example.com", AuthType: OAuthAuthType, OAuth: &OAuthCredential{RefreshToken: "refresh"}}, modelID: "openrouter/model", want: "openai-chat requires non-oauth provider"},
+		{name: "responses on api key", provider: Provider{Name: "openai-chatgpt-oauth", Endpoint: "https://example.com", APIKey: "key"}, modelID: "openai-chatgpt-oauth/model", want: "openai-responses requires oauth provider"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := &Config{Providers: []Provider{test.provider}}
+			_, err := cfg.ResolveModelAdapter(test.modelID)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ResolveModelAdapter() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestValidateModelAdapterPatterns(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		pattern string
+	}{
+		{name: "wildcard provider", pattern: "*/model*"},
+		{name: "no model prefix", pattern: "openrouter/*"},
+		{name: "embedded star", pattern: "openrouter/g*pt"},
+		{name: "multiple stars", pattern: "openrouter/g**"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.AdapterCatalog.Adapters = map[string]ModelDefinition{
+				test.pattern: {
+					Protocol:   ProtocolOpenAIChat,
+					OpenAIChat: &OpenAIChatVariant{},
+				},
+			}
+			if err := cfg.Validate(); err == nil {
+				t.Fatalf("Validate() accepted invalid adapter pattern %q", test.pattern)
+			}
+		})
+	}
+}
+
+func TestLoadFromMigratesLegacyModels(t *testing.T) {
+	cfg := validConfig()
+	legacy := cfg.AdapterCatalog.Adapters
+	cfg.AdapterCatalog = ModelAdapterCatalog{}
+	cfg.LegacyModels = legacy
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("cannot create config dir: %v", err)
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		t.Fatalf("cannot marshal legacy config: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("cannot write legacy config: %v", err)
+	}
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom() migration error: %v", err)
+	}
+	if !reflect.DeepEqual(loaded.AdapterCatalog.Adapters, legacy) {
+		t.Errorf("migrated adapters = %#v, want %#v", loaded.AdapterCatalog.Adapters, legacy)
+	}
+	if len(loaded.LegacyModels) != 0 {
+		t.Errorf("LegacyModels = %#v, want empty", loaded.LegacyModels)
+	}
+	adapterPath := filepath.Join(filepath.Dir(path), "model_adapters.json")
+	if _, err := os.Stat(adapterPath); err != nil {
+		t.Fatalf("migration did not create adapter catalog: %v", err)
+	}
+	rewritten, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("cannot read migrated config: %v", err)
+	}
+	var rewrittenJSON map[string]json.RawMessage
+	if err := json.Unmarshal(rewritten, &rewrittenJSON); err != nil {
+		t.Fatalf("cannot parse migrated config: %v", err)
+	}
+	if _, ok := rewrittenJSON["models"]; ok {
+		t.Fatal("migrated config still contains models key")
+	}
+}
+
+func TestLoadFromLegacyAndAdapterConflict(t *testing.T) {
+	cfg := validConfig()
+	cfg.AdapterCatalog = ModelAdapterCatalog{}
+	cfg.LegacyModels = validConfig().AdapterCatalog.Adapters
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("cannot create config dir: %v", err)
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("cannot marshal conflict config: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("cannot write conflict config: %v", err)
+	}
+	adapterData, err := json.Marshal(ModelAdapterCatalog{Adapters: map[string]ModelDefinition{}})
+	if err != nil {
+		t.Fatalf("cannot marshal adapter catalog: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(path), "model_adapters.json"), adapterData, 0600); err != nil {
+		t.Fatalf("cannot write adapter catalog: %v", err)
+	}
+	if _, err := LoadFrom(path); err == nil {
+		t.Fatal("LoadFrom() accepted legacy and adapter catalog conflict")
+	}
+}
+
+func TestLoadFromMissingAdapterCatalog(t *testing.T) {
+	cfg := validConfig()
+	cfg.AdapterCatalog = ModelAdapterCatalog{}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("cannot create config dir: %v", err)
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("cannot marshal config: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("cannot write config: %v", err)
+	}
+	if _, err := LoadFrom(path); err == nil {
+		t.Fatal("LoadFrom() accepted config without adapter catalog")
+	}
+}
+
+// TestReloadModelAdaptersPreservesNonModelConfig verifies that ReloadModelAdapters replaces only the catalog.
+func TestReloadModelAdaptersPreservesNonModelConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := validConfig()
+	cfg.AdapterCatalog.Adapters = map[string]ModelDefinition{
+		"openrouter/deepseek-v4-flash": cfg.AdapterCatalog.Adapters["openrouter/deepseek-v4-flash"],
+	}
+	cfg.Roles = Roles{Default: "openrouter/deepseek-v4-flash"}
+	cfg.FavoriteModels = []string{"openrouter/deepseek-v4-flash"}
+	cfg.LastModel = "openrouter/deepseek-v4-flash"
+	cfg.HelperSetup = HelperSetup{Dismissed: true, Declined: []string{"rg"}}
+	cfg.DebugPrompt = true
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save() unexpected error: %v", err)
+	}
+
+	wantProviders := append([]Provider(nil), cfg.Providers...)
+	wantRoles := cfg.Roles
+	wantFavorites := append([]string(nil), cfg.FavoriteModels...)
+	wantLastModel := cfg.LastModel
+	wantCompaction := cfg.Compaction
+	wantHelperSetup := cfg.HelperSetup
+	wantDebugPrompt := cfg.DebugPrompt
+	wantAdapters := cfg.AdapterCatalog.Adapters
+	cfg.AdapterCatalog.Adapters = map[string]ModelDefinition{
+		"openrouter/in-memory-model": {
+			Protocol:   ProtocolOpenAIChat,
+			OpenAIChat: &OpenAIChatVariant{},
+		},
+	}
+
+	if err := cfg.ReloadModelAdapters(); err != nil {
+		t.Fatalf("ReloadModelAdapters() unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(cfg.AdapterCatalog.Adapters, wantAdapters) {
+		t.Errorf("AdapterCatalog.Adapters = %#v, want saved catalog %#v", cfg.AdapterCatalog.Adapters, wantAdapters)
+	}
+	if !reflect.DeepEqual(cfg.Providers, wantProviders) {
+		t.Errorf("Providers changed during reload: %#v", cfg.Providers)
+	}
+	if cfg.Roles != wantRoles {
+		t.Errorf("Roles changed during reload: %#v", cfg.Roles)
+	}
+	if !reflect.DeepEqual(cfg.FavoriteModels, wantFavorites) {
+		t.Errorf("FavoriteModels changed during reload: %#v", cfg.FavoriteModels)
+	}
+	if cfg.LastModel != wantLastModel {
+		t.Errorf("LastModel changed during reload: %q", cfg.LastModel)
+	}
+	if cfg.Compaction != wantCompaction {
+		t.Errorf("Compaction changed during reload: %#v", cfg.Compaction)
+	}
+	if !reflect.DeepEqual(cfg.HelperSetup, wantHelperSetup) {
+		t.Errorf("HelperSetup changed during reload: %#v", cfg.HelperSetup)
+	}
+	if cfg.DebugPrompt != wantDebugPrompt {
+		t.Errorf("DebugPrompt changed during reload: %t", cfg.DebugPrompt)
+	}
+}
+
+// TestReloadModelAdaptersLoadFailure verifies that a strict load failure leaves the catalog unchanged.
+func TestReloadModelAdaptersLoadFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfg := validConfig()
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save() unexpected error: %v", err)
+	}
+	cfg.AdapterCatalog.Adapters = map[string]ModelDefinition{
+		"openrouter/in-memory-model": {
+			Protocol:   ProtocolOpenAIChat,
+			OpenAIChat: &OpenAIChatVariant{},
+		},
+	}
+	wantAdapters := cfg.AdapterCatalog.Adapters
+	configPath := filepath.Join(home, "blazeai", "config", "config.json")
+	if err := os.WriteFile(configPath, []byte("{invalid json"), 0600); err != nil {
+		t.Fatalf("cannot write invalid config: %v", err)
+	}
+
+	if err := cfg.ReloadModelAdapters(); err == nil {
+		t.Fatal("ReloadModelAdapters() expected strict load error, got nil")
+	}
+	if !reflect.DeepEqual(cfg.AdapterCatalog.Adapters, wantAdapters) {
+		t.Errorf("AdapterCatalog.Adapters changed after reload failure: %#v", cfg.AdapterCatalog.Adapters)
 	}
 }
 

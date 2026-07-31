@@ -16,7 +16,7 @@ BlazeAI is a Go 1.25 terminal AI agent with console and opt-in Telegram transpor
 - `main.go` is the composition root: it detects the OS, bootstraps app home, loads or creates configuration, prepares embedded assets, selects Telegram when requested, and otherwise opens the console session.
 - `internal/runtime/` owns turn execution, prompt construction, streaming, tool dispatch, session updates, compaction, modes, and child-agent orchestration. Providers supply the LLM stream; transports consume runtime callbacks.
 - `internal/prompt/` rebuilds prompt input for each LLM call from embedded templates and disk-backed project/user sources. Optional project map and agent content are injected only where the prompt template provides their placeholders.
-- `internal/config/`, `internal/platform/`, and `internal/session/` own startup prerequisites, host/project paths, validated configuration, and persistent session files. `Config.Models` is the explicit model/protocol/capability catalog required by roles, favourites, and last-model state; required failures are surfaced rather than silently replaced.
+- `internal/config/`, `internal/platform/`, and `internal/session/` own startup prerequisites, host/project paths, validated configuration, and persistent session files. The separate model-adapter catalog and embedded provider contracts resolve explicit protocol/capability metadata for roles, favourites, and model state; required failures are surfaced rather than silently replaced.
 - `internal/tools/` exposes the runtime tool registry. Shell execution remains host-native; direct `read_file` and `write_file` tools resolve relative paths through the work directory, as does `replace_block`.
 - `internal/compaction/` limits context and preserves continuation state through chronological summaries, pruning, and reasoning handling. Telegram is a long-polling single-chat bridge with text/image intake and streamed activity adaptation.
 - `prompts/` and builtin `skills/` are embedded at build time; user/project sources remain disk-backed. `decisions/` records accepted changes and rationale but does not override implemented behavior when code differs.
@@ -36,7 +36,7 @@ Current source code, tests, schemas, and configuration define implemented behavi
 - `internal/console/` - terminal REPL, commands, input, rendering, and streaming display.
 - `internal/telegram/` - Telegram long polling, commands, single-chat state, images, and streaming adaptation.
 - `internal/prompt/` - per-call prompt assembly and variable injection.
-- `internal/config/` - configuration, explicit model-catalog/provider/role/mode validation, persistence, and first-run detection.
+- `internal/config/` - configuration, separate model-adapter catalog and builtin-contract resolution, provider/role validation, persistence, migration, and first-run detection.
 - `internal/session/` - project-scoped file session persistence and resume lifecycle.
 - `internal/compaction/` - context pruning, summarization, and reasoning cleanup.
 - `internal/tools/` - native tool implementations and filtered registries.

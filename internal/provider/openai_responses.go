@@ -177,7 +177,11 @@ func (c *Client) streamChatGPT(ctx context.Context, requestBody chatGPTResponses
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		responseBody, _ := io.ReadAll(response.Body)
-		return nil, fmt.Errorf("ChatGPT returned status %d: %s", response.StatusCode, strings.TrimSpace(string(responseBody)))
+		return nil, &RequestRejectedError{
+			StatusCode:    response.StatusCode,
+			Body:          strings.TrimSpace(string(responseBody)),
+			displayPrefix: "ChatGPT",
+		}
 	}
 	if onPhase != nil {
 		onPhase(PhaseWaitingFirstEvent)

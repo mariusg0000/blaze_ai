@@ -835,7 +835,17 @@ func (a *Agent) applyModel(modelID string) error {
 	}
 	client, err := provider.NewClient(a.Config, modelID)
 	if err != nil {
-		return fmt.Errorf("cannot create provider client: %w", err)
+		var missing *provider.ModelCatalogEntryMissingError
+		if !errors.As(err, &missing) {
+			return fmt.Errorf("cannot create provider client: %w", err)
+		}
+		if err := a.Config.ReloadModelAdapters(); err != nil {
+			return err
+		}
+		client, err = provider.NewClient(a.Config, modelID)
+		if err != nil {
+			return fmt.Errorf("cannot create provider client: %w", err)
+		}
 	}
 	identity := session.CacheKeyForSession(a.Session.Folder)
 	client.SetPromptCacheKey(identity)
